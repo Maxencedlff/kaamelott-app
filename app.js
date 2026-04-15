@@ -67,8 +67,52 @@ function getCharList() {
   allQuotes.forEach(q => { map[q.name] = (map[q.name] || 0) + 1; });
   return Object.entries(map).sort((a,b) => b[1] - a[1]);
 }
-function getCharAvatar(name) {
-  return name.charAt(0);
+// ===== CHARACTER IMAGES =====
+const CHAR_WIKI = {
+  'ARTHUR':         'Alexandre_Astier',
+  'PERCEVAL':       'Franck_Pitiot',
+  'LÉODAGAN':       'Lionnel_Astier',
+  'LANCELOT':       'Thomas_Cousseau',
+  'GUENIÈVRE':      'Audrey_Fleurot',
+  'KARADOC':        'Jean-Christophe_Hembert',
+  'SÉLI':           'Joëlle_Sevilla',
+  'MERLIN':         'Jacques_Chambon',
+  'PÈRE BLAISE':    'Jean-Robert_Lombard',
+  'GAUVAIN':        'Simon_Astier',
+  'LA DAME DU LAC': 'Anne_Girouard',
+  'BOHORT':         'Nicolas_Gabion',
+  'YVAIN':          'Guilhem_Pellegri',
+};
+
+const imgCache = {};
+
+async function fetchCharImage(name) {
+  if (imgCache[name] !== undefined) return imgCache[name];
+  const stored = localStorage.getItem(`kaam_img_${name}`);
+  if (stored) { imgCache[name] = stored; return stored; }
+  const wiki = CHAR_WIKI[name];
+  if (!wiki) { imgCache[name] = null; return null; }
+  try {
+    const r = await fetch(`https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wiki)}`);
+    if (!r.ok) { imgCache[name] = null; return null; }
+    const d = await r.json();
+    const url = d.thumbnail?.source || null;
+    imgCache[name] = url;
+    if (url) { try { localStorage.setItem(`kaam_img_${name}`, url); } catch {} }
+    return url;
+  } catch { imgCache[name] = null; return null; }
+}
+
+async function loadAvatars() {
+  const els = document.querySelectorAll('[data-name]');
+  for (const el of els) {
+    const name = el.dataset.name;
+    const url = await fetchCharImage(name);
+    if (url && !el.querySelector('img')) {
+      el.innerHTML = `<img src="${url}" alt="${esc(name)}">`;
+      el.classList.add('has-img');
+    }
+  }
 }
 function highlight(text, query) {
   if (!query) return esc(text);
@@ -94,6 +138,7 @@ function renderCitations() {
         <div class="quote-mark">"</div>
         <div class="quote-text">${esc(q.quote)}</div>
         <div class="quote-char">
+          <div class="char-avatar" data-name="${esc(q.name)}">${esc(q.name.charAt(0))}</div>
           <div class="quote-char-name">${esc(q.name)}</div>
           ${ep ? `<div class="quote-char-ep">${esc(ep)}</div>` : ''}
         </div>
@@ -109,6 +154,7 @@ function renderCitations() {
       <div class="quote-hint">Swipe ← → ou appuyez sur la carte pour changer</div>
     </div>`;
 
+  loadAvatars();
   document.getElementById('btn-prev').addEventListener('click', () => prevQuote());
   document.getElementById('btn-next').addEventListener('click', () => nextQuote());
   document.getElementById('btn-random').addEventListener('click', () => randomQuote());
@@ -201,7 +247,10 @@ function renderQuiz() {
 
       <div class="quiz-choices">
         ${choices.map(c => `
-          <button class="quiz-choice" data-choice="${esc(c)}">${esc(c)}</button>
+          <button class="quiz-choice" data-choice="${esc(c)}">
+            <div class="quiz-choice-avatar" data-name="${esc(c)}">${esc(c.charAt(0))}</div>
+            <span>${esc(c)}</span>
+          </button>
         `).join('')}
       </div>
 
@@ -209,6 +258,7 @@ function renderQuiz() {
       <button class="quiz-next-btn hidden" id="quiz-next">Réplique suivante →</button>
     </div>`;
 
+  loadAvatars();
   document.querySelectorAll('.quiz-choice').forEach(btn => {
     btn.addEventListener('click', () => {
       if (quizState.answered) return;
@@ -260,7 +310,7 @@ function renderPersonnages() {
       <div class="perso-list">
         ${chars.map(([name, count]) => `
           <div class="perso-row" data-char="${esc(name)}">
-            <div class="perso-avatar">${esc(getCharAvatar(name))}</div>
+            <div class="perso-avatar" data-name="${esc(name)}">${esc(name.charAt(0))}</div>
             <div class="perso-info">
               <div class="perso-name">${esc(name)}</div>
               <div class="perso-count">${count} réplique${count > 1 ? 's' : ''}</div>
@@ -273,6 +323,7 @@ function renderPersonnages() {
   main.querySelectorAll('.perso-row').forEach(row => {
     row.addEventListener('click', () => openPersonnage(row.dataset.char));
   });
+  loadAvatars();
 }
 
 function openPersonnage(name) {
@@ -285,6 +336,7 @@ function openPersonnage(name) {
   overlay.innerHTML = `
     <div class="detail-header">
       <button class="detail-back" id="detail-back">&#8592;</button>
+      <div class="perso-avatar detail-avatar" data-name="${esc(name)}">${esc(name.charAt(0))}</div>
       <span class="detail-header-title">${esc(name)}</span>
       <span class="detail-count">${quotes.length} répliques</span>
     </div>
@@ -297,6 +349,7 @@ function openPersonnage(name) {
         </div>`).join('')}
     </div>`;
 
+  loadAvatars();
   document.getElementById('detail-back').addEventListener('click', () => {
     overlay.classList.add('hidden');
     overlay.innerHTML = '';
@@ -436,6 +489,7 @@ function showQuoteModal(q) {
   overlay.innerHTML = `
     <div class="detail-header">
       <button class="detail-back" id="detail-back">&#8592;</button>
+      <div class="perso-avatar detail-avatar" data-name="${esc(q.name)}">${esc(q.name.charAt(0))}</div>
       <span class="detail-header-title">${esc(q.name)}</span>
       <button class="perso-quote-fav ${isFav(q) ? 'active' : ''}" id="modal-fav" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px;">❤️</button>
     </div>
@@ -453,6 +507,7 @@ function showQuoteModal(q) {
       </div>
     </div>`;
 
+  loadAvatars();
   document.getElementById('detail-back').addEventListener('click', () => {
     overlay.classList.add('hidden'); overlay.innerHTML = '';
   });
