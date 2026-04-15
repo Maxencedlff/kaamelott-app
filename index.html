@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f0d0a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Kaamelott">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <title>Kaamelott</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="main-header">
+      <div class="header-inner">
+        <div class="header-ornament">✦</div>
+        <h1 class="header-title">Kaamelott</h1>
+        <div class="header-ornament">✦</div>
+      </div>
+    </header>
+
+    <main id="main-content">
+      <div class="loading">
+        <div class="spinner"></div>
+        <div class="loading-text">Chargement des parchemins…</div>
+      </div>
+    </main>
+
+    <nav class="bottom-nav" id="bottom-nav">
+      <button class="nav-btn active" data-view="citations">
+        <span class="nav-icon">🎲</span>
+        <span>Citations</span>
+      </button>
+      <button class="nav-btn" data-view="quiz">
+        <span class="nav-icon">⚔️</span>
+        <span>Quiz</span>
+      </button>
+      <button class="nav-btn" data-view="personnages">
+        <span class="nav-icon">👑</span>
+        <span>Perso.</span>
+      </button>
+      <button class="nav-btn" data-view="recherche">
+        <span class="nav-icon">🔍</span>
+        <span>Chercher</span>
+      </button>
+      <button class="nav-btn" data-view="favoris">
+        <span class="nav-icon">❤️</span>
+        <span>Favoris</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="detail-overlay" class="hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0f0d0a"/>
+  <!-- Shield shape -->
+  <path d="M256 60 L420 130 L420 280 Q420 390 256 460 Q92 390 92 280 L92 130 Z"
+        fill="#1a1610" stroke="#c9a060" stroke-width="6"/>
+  <!-- Crown -->
+  <path d="M160 200 L160 170 L190 195 L220 155 L256 190 L292 155 L322 195 L352 170 L352 200 Z"
+        fill="#c9a060"/>
+  <rect x="160" y="200" width="192" height="28" rx="4" fill="#c9a060"/>
+  <!-- Sword -->
+  <rect x="249" y="235" width="14" height="110" rx="3" fill="#c9a060"/>
+  <rect x="225" y="250" width="62" height="10" rx="3" fill="#c9a060"/>
+  <rect x="248" y="340" width="16" height="30" rx="4" fill="#8b6914"/>
+  <!-- Stars -->
+  <text x="140" y="310" font-size="28" fill="#c9a060" opacity="0.7">✦</text>
+  <text x="336" y="310" font-size="28" fill="#c9a060" opacity="0.7">✦</text>
+  <!-- Bottom text -->
+  <text x="256" y="415" font-family="serif" font-size="22" fill="#c9a060"
+        text-anchor="middle" letter-spacing="4">KAAMELOTT</text>
+</svg>
