@@ -135,6 +135,8 @@ function renderCitations() {
       <div class="quote-counter">${quoteIdx + 1} / ${allQuotes.length}</div>
 
       <div class="quote-card" id="quote-card">
+        <div class="quote-card-line-top"></div>
+        <div class="quote-card-line-bottom"></div>
         <div class="quote-mark">"</div>
         <div class="quote-text">${esc(q.quote)}</div>
         <div class="quote-char">
