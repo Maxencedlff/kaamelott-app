@@ -9,6 +9,10 @@ let quoteIdx = 0;
 let quizState = null;
 let detailChar = null;
 
+// Historique des citations vues en mode aléatoire
+let randHistory = [];   // liste des quoteIdx visités
+let randPos = -1;       // position courante dans l'historique
+
 // ===== PARSE DATA =====
 function parseQuote(item) {
   const raw = item.character || '';
@@ -188,7 +192,7 @@ function renderCitations() {
     const dx = sx - e.changedTouches[0].clientX;
     const dy = Math.abs(sy - e.changedTouches[0].clientY);
     if (Math.abs(dx) > 50 && Math.abs(dx) > dy) {
-      if (dx > 0) randomQuote(); else prevQuote();
+      if (dx > 0) randomQuote(); else historyBack();
     }
     swiping = false;
   }, { passive: true });
@@ -203,8 +207,21 @@ function prevQuote() {
   renderCitations();
 }
 function randomQuote() {
+  // Coupe l'historique si on était en arrière
+  if (randPos < randHistory.length - 1) {
+    randHistory = randHistory.slice(0, randPos + 1);
+  }
   quoteIdx = Math.floor(Math.random() * allQuotes.length);
+  randHistory.push(quoteIdx);
+  randPos = randHistory.length - 1;
   renderCitations();
+}
+function historyBack() {
+  if (randPos > 0) {
+    randPos--;
+    quoteIdx = randHistory[randPos];
+    renderCitations();
+  }
 }
 async function shareQuote(q) {
   const text = `"${q.quote}" — ${q.name}${fmtEp(q) ? '\n' + fmtEp(q) : ''}\n\nKaamelott`;
@@ -575,8 +592,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   registerSW();
   try {
     await loadData();
-    // Shuffle pour commencer sur une citation aléatoire
+    // Démarrer sur une citation aléatoire et initialiser l'historique
     quoteIdx = Math.floor(Math.random() * allQuotes.length);
+    randHistory = [quoteIdx];
+    randPos = 0;
     renderCitations();
     bindNav();
   } catch (e) {
