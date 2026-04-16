@@ -169,15 +169,28 @@ function renderCitations() {
   const card = document.getElementById('quote-card');
   card.addEventListener('click', () => nextQuote());
 
-  // Swipe
-  let sx = 0, sy = 0;
-  card.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  // Swipe — bloque le scroll vertical pendant un geste horizontal
+  let sx = 0, sy = 0, swiping = false;
+  card.addEventListener('touchstart', e => {
+    sx = e.touches[0].clientX;
+    sy = e.touches[0].clientY;
+    swiping = false;
+  }, { passive: true });
+  card.addEventListener('touchmove', e => {
+    const dx = Math.abs(e.touches[0].clientX - sx);
+    const dy = Math.abs(e.touches[0].clientY - sy);
+    if (dx > dy && dx > 8) {
+      swiping = true;
+      e.preventDefault(); // bloque le scroll de la page
+    }
+  }, { passive: false });
   card.addEventListener('touchend', e => {
     const dx = sx - e.changedTouches[0].clientX;
     const dy = Math.abs(sy - e.changedTouches[0].clientY);
     if (Math.abs(dx) > 50 && Math.abs(dx) > dy) {
       if (dx > 0) nextQuote(); else prevQuote();
     }
+    swiping = false;
   }, { passive: true });
 }
 

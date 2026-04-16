@@ -111,7 +111,7 @@ body {
 /* ===== MAIN ===== */
 #main-content {
   flex: 1;
-  padding-bottom: 80px;
+  padding-bottom: calc(68px + var(--safe-bottom) + 16px);
 }
 
 /* View fade-in */
@@ -172,8 +172,10 @@ body {
 .citations-view {
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 140px);
+  /* Hauteur exacte = viewport - header - nav - padding main */
+  min-height: calc(100svh - 50px - 68px - var(--safe-top) - var(--safe-bottom) - 32px);
   padding: 16px;
+  padding-bottom: 8px;
 }
 
 .quote-counter {
