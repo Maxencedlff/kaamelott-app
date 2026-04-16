@@ -171,7 +171,7 @@ function renderCitations() {
   document.getElementById('btn-share').addEventListener('click', () => shareQuote(q));
 
   const card = document.getElementById('quote-card');
-  card.addEventListener('click', () => randomQuote());
+  card.addEventListener('click', () => historyForward());
 
   // Swipe — bloque le scroll vertical pendant un geste horizontal
   let sx = 0, sy = 0, swiping = false;
@@ -192,7 +192,7 @@ function renderCitations() {
     const dx = sx - e.changedTouches[0].clientX;
     const dy = Math.abs(sy - e.changedTouches[0].clientY);
     if (Math.abs(dx) > 50 && Math.abs(dx) > dy) {
-      if (dx > 0) randomQuote(); else historyBack();
+      if (dx > 0) historyForward(); else historyBack();
     }
     swiping = false;
   }, { passive: true });
@@ -221,6 +221,17 @@ function historyBack() {
     randPos--;
     quoteIdx = randHistory[randPos];
     renderCitations();
+  }
+}
+function historyForward() {
+  if (randPos < randHistory.length - 1) {
+    // Il reste des citations dans l'historique → on y retourne
+    randPos++;
+    quoteIdx = randHistory[randPos];
+    renderCitations();
+  } else {
+    // On est au bout → nouvelle citation aléatoire
+    randomQuote();
   }
 }
 async function shareQuote(q) {
