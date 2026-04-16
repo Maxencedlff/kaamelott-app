@@ -545,7 +545,15 @@ function setView(view) {
 
 // ===== SW =====
 function registerSW() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+
+  // Rechargement automatique quand le SW signale une nouvelle version
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data?.type === 'SW_UPDATED') {
+      window.location.reload();
+    }
+  });
 }
 
 // ===== INIT =====
