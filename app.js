@@ -71,52 +71,88 @@ function getCharList() {
   allQuotes.forEach(q => { map[q.name] = (map[q.name] || 0) + 1; });
   return Object.entries(map).sort((a,b) => b[1] - a[1]);
 }
-// ===== CHARACTER IMAGES =====
-const CHAR_WIKI = {
-  'ARTHUR':         'Alexandre_Astier',
-  'PERCEVAL':       'Franck_Pitiot',
-  'LÉODAGAN':       'Lionnel_Astier',
-  'LANCELOT':       'Thomas_Cousseau',
-  'GUENIÈVRE':      'Audrey_Fleurot',
-  'KARADOC':        'Jean-Christophe_Hembert',
-  'SÉLI':           'Joëlle_Sevilla',
-  'MERLIN':         'Jacques_Chambon',
-  'PÈRE BLAISE':    'Jean-Robert_Lombard',
-  'GAUVAIN':        'Simon_Astier',
-  'LA DAME DU LAC': 'Anne_Girouard',
-  'BOHORT':         'Nicolas_Gabion',
-  'YVAIN':          'Guilhem_Pellegri',
+// ===== CHARACTER AVATARS (SVG généré — couleur par perso, teinte par livre) =====
+
+// Teinte (hue) spécifique à chaque personnage
+const CHAR_HUE = {
+  'ARTHUR':          42,   // or royal
+  'PERCEVAL':        110,  // vert forêt
+  'LÉODAGAN':        4,    // rouge sang
+  'LANCELOT':        215,  // bleu acier
+  'GUENIÈVRE':       290,  // violet
+  'KARADOC':         28,   // orange
+  'SÉLI':            325,  // rose
+  'MERLIN':          265,  // violet foncé
+  'PÈRE BLAISE':     175,  // teal
+  'BOHORT':          200,  // bleu ciel
+  'YVAIN':           155,  // vert menthe
+  'GAUVAIN':         90,   // vert lime
+  'LA DAME DU LAC':  190,  // bleu océan
+  'PENDRAGON':       235,  // bleu nuit
+  'ATTILA':          15,   // rouge-orange
+  'GUETHENOC':       75,   // vert olive
+  'LE TAVERNIER':    35,   // brun chaud
+  'DEMETRA':         50,   // jaune doré
+  'VENEC':           130,  // vert clair
+  'GALESSIN':        170,  // turquoise
+  'ARTURUS':         42,   // même qu'Arthur (version latine)
 };
 
-const imgCache = {};
+// Luminosité de fond selon le livre (de I clair → VI sombre)
+const LIVRE_LIGHTNESS = { 'I': 32, 'II': 30, 'III': 27, 'IV': 24, 'V': 21, 'VI': 18 };
 
-async function fetchCharImage(name) {
-  if (imgCache[name] !== undefined) return imgCache[name];
-  const stored = localStorage.getItem(`kaam_img_${name}`);
-  if (stored) { imgCache[name] = stored; return stored; }
-  const wiki = CHAR_WIKI[name];
-  if (!wiki) { imgCache[name] = null; return null; }
-  try {
-    const r = await fetch(`https://fr.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wiki)}`);
-    if (!r.ok) { imgCache[name] = null; return null; }
-    const d = await r.json();
-    const url = d.thumbnail?.source || null;
-    imgCache[name] = url;
-    if (url) { try { localStorage.setItem(`kaam_img_${name}`, url); } catch {} }
-    return url;
-  } catch { imgCache[name] = null; return null; }
+function getInitials(name) {
+  if (name.startsWith('LA ') || name.startsWith('LE ') || name.startsWith("L'")) {
+    const parts = name.split(/\s+/);
+    return parts[parts.length - 1].charAt(0);
+  }
+  const parts = name.split(/\s+/);
+  return parts[0].charAt(0);
 }
 
-async function loadAvatars() {
-  const els = document.querySelectorAll('[data-name]');
-  for (const el of els) {
-    const name = el.dataset.name;
-    const url = await fetchCharImage(name);
-    if (url && !el.querySelector('img')) {
-      el.innerHTML = `<img src="${url}" alt="${esc(name)}">`;
-      el.classList.add('has-img');
-    }
-  }
+function generateAvatar(name, livre) {
+  const h  = CHAR_HUE[name] ?? 45;
+  const l  = LIVRE_LIGHTNESS[livre?.toUpperCase()] ?? 26;
+  const s  = 55;
+  const bg1 = `hsl(${h},${s}%,${l + 9}%)`;
+  const bg2 = `hsl(${h},${s}%,${l}%)`;
+  const ring = `hsl(${h},${s + 15}%,${l + 28}%)`;
+  const text = `hsl(${h},${Math.min(s + 20, 88)}%,${l + 58}%)`;
+  const init = getInitials(name);
+  const fs   = init.length > 1 ? 34 : 44;
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="${bg1}"/>
+    <stop offset="100%" stop-color="${bg2}"/>
+  </linearGradient>
+</defs>
+<circle cx="50" cy="50" r="50" fill="url(#bg)"/>
+<circle cx="50" cy="50" r="46" fill="none" stroke="${ring}" stroke-width="1" opacity=".4"/>
+<text x="50" y="64" text-anchor="middle"
+  font-family="Georgia,serif" font-size="${fs}" font-weight="bold"
+  fill="${text}" opacity=".95">${init}</text>
+</svg>`;
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+// Purger les anciennes images Wikipedia du localStorage
+(function clearOldWikiCache() {
+  try {
+    Object.keys(localStorage).filter(k => k.startsWith('kaam_img_')).forEach(k => localStorage.removeItem(k));
+  } catch {}
+})();
+
+function loadAvatars() {
+  document.querySelectorAll('[data-name]').forEach(el => {
+    if (el.querySelector('img')) return;
+    const name  = el.dataset.name;
+    const livre = el.dataset.livre || '';
+    el.innerHTML = `<img src="${generateAvatar(name, livre)}" alt="${esc(name)}">`;
+    el.classList.add('has-img');
+  });
 }
 function highlight(text, query) {
   if (!query) return esc(text);
@@ -144,7 +180,7 @@ function renderCitations() {
         <div class="quote-mark">"</div>
         <div class="quote-text">${esc(q.quote)}</div>
         <div class="quote-char">
-          <div class="char-avatar" data-name="${esc(q.name)}">${esc(q.name.charAt(0))}</div>
+          <div class="char-avatar" data-name="${esc(q.name)}" data-livre="${esc(q.livre)}">${esc(q.name.charAt(0))}</div>
           <div class="quote-char-name">${esc(q.name)}</div>
           ${ep ? `<div class="quote-char-ep">${esc(ep)}</div>` : ''}
         </div>
@@ -291,7 +327,7 @@ function renderQuiz() {
       <div class="quiz-choices">
         ${choices.map(c => `
           <button class="quiz-choice" data-choice="${esc(c)}">
-            <div class="quiz-choice-avatar" data-name="${esc(c)}">${esc(c.charAt(0))}</div>
+            <div class="quiz-choice-avatar" data-name="${esc(c)}" data-livre="${esc(q.livre)}">${esc(c.charAt(0))}</div>
             <span>${esc(c)}</span>
           </button>
         `).join('')}
@@ -379,7 +415,7 @@ function openPersonnage(name) {
   overlay.innerHTML = `
     <div class="detail-header">
       <button class="detail-back" id="detail-back">&#8592;</button>
-      <div class="perso-avatar detail-avatar" data-name="${esc(name)}">${esc(name.charAt(0))}</div>
+      <div class="perso-avatar detail-avatar" data-name="${esc(name)}" data-livre="${esc(quotes[0]?.livre||'')}">${esc(name.charAt(0))}</div>
       <span class="detail-header-title">${esc(name)}</span>
       <span class="detail-count">${quotes.length} répliques</span>
     </div>
@@ -532,7 +568,7 @@ function showQuoteModal(q) {
   overlay.innerHTML = `
     <div class="detail-header">
       <button class="detail-back" id="detail-back">&#8592;</button>
-      <div class="perso-avatar detail-avatar" data-name="${esc(q.name)}">${esc(q.name.charAt(0))}</div>
+      <div class="perso-avatar detail-avatar" data-name="${esc(q.name)}" data-livre="${esc(q.livre||'')}">${esc(q.name.charAt(0))}</div>
       <span class="detail-header-title">${esc(q.name)}</span>
       <button class="perso-quote-fav ${isFav(q) ? 'active' : ''}" id="modal-fav" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px;">❤️</button>
     </div>
