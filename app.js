@@ -153,7 +153,7 @@ function renderCitations() {
         <button class="quote-action-btn" id="btn-share" title="Partager">📤</button>
         <button class="quote-action-btn" id="btn-next" title="Suivante">▶</button>
       </div>
-      <div class="quote-hint">Swipe ← → ou appuyez sur la carte pour changer</div>
+      <div class="quote-hint">Swipe ou appuyez sur la carte pour une réplique aléatoire</div>
     </div>`;
 
   loadAvatars();
@@ -167,7 +167,7 @@ function renderCitations() {
   document.getElementById('btn-share').addEventListener('click', () => shareQuote(q));
 
   const card = document.getElementById('quote-card');
-  card.addEventListener('click', () => nextQuote());
+  card.addEventListener('click', () => randomQuote());
 
   // Swipe — bloque le scroll vertical pendant un geste horizontal
   let sx = 0, sy = 0, swiping = false;
@@ -188,7 +188,7 @@ function renderCitations() {
     const dx = sx - e.changedTouches[0].clientX;
     const dy = Math.abs(sy - e.changedTouches[0].clientY);
     if (Math.abs(dx) > 50 && Math.abs(dx) > dy) {
-      if (dx > 0) nextQuote(); else prevQuote();
+      randomQuote();
     }
     swiping = false;
   }, { passive: true });
