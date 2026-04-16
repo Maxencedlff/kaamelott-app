@@ -153,7 +153,7 @@ function renderCitations() {
         <button class="quote-action-btn" id="btn-share" title="Partager">📤</button>
         <button class="quote-action-btn" id="btn-next" title="Suivante">▶</button>
       </div>
-      <div class="quote-hint">Swipe ou appuyez sur la carte pour une réplique aléatoire</div>
+      <div class="quote-hint">Swipe → retour · Swipe ← aléatoire · Tap aléatoire</div>
     </div>`;
 
   loadAvatars();
@@ -188,7 +188,7 @@ function renderCitations() {
     const dx = sx - e.changedTouches[0].clientX;
     const dy = Math.abs(sy - e.changedTouches[0].clientY);
     if (Math.abs(dx) > 50 && Math.abs(dx) > dy) {
-      randomQuote();
+      if (dx > 0) randomQuote(); else prevQuote();
     }
     swiping = false;
   }, { passive: true });
