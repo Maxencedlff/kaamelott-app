@@ -819,3 +819,78 @@ body {
   .quiz-choice-avatar { width: 46px; height: 46px; font-size: 17px; }
   .quiz-quote { font-size: 16px; }
 }
+
+/* ===== SONS ===== */
+.audio-toggles {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.audio-chip {
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  color: var(--text3);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all .15s;
+}
+.audio-chip .chip-count {
+  font-size: 10px;
+  color: var(--text4);
+  background: var(--bg3);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+.audio-chip.on {
+  color: #1a1200;
+  background: var(--gold);
+  border-color: var(--gold2);
+  box-shadow: 0 0 10px var(--gold-glow);
+}
+.audio-chip.on .chip-count { background: rgba(0,0,0,.15); color: #1a1200; }
+
+.quote-audio { display: flex; justify-content: center; margin-top: 18px; position: relative; z-index: 1; }
+.audio-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid var(--gold);
+  color: var(--gold2);
+  font-family: var(--font-title);
+  font-size: 13px;
+  letter-spacing: .08em;
+  padding: 8px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.audio-btn-big { padding: 10px 22px; font-size: 14px; }
+.audio-btn:hover { background: var(--gold-glow); }
+.audio-btn .audio-icon-stop { display: none; }
+.audio-btn.playing { background: var(--gold); color: #1a1200; box-shadow: 0 0 16px rgba(201,160,96,.4); }
+.audio-btn.playing .audio-icon-play { display: none; }
+.audio-btn.playing .audio-icon-stop { display: inline; }
+.audio-btn.playing .audio-label::after { content: '…'; }
+
+.audio-mini {
+  background: transparent;
+  border: 1px solid var(--gold);
+  color: var(--gold2);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 11px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+.audio-mini.playing { background: var(--gold); color: #1a1200; }
+.has-audio { font-size: 11px; opacity: .85; }

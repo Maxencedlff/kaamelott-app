@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v4';
+const CACHE = 'kaamelott-v5';
 const ASSETS = [
   '/',
   '/index.html',
@@ -42,6 +42,9 @@ self.addEventListener('fetch', e => {
     e.respondWith(fetch(e.request).catch(() => new Response('', { status: 503 })));
     return;
   }
+
+  // Sons : laissés au navigateur (requêtes Range / réponses 206 non stockables dans le cache)
+  if (url.pathname.startsWith('/sons/')) return;
 
   // Network-first : essaie le réseau, met à jour le cache, fallback sur cache si offline
   e.respondWith(
