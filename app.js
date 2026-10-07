@@ -14,6 +14,7 @@ let detailChar = null;
 let audioIdx = [];        // index (dans allQuotes) des répliques avec son
 let audioOnly = readPref('kaam_audio_only');   // n'afficher que les répliques avec son
 let autoPlay  = readPref('kaam_autoplay');     // jouer le son dès qu'on tombe sur la réplique
+let inOrder   = readPref('kaam_in_order');     // swipe/tap : réplique suivante dans l'ordre au lieu d'aléatoire
 const player = new Audio();
 player.preload = 'auto';
 let playingBtn = null;
@@ -227,6 +228,7 @@ function renderCitations() {
       <div class="audio-toggles">
         <button class="audio-chip ${audioOnly ? 'on' : ''}" id="chip-audio-only">🔊 Seulement avec son <span class="chip-count">${audioIdx.length}</span></button>
         <button class="audio-chip ${autoPlay ? 'on' : ''}" id="chip-autoplay">▶ Lecture auto</button>
+        <button class="audio-chip ${inOrder ? 'on' : ''}" id="chip-order">${inOrder ? '➡️ Dans l\'ordre' : '🔀 Aléatoire'}</button>
       </div>
       <div class="quote-counter">${counter}</div>
 
@@ -250,7 +252,7 @@ function renderCitations() {
         <button class="quote-action-btn" id="btn-share" title="Partager">📤</button>
         <button class="quote-action-btn" id="btn-next" title="Suivante">▶</button>
       </div>
-      <div class="quote-hint">Swipe → retour · Swipe ← aléatoire · Tap aléatoire</div>
+      <div class="quote-hint">${inOrder ? 'Swipe ← suivante · Swipe → précédente · Tap suivante' : 'Swipe → retour · Swipe ← aléatoire · Tap aléatoire'}</div>
     </div>`;
 
   loadAvatars();
@@ -269,6 +271,11 @@ function renderCitations() {
     // En passant en « avec son », on saute sur une réplique qui en a un
     if (audioOnly && !q.audio) randomQuote(); else renderCitations();
   });
+  document.getElementById('chip-order').addEventListener('click', () => {
+    inOrder = !inOrder;
+    writePref('kaam_in_order', inOrder);
+    renderCitations();
+  });
   document.getElementById('chip-autoplay').addEventListener('click', e => {
     autoPlay = !autoPlay;
     writePref('kaam_autoplay', autoPlay);
@@ -284,7 +291,7 @@ function renderCitations() {
   }
 
   const card = document.getElementById('quote-card');
-  card.addEventListener('click', () => historyForward());
+  card.addEventListener('click', () => swipeForward());
 
   // Swipe — bloque le scroll vertical pendant un geste horizontal
   let sx = 0, sy = 0, swiping = false;
@@ -305,7 +312,7 @@ function renderCitations() {
     const dx = sx - e.changedTouches[0].clientX;
     const dy = Math.abs(sy - e.changedTouches[0].clientY);
     if (Math.abs(dx) > 50 && Math.abs(dx) > dy) {
-      if (dx > 0) historyForward(); else historyBack();
+      if (dx > 0) swipeForward(); else swipeBack();
     }
     swiping = false;
   }, { passive: true });
@@ -338,6 +345,10 @@ function randomQuote() {
   randPos = randHistory.length - 1;
   renderCitations();
 }
+// Swipe / tap : selon le mode choisi, réplique suivante dans l'ordre ou aléatoire (avec historique)
+function swipeForward() { if (inOrder) stepQuote(1); else historyForward(); }
+function swipeBack()    { if (inOrder) stepQuote(-1); else historyBack(); }
+
 function historyBack() {
   if (randPos > 0) {
     randPos--;
