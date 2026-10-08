@@ -908,3 +908,6 @@ body {
 .quote-text-small { font-size: 17px; margin-top: 14px; }
 .video-modal { padding: 20px 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
 .quote-audio { gap: 10px; flex-wrap: wrap; }
+.quote-video { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.quote-video::-webkit-media-controls { display: none !important; }
+.quote-video::-webkit-media-controls-start-playback-button { display: none !important; -webkit-appearance: none; }

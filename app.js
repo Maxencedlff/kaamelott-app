@@ -253,7 +253,7 @@ function renderCitations() {
         <div class="quote-card-line-top"></div>
         <div class="quote-card-line-bottom"></div>
         ${inlineVideo
-          ? `<video class="quote-video" id="qvideo" src="${videoURL(q)}" playsinline controls preload="auto"></video>
+          ? `<video class="quote-video" id="qvideo" src="${videoURL(q)}" playsinline preload="auto"></video>
              <div class="quote-text quote-text-small">${esc(q.quote)}</div>`
           : `<div class="quote-mark">"</div>
              <div class="quote-text">${esc(q.quote)}</div>`}
@@ -297,7 +297,8 @@ function renderCitations() {
   const vid = document.getElementById('qvideo');
   if (vid) {
     // les gestes sur le lecteur ne doivent pas changer de réplique
-    ['click', 'touchstart', 'touchend'].forEach(ev => vid.addEventListener(ev, e => e.stopPropagation()));
+    ['touchstart', 'touchend'].forEach(ev => vid.addEventListener(ev, e => e.stopPropagation()));
+    vid.addEventListener('click', e => { e.stopPropagation(); replayVideo(vid); });   // toucher = rejouer (avec le son)
     vid.play().catch(() => { vid.muted = true; vid.play().catch(() => {}); });   // son coupé si le navigateur l'exige
   }
   const btnVideo = document.getElementById('btn-video');
@@ -696,6 +697,12 @@ function renderFavoris() {
   });
 }
 
+// Lecteur sans commandes : toucher la vidéo la rejoue depuis le début, son activé
+function replayVideo(v) {
+  v.muted = false; v.currentTime = 0;
+  v.play().catch(() => {});
+}
+
 // ===== VIDÉO EN PLEIN ÉCRAN (bouton « Voir la scène ») =====
 function showVideo(q) {
   stopAudio();
@@ -707,12 +714,13 @@ function showVideo(q) {
       <span class="detail-header-title">${esc(q.name)}</span>
     </div>
     <div class="video-modal">
-      <video class="quote-video" id="mvideo" src="${videoURL(q)}" playsinline controls autoplay></video>
+      <video class="quote-video" id="mvideo" src="${videoURL(q)}" playsinline autoplay></video>
       <div class="quote-text quote-text-small">"${esc(q.quote)}"</div>
       ${fmtEp(q) ? `<div class="quote-char-ep">${esc(fmtEp(q))}</div>` : ''}
     </div>`;
   const v = document.getElementById('mvideo');
-  v.play().catch(() => {});
+  v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+  v.addEventListener('click', () => replayVideo(v));
   document.getElementById('detail-back').addEventListener('click', () => {
     v.pause(); overlay.classList.add('hidden'); overlay.innerHTML = '';
   });
