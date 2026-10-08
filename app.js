@@ -61,10 +61,11 @@ function playAudio(src, btn) {
 }
 player.addEventListener('ended', () => setPlayingBtn(null));
 
-function audioBtnHTML(id, big) {
-  return `<button class="audio-btn${big ? ' audio-btn-big' : ''}" id="${id}" aria-label="Écouter la réplique">
+function audioBtnHTML(id, big, approx) {
+  // approx : son placé par l'écart entre les répliques voisines (peut déborder un peu sur elles)
+  return `<button class="audio-btn${big ? ' audio-btn-big' : ''}" id="${id}" aria-label="Écouter la réplique"${approx ? ' title="Son estimé : peut déborder un peu sur les répliques voisines"' : ''}>
     <span class="audio-icon-play">▶</span><span class="audio-icon-stop">■</span>
-    <span class="audio-label">Écouter</span>
+    <span class="audio-label">${approx ? '≈ Écouter' : 'Écouter'}</span>
   </button>`;
 }
 
@@ -88,7 +89,7 @@ function parseQuote(item) {
   const episode = epM ? epM[1] : '';
   const title   = epM && epM[2] ? epM[2].trim() : '';
 
-  return { quote: item.quote, name, livre, episode, title, audio: item.audio || null, video: item.video || null };
+  return { quote: item.quote, name, livre, episode, title, audio: item.audio || null, video: item.video || null, approx: !!item.approx };
 }
 
 async function loadData() {
@@ -263,7 +264,7 @@ function renderCitations() {
           ${ep ? `<div class="quote-char-ep">${esc(ep)}</div>` : ''}
         </div>
         ${!inlineVideo && (q.audio || q.video) ? `<div class="quote-audio">
-          ${q.audio ? audioBtnHTML('btn-audio', true) : ''}
+          ${q.audio ? audioBtnHTML('btn-audio', true, q.approx) : ''}
           ${q.video ? `<button class="audio-btn audio-btn-big" id="btn-video">🎬 <span class="audio-label">Voir la scène</span></button>` : ''}
         </div>` : ''}
       </div>
