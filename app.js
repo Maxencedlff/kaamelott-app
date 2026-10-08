@@ -14,10 +14,10 @@ let detailChar = null;
 let audioIdx = [];        // index (dans allQuotes) des répliques avec son
 let audioOnly = readPref('kaam_audio_only');   // n'afficher que les répliques avec son
 // ===== VIDÉOS (extraits hébergés sur Hugging Face) =====
-const VIDEO_BASE = 'https://huggingface.co/datasets/Maxencedlf/kaamelott-videos/resolve/main/videos/';
+const VIDEO_BASE = 'https://huggingface.co/datasets/Maxencedlf/kaamelott-videos/resolve/main/v/';   // v/<2 premiers caractères>/<clé>.mp4
 let videoIdx = [];        // index des répliques avec extrait vidéo
 let videoOnly = readPref('kaam_video_only');   // mode vidéo : seulement ces répliques, scène jouée dans la carte
-function videoURL(q) { return q.video ? VIDEO_BASE + q.video + '.mp4' : null; }
+function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4` : null; }
 // Répliques parcourues (aléatoire / ordre) selon les filtres actifs
 function pool() {
   if (videoOnly && videoIdx.length) return videoIdx;
