@@ -13,6 +13,17 @@ let detailChar = null;
 // Seules certaines répliques ont un extrait sonore (champ "audio" de data.json)
 let audioIdx = [];        // index (dans allQuotes) des répliques avec son
 let audioOnly = readPref('kaam_audio_only');   // n'afficher que les répliques avec son
+// ===== VIDÉOS (extraits hébergés sur Hugging Face) =====
+const VIDEO_BASE = 'https://huggingface.co/datasets/Maxencedlf/kaamelott-videos/resolve/main/videos/';
+let videoIdx = [];        // index des répliques avec extrait vidéo
+let videoOnly = readPref('kaam_video_only');   // mode vidéo : seulement ces répliques, scène jouée dans la carte
+function videoURL(q) { return q.video ? VIDEO_BASE + q.video + '.mp4' : null; }
+// Répliques parcourues (aléatoire / ordre) selon les filtres actifs
+function pool() {
+  if (videoOnly && videoIdx.length) return videoIdx;
+  if (audioOnly && audioIdx.length) return audioIdx;
+  return null;
+}
 let autoPlay  = readPref('kaam_autoplay');     // jouer le son dès qu'on tombe sur la réplique
 let inOrder   = readPref('kaam_in_order');     // swipe/tap : réplique suivante dans l'ordre au lieu d'aléatoire
 const player = new Audio();
@@ -36,6 +47,7 @@ function setPlayingBtn(btn) {
 }
 function stopAudio() {
   player.pause();
+  document.querySelectorAll('video').forEach(v => v.pause());
   setPlayingBtn(null);
 }
 function playAudio(src, btn) {
@@ -76,7 +88,7 @@ function parseQuote(item) {
   const episode = epM ? epM[1] : '';
   const title   = epM && epM[2] ? epM[2].trim() : '';
 
-  return { quote: item.quote, name, livre, episode, title, audio: item.audio || null };
+  return { quote: item.quote, name, livre, episode, title, audio: item.audio || null, video: item.video || null };
 }
 
 async function loadData() {
@@ -84,7 +96,9 @@ async function loadData() {
   const raw  = await res.json();
   allQuotes  = raw.map(parseQuote).filter(q => q.quote && q.name);
   audioIdx   = allQuotes.reduce((acc, q, i) => (q.audio && acc.push(i), acc), []);
+  videoIdx   = allQuotes.reduce((acc, q, i) => (q.video && acc.push(i), acc), []);
   if (!audioIdx.length) audioOnly = false;
+  if (!videoIdx.length) videoOnly = false;
 }
 
 // ===== STORAGE =====
@@ -219,15 +233,18 @@ function renderCitations() {
   currentQuote = q;
   const favActive = isFav(q);
   const ep = fmtEp(q);
-  const counter = audioOnly
-    ? `${audioIdx.indexOf(quoteIdx) + 1} / ${audioIdx.length} répliques avec son`
+  const P = pool();
+  const counter = P
+    ? `${P.indexOf(quoteIdx) + 1} / ${P.length} répliques ${P === videoIdx ? 'avec vidéo' : 'avec son'}`
     : `${quoteIdx + 1} / ${allQuotes.length}`;
+  const inlineVideo = videoOnly && q.video;
 
   main.innerHTML = `
     <div class="citations-view">
       <div class="audio-toggles">
         <button class="audio-chip ${audioOnly ? 'on' : ''}" id="chip-audio-only">🔊 Seulement avec son <span class="chip-count">${audioIdx.length}</span></button>
         <button class="audio-chip ${autoPlay ? 'on' : ''}" id="chip-autoplay">▶ Lecture auto</button>
+        ${videoIdx.length ? `<button class="audio-chip ${videoOnly ? 'on' : ''}" id="chip-video-only">🎬 Mode vidéo <span class="chip-count">${videoIdx.length}</span></button>` : ''}
         <button class="audio-chip ${inOrder ? 'on' : ''}" id="chip-order">${inOrder ? '➡️ Dans l\'ordre' : '🔀 Aléatoire'}</button>
       </div>
       <div class="quote-counter">${counter}</div>
@@ -235,14 +252,20 @@ function renderCitations() {
       <div class="quote-card" id="quote-card">
         <div class="quote-card-line-top"></div>
         <div class="quote-card-line-bottom"></div>
-        <div class="quote-mark">"</div>
-        <div class="quote-text">${esc(q.quote)}</div>
+        ${inlineVideo
+          ? `<video class="quote-video" id="qvideo" src="${videoURL(q)}" playsinline controls preload="auto"></video>
+             <div class="quote-text quote-text-small">${esc(q.quote)}</div>`
+          : `<div class="quote-mark">"</div>
+             <div class="quote-text">${esc(q.quote)}</div>`}
         <div class="quote-char">
           <div class="char-avatar" data-name="${esc(q.name)}" data-livre="${esc(q.livre)}">${esc(q.name.charAt(0))}</div>
           <div class="quote-char-name">${esc(q.name)}</div>
           ${ep ? `<div class="quote-char-ep">${esc(ep)}</div>` : ''}
         </div>
-        ${q.audio ? `<div class="quote-audio">${audioBtnHTML('btn-audio', true)}</div>` : ''}
+        ${!inlineVideo && (q.audio || q.video) ? `<div class="quote-audio">
+          ${q.audio ? audioBtnHTML('btn-audio', true) : ''}
+          ${q.video ? `<button class="audio-btn audio-btn-big" id="btn-video">🎬 <span class="audio-label">Voir la scène</span></button>` : ''}
+        </div>` : ''}
       </div>
 
       <div class="quote-actions">
@@ -265,6 +288,20 @@ function renderCitations() {
   });
   document.getElementById('btn-share').addEventListener('click', () => shareQuote(q));
 
+  const chipVideo = document.getElementById('chip-video-only');
+  if (chipVideo) chipVideo.addEventListener('click', () => {
+    videoOnly = !videoOnly;
+    writePref('kaam_video_only', videoOnly);
+    if (videoOnly && !q.video) randomQuote(); else renderCitations();
+  });
+  const vid = document.getElementById('qvideo');
+  if (vid) {
+    // les gestes sur le lecteur ne doivent pas changer de réplique
+    ['click', 'touchstart', 'touchend'].forEach(ev => vid.addEventListener(ev, e => e.stopPropagation()));
+    vid.play().catch(() => { vid.muted = true; vid.play().catch(() => {}); });   // son coupé si le navigateur l'exige
+  }
+  const btnVideo = document.getElementById('btn-video');
+  if (btnVideo) btnVideo.addEventListener('click', e => { e.stopPropagation(); showVideo(q); });
   document.getElementById('chip-audio-only').addEventListener('click', () => {
     audioOnly = !audioOnly;
     writePref('kaam_audio_only', audioOnly);
@@ -320,11 +357,12 @@ function renderCitations() {
 
 // Pas suivant/précédent : dans toutes les répliques, ou seulement celles avec son
 function stepQuote(dir) {
-  if (audioOnly && audioIdx.length) {
-    const pos = audioIdx.indexOf(quoteIdx);
+  const P = pool();
+  if (P) {
+    const pos = P.indexOf(quoteIdx);
     const next = pos === -1
-      ? (dir > 0 ? audioIdx.find(i => i > quoteIdx) ?? audioIdx[0] : [...audioIdx].reverse().find(i => i < quoteIdx) ?? audioIdx[audioIdx.length - 1])
-      : audioIdx[(pos + dir + audioIdx.length) % audioIdx.length];
+      ? (dir > 0 ? P.find(i => i > quoteIdx) ?? P[0] : [...P].reverse().find(i => i < quoteIdx) ?? P[P.length - 1])
+      : P[(pos + dir + P.length) % P.length];
     quoteIdx = next;
   } else {
     quoteIdx = (quoteIdx + dir + allQuotes.length) % allQuotes.length;
@@ -338,9 +376,7 @@ function randomQuote() {
   if (randPos < randHistory.length - 1) {
     randHistory = randHistory.slice(0, randPos + 1);
   }
-  quoteIdx = audioOnly && audioIdx.length
-    ? rand(audioIdx)
-    : Math.floor(Math.random() * allQuotes.length);
+  quoteIdx = pool() ? rand(pool()) : Math.floor(Math.random() * allQuotes.length);
   randHistory.push(quoteIdx);
   randPos = randHistory.length - 1;
   renderCitations();
@@ -660,6 +696,28 @@ function renderFavoris() {
   });
 }
 
+// ===== VIDÉO EN PLEIN ÉCRAN (bouton « Voir la scène ») =====
+function showVideo(q) {
+  stopAudio();
+  const overlay = document.getElementById('detail-overlay');
+  overlay.classList.remove('hidden'); overlay.scrollTop = 0;
+  overlay.innerHTML = `
+    <div class="detail-header">
+      <button class="detail-back" id="detail-back">&#8592;</button>
+      <span class="detail-header-title">${esc(q.name)}</span>
+    </div>
+    <div class="video-modal">
+      <video class="quote-video" id="mvideo" src="${videoURL(q)}" playsinline controls autoplay></video>
+      <div class="quote-text quote-text-small">"${esc(q.quote)}"</div>
+      ${fmtEp(q) ? `<div class="quote-char-ep">${esc(fmtEp(q))}</div>` : ''}
+    </div>`;
+  const v = document.getElementById('mvideo');
+  v.play().catch(() => {});
+  document.getElementById('detail-back').addEventListener('click', () => {
+    v.pause(); overlay.classList.add('hidden'); overlay.innerHTML = '';
+  });
+}
+
 // ===== QUOTE MODAL (from search/fav) =====
 function showQuoteModal(q) {
   const overlay = document.getElementById('detail-overlay');
@@ -748,7 +806,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     await loadData();
     // Démarrer sur une citation aléatoire et initialiser l'historique
-    quoteIdx = audioOnly ? rand(audioIdx) : Math.floor(Math.random() * allQuotes.length);
+    quoteIdx = pool() ? rand(pool()) : Math.floor(Math.random() * allQuotes.length);
     randHistory = [quoteIdx];
     randPos = 0;
     renderCitations();

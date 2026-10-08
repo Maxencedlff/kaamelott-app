@@ -894,3 +894,17 @@ body {
 }
 .audio-mini.playing { background: var(--gold); color: #1a1200; }
 .has-audio { font-size: 11px; opacity: .85; }
+
+/* ===== VIDÉOS ===== */
+.quote-video {
+  width: 100%;
+  max-height: 46vh;
+  border-radius: var(--radius-lg);
+  background: #000;
+  display: block;
+  position: relative;
+  z-index: 1;
+}
+.quote-text-small { font-size: 17px; margin-top: 14px; }
+.video-modal { padding: 20px 16px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.quote-audio { gap: 10px; flex-wrap: wrap; }

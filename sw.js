@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v6';
+const CACHE = 'kaamelott-v7';
 const ASSETS = [
   '/',
   '/index.html',
@@ -37,11 +37,8 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
 
-  // Ignorer les requêtes externes (Wikipedia images, etc.)
-  if (url.origin !== self.location.origin) {
-    e.respondWith(fetch(e.request).catch(() => new Response('', { status: 503 })));
-    return;
-  }
+  // Requêtes externes (vidéos Hugging Face…) : laissées au navigateur (requêtes Range des lecteurs vidéo)
+  if (url.origin !== self.location.origin) return;
 
   // Sons : laissés au navigateur (requêtes Range / réponses 206 non stockables dans le cache)
   if (url.pathname.startsWith('/sons/')) return;
