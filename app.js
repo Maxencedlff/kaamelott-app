@@ -17,6 +17,13 @@ let audioOnly = readPref('kaam_audio_only');   // n'afficher que les répliques 
 const VIDEO_BASE = 'https://huggingface.co/datasets/Maxencedlf/kaamelott-videos/resolve/main/v/';   // v/<2 premiers caractères>/<clé>.mp4
 let videoIdx = [];        // index des répliques avec extrait vidéo
 let videoOnly = readPref('kaam_video_only');   // mode vidéo : seulement ces répliques, scène jouée dans la carte
+// Sons automatiques (sons/auto/<clé>.m4a) : hébergés sur Hugging Face, dans s/<2 premiers caractères>/ ;
+// les quelques sons manuels (sons/*.mp3) restent sur le site
+const AUDIO_BASE = 'https://huggingface.co/datasets/Maxencedlf/kaamelott-videos/resolve/main/s/';
+function audioURL(src) {
+  const m = /^sons\/auto\/(.+\.m4a)$/.exec(src || '');
+  return m ? `${AUDIO_BASE}${m[1].slice(0, 2)}/${m[1]}` : src;
+}
 function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4` : null; }
 // Répliques parcourues (aléatoire / ordre) selon les filtres actifs
 function pool() {
@@ -65,7 +72,7 @@ function playAudio(src, btn) {
   if (!src) return;
   // Re-tap sur le bouton en cours de lecture = stop
   if (btn && btn === playingBtn && !player.paused) { stopAudio(); return; }
-  player.src = src;
+  player.src = audioURL(src);
   player.currentTime = 0;
   setPlayingBtn(btn || null);
   player.play().catch(() => setPlayingBtn(null));
