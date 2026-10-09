@@ -106,8 +106,9 @@ function parseQuote(item, i) {
   const livre   = livreM ? livreM[1].toUpperCase() : '';
   const episode = epM ? epM[1] : '';
   const title   = epM && epM[2] ? epM[2].trim() : '';
+  const film    = /premier volet/i.test(rest) ? 'Kaamelott : Premier Volet' : '';
 
-  return { i, quote: item.quote, name, livre, episode, title, audio: item.audio || null, video: item.video || null, approx: !!item.approx };
+  return { i, quote: item.quote, name, livre, episode, title, film, audio: item.audio || null, video: item.video || null, approx: !!item.approx };
 }
 
 async function loadData() {
@@ -142,6 +143,7 @@ function esc(s) {
 }
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function fmtEp(q) {
+  if (q.film) return `Film · ${q.film}`;
   if (!q.livre && !q.episode) return '';
   let s = '';
   if (q.livre)   s += `Livre ${q.livre}`;
