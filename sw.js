@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v10';
+const CACHE = 'kaamelott-v11';
 const ASSETS = [
   '/',
   '/index.html',
@@ -36,6 +36,9 @@ self.addEventListener('activate', e => {
 // Fetch : network-first pour HTML/JS/CSS/data (toujours à jour), cache fallback offline
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
+
+  // Envois (avis de vérification) : jamais mis en cache
+  if (e.request.method !== 'GET') return;
 
   // Requêtes externes (vidéos Hugging Face…) : laissées au navigateur (requêtes Range des lecteurs vidéo)
   if (url.origin !== self.location.origin) return;

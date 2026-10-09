@@ -20,9 +20,20 @@ let videoOnly = readPref('kaam_video_only');   // mode vidéo : seulement ces r�
 function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4` : null; }
 // Répliques parcourues (aléatoire / ordre) selon les filtres actifs
 function pool() {
+  if (verifyMode) return verifyIdx;
   if (videoOnly && videoIdx.length) return videoIdx;
   if (audioOnly && audioIdx.length) return audioIdx;
   return null;
+}
+// ===== VÉRIFICATION (avis son / vidéo justes ou non, envoyés à /api/avis) =====
+let verifyMode = readPref('kaam_verify');      // ne montrer que les répliques avec son/vidéo pas encore vérifiées
+let verifyIdx = [];
+let avisFaits = readJSON('kaam_avis_faits', {});   // index de réplique → 1 (déjà vérifiée sur cet appareil)
+let avisFile  = readJSON('kaam_avis_file', []);    // avis pas encore envoyés
+function readJSON(k, def) { try { return JSON.parse(localStorage.getItem(k)) || def; } catch { return def; } }
+function writeJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+function rebuildVerify() {
+  verifyIdx = allQuotes.reduce((acc, q, i) => ((q.audio || q.video) && !avisFaits[q.i] && acc.push(i), acc), []);
 }
 let autoPlay  = readPref('kaam_autoplay');     // jouer le son dès qu'on tombe sur la réplique
 let inOrder   = readPref('kaam_in_order');     // swipe/tap : réplique suivante dans l'ordre au lieu d'aléatoire
@@ -74,7 +85,7 @@ let randHistory = [];   // liste des quoteIdx visités
 let randPos = -1;       // position courante dans l'historique
 
 // ===== PARSE DATA =====
-function parseQuote(item) {
+function parseQuote(item, i) {
   const raw = item.character || '';
   const commaIdx = raw.indexOf(',');
   const name = commaIdx > -1
@@ -89,7 +100,7 @@ function parseQuote(item) {
   const episode = epM ? epM[1] : '';
   const title   = epM && epM[2] ? epM[2].trim() : '';
 
-  return { quote: item.quote, name, livre, episode, title, audio: item.audio || null, video: item.video || null, approx: !!item.approx };
+  return { i, quote: item.quote, name, livre, episode, title, audio: item.audio || null, video: item.video || null, approx: !!item.approx };
 }
 
 async function loadData() {
@@ -98,6 +109,7 @@ async function loadData() {
   allQuotes  = raw.map(parseQuote).filter(q => q.quote && q.name);
   audioIdx   = allQuotes.reduce((acc, q, i) => (q.audio && acc.push(i), acc), []);
   videoIdx   = allQuotes.reduce((acc, q, i) => (q.video && acc.push(i), acc), []);
+  rebuildVerify();
   if (!audioIdx.length) audioOnly = false;
   if (!videoIdx.length) videoOnly = false;
 }
@@ -235,10 +247,13 @@ function renderCitations() {
   const favActive = isFav(q);
   const ep = fmtEp(q);
   const P = pool();
-  const counter = P
+  const counter = verifyMode
+    ? `${verifyIdx.length} à vérifier · ${Object.keys(avisFaits).length} vérifiées${avisFile.length ? ` · ${avisFile.length} en attente d'envoi` : ''}`
+    : P
     ? `${P.indexOf(quoteIdx) + 1} / ${P.length} répliques ${P === videoIdx ? 'avec vidéo' : 'avec son'}`
     : `${quoteIdx + 1} / ${allQuotes.length}`;
-  const inlineVideo = videoOnly && q.video;
+  const inlineVideo = (videoOnly || verifyMode) && q.video;
+  const reviewable = verifyMode && (q.audio || q.video);
 
   main.innerHTML = `
     <div class="citations-view">
@@ -246,6 +261,7 @@ function renderCitations() {
         <button class="audio-chip ${audioOnly ? 'on' : ''}" id="chip-audio-only">🔊 Seulement avec son <span class="chip-count">${audioIdx.length}</span></button>
         <button class="audio-chip ${autoPlay ? 'on' : ''}" id="chip-autoplay">▶ Lecture auto</button>
         ${videoIdx.length ? `<button class="audio-chip ${videoOnly ? 'on' : ''}" id="chip-video-only">🎬 Mode vidéo <span class="chip-count">${videoIdx.length}</span></button>` : ''}
+        <button class="audio-chip ${verifyMode ? 'on' : ''}" id="chip-verify">✅ Vérifier <span class="chip-count">${verifyIdx.length}</span></button>
         <button class="audio-chip ${inOrder ? 'on' : ''}" id="chip-order">${inOrder ? '➡️ Dans l\'ordre' : '🔀 Aléatoire'}</button>
       </div>
       <div class="quote-counter">${counter}</div>
@@ -263,11 +279,13 @@ function renderCitations() {
           <div class="quote-char-name">${esc(q.name)}</div>
           ${ep ? `<div class="quote-char-ep">${esc(ep)}</div>` : ''}
         </div>
+        ${verifyMode && inlineVideo && q.audio ? `<div class="quote-audio">${audioBtnHTML('btn-audio', true, q.approx)}</div>` : ''}
         ${!inlineVideo && (q.audio || q.video) ? `<div class="quote-audio">
           ${q.audio ? audioBtnHTML('btn-audio', true, q.approx) : ''}
           ${q.video ? `<button class="audio-btn audio-btn-big" id="btn-video">🎬 <span class="audio-label">Voir la scène</span></button>` : ''}
         </div>` : ''}
       </div>
+      ${reviewable ? avisHTML(q) : ''}
 
       <div class="quote-actions">
         <button class="quote-action-btn" id="btn-prev" title="Précédente">◀</button>
@@ -288,6 +306,14 @@ function renderCitations() {
     document.getElementById('btn-fav').classList.toggle('active', isFav(currentQuote));
   });
   document.getElementById('btn-share').addEventListener('click', () => shareQuote(q));
+
+  document.getElementById('chip-verify').addEventListener('click', () => {
+    verifyMode = !verifyMode;
+    writePref('kaam_verify', verifyMode);
+    rebuildVerify();
+    if (verifyMode && !verifyIdx.includes(quoteIdx) && verifyIdx.length) randomQuote(); else renderCitations();
+  });
+  if (reviewable) bindAvis(q);
 
   const chipVideo = document.getElementById('chip-video-only');
   if (chipVideo) chipVideo.addEventListener('click', () => {
@@ -356,6 +382,79 @@ function renderCitations() {
     swiping = false;
   }, { passive: true });
 }
+
+// ===== AVIS DE VÉRIFICATION =====
+const PROBLEMES = [
+  ['son_faux', 'Son : mauvaise réplique', 'audio'],
+  ['son_coupe', 'Son : coupé / incomplet', 'audio'],
+  ['son_deborde', 'Son : déborde sur les voisines', 'audio'],
+  ['video_fausse', 'Vidéo : mauvaise scène', 'video'],
+  ['video_coupee', 'Vidéo : coupée / décalée', 'video'],
+  ['texte_faux', 'Texte ou personnage faux', ''],
+];
+function avisHTML(q) {
+  const what = q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : 'Son OK';
+  return `<div class="avis">
+    <div class="avis-bar">
+      <button class="avis-btn avis-ok" id="avis-ok">✓ ${what}</button>
+      <button class="avis-btn avis-ko" id="avis-ko">✗ Problème</button>
+    </div>
+    <div class="avis-form hidden" id="avis-form">
+      <div class="avis-choix">
+        ${PROBLEMES.filter(([, , k]) => !k || q[k]).map(([id, label]) =>
+          `<button class="audio-chip" data-pb="${id}">${label}</button>`).join('')}
+      </div>
+      <input class="avis-note" id="avis-note" maxlength="500" placeholder="Précision (facultatif)">
+      <button class="avis-btn avis-send" id="avis-send" disabled>Envoyer</button>
+    </div>
+  </div>`;
+}
+function bindAvis(q) {
+  const form = document.getElementById('avis-form');
+  const send = document.getElementById('avis-send');
+  const picked = new Set();
+  document.getElementById('avis-ok').addEventListener('click', () => recordAvis(q, true, [], ''));
+  document.getElementById('avis-ko').addEventListener('click', e => {
+    form.classList.toggle('hidden');
+    e.currentTarget.classList.toggle('on', !form.classList.contains('hidden'));
+  });
+  form.querySelectorAll('[data-pb]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.pb;
+    if (picked.has(id)) picked.delete(id); else picked.add(id);
+    b.classList.toggle('on', picked.has(id));
+    send.disabled = !picked.size && !document.getElementById('avis-note').value.trim();
+  }));
+  document.getElementById('avis-note').addEventListener('input', e => {
+    send.disabled = !picked.size && !e.target.value.trim();
+  });
+  send.addEventListener('click', () => recordAvis(q, false, [...picked], document.getElementById('avis-note').value.trim()));
+}
+function recordAvis(q, ok, problemes, note) {
+  avisFaits[q.i] = 1;
+  avisFile.push({ i: q.i, quote: q.quote, name: q.name, audio: q.audio, video: q.video, approx: q.approx, ok, problemes, note, ts: Date.now() });
+  writeJSON('kaam_avis_faits', avisFaits);
+  writeJSON('kaam_avis_file', avisFile);
+  if (avisFile.length >= 5) sendAvis();
+  rebuildVerify();
+  if (!verifyIdx.length) { renderCitations(); return; }
+  if (inOrder) stepQuote(1); else randomQuote();
+}
+// Envoi par lots ; les avis restent dans l'appareil tant que l'envoi n'a pas réussi
+let sending = false;
+function sendAvis() {
+  if (sending || !avisFile.length) return;
+  sending = true;
+  const lot = avisFile.slice(0, 100);
+  fetch('/api/avis', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ avis: lot }), keepalive: true })
+    .then(r => {
+      if (!r.ok) return;
+      avisFile = avisFile.slice(lot.length);
+      writeJSON('kaam_avis_file', avisFile);
+    })
+    .catch(() => {})
+    .finally(() => { sending = false; });
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') sendAvis(); });
 
 // Pas suivant/précédent : dans toutes les répliques, ou seulement celles avec son
 function stepQuote(dir) {
@@ -820,6 +919,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     randPos = 0;
     renderCitations();
     bindNav();
+    sendAvis();
   } catch (e) {
     document.getElementById('main-content').innerHTML = `
       <div style="padding:40px 20px;text-align:center;color:var(--text3);">

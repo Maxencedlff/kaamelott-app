@@ -911,3 +911,38 @@ body {
 .quote-video { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .quote-video::-webkit-media-controls { display: none !important; }
 .quote-video::-webkit-media-controls-start-playback-button { display: none !important; -webkit-appearance: none; }
+
+/* ===== VÉRIFICATION (avis) ===== */
+.avis { margin: 14px 0 4px; display: flex; flex-direction: column; gap: 10px; }
+.avis-bar { display: flex; gap: 10px; justify-content: center; }
+.avis-btn {
+  flex: 1;
+  max-width: 220px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  padding: 11px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text2);
+}
+.avis-ok { border-color: #4f8a4f; color: #8fd18f; }
+.avis-ko { border-color: #9a4a42; color: #e59a90; }
+.avis-ko.on { background: #9a4a42; color: #fff; }
+.avis-form { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.avis-form.hidden { display: none; }
+.avis-choix { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.avis-note {
+  width: 100%;
+  max-width: 440px;
+  box-sizing: border-box;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 16px;
+}
+.avis-send { background: var(--gold); color: #1a1200; border-color: var(--gold2); }
+.avis-send:disabled { opacity: .4; cursor: default; }
