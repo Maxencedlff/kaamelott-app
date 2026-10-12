@@ -26,26 +26,6 @@ function audioURL(src) {
   return m ? `${AUDIO_BASE}${m[1].slice(0, 2)}/${m[1]}${m[2] || ''}` : src;
 }
 function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4${q.vv ? `?v=${q.vv}` : ''}` : null; }
-// ===== ICÔNES (SVG au trait, à la place des emojis) =====
-const ICONS = {
-  play: '<polygon points="7 4 19 12 7 20 7 4"/>',
-  stop: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
-  prev: '<path d="m15 18-6-6 6-6"/>',
-  next: '<path d="m9 18 6-6-6-6"/>',
-  heart: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>',
-  shuffle: '<path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22"/><path d="m18 2 4 4-4 4"/><path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2"/><path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8"/><path d="m18 14 4 4-4 4"/>',
-  order: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>',
-  share: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" x2="12" y1="2" y2="15"/>',
-  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
-  film: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/>',
-  autoplay: '<circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>',
-  check: '<path d="M21.8 10A10 10 0 1 1 17 3.3"/><path d="m9 11 3 3L22 4"/>',
-  volume: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>',
-  mute: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" x2="16" y1="9" y2="15"/><line x1="16" x2="22" y1="9" y2="15"/>',
-};
-function icon(name, cls = '') {
-  return `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
-}
 
 // ===== SOURCE : toute la série, ou seulement la série, ou seulement le film =====
 let source = (() => { try { return localStorage.getItem('kaam_source') || 'all'; } catch { return 'all'; } })();
@@ -207,14 +187,6 @@ function playAudio(src, btn) {
 }
 player.addEventListener('ended', () => setPlayingBtn(null));
 
-function audioBtnHTML(id, big, approx) {
-  // approx : son placé par l'écart entre les répliques voisines (peut déborder un peu sur elles)
-  return `<button class="audio-btn${big ? ' audio-btn-big' : ''}" id="${id}" aria-label="Écouter la réplique"${approx ? ' title="Son estimé : peut déborder un peu sur les répliques voisines"' : ''}>
-    <span class="audio-icon-play">${icon('play')}</span><span class="audio-icon-stop">${icon('stop')}</span>
-    <span class="audio-label">Écouter</span>${approx ? '<span class="approx-tag">estimé</span>' : ''}
-  </button>`;
-}
-
 // Historique des citations vues en mode aléatoire
 let randHistory = [];   // liste des quoteIdx visités
 let randPos = -1;       // position courante dans l'historique
@@ -282,317 +254,312 @@ function esc(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// ===== MISE EN FORME =====
+const nf = n => n.toLocaleString('fr-FR');
 function fmtEp(q) {
   if (q.film) return `Film · ${q.film}`;
   if (q.inedit) return `${q.inedit} · jamais tourné`;
   if (!q.livre && !q.episode) return '';
   let s = '';
   if (q.livre)   s += `Livre ${q.livre}`;
-  if (q.episode) s += ` · Épisode ${q.episode}`;
-  if (q.title)   s += ` : ${q.title}`;
+  if (q.episode) s += `${s ? ' · ' : ''}Épisode ${q.episode}`;
+  if (q.title)   s += ` : ${titleCase(q.title)}`;
   return s;
+}
+// Titres d'épisode tout en capitales dans les scripts (« AU BONHEUR DES DAMES ») : remis en casse de phrase
+function titleCase(t) {
+  if (t === t.toUpperCase()) { const s = t.toLowerCase(); return s.charAt(0).toUpperCase() + s.slice(1); }
+  // « Guenièvre Et L’Orage » → « Guenièvre et l’Orage » : petits mots en bas de casse après le premier
+  return t.split(' ').map((w, k) => {
+    if (!k) return w;
+    if (/^(Et|De|Du|Des|La|Le|Les|Aux|Au|En|À|Sur|Un|Une)$/.test(w)) return w.toLowerCase();
+    return w.replace(/^(L|D)(['’])/, (m, a, b) => a.toLowerCase() + b);
+  }).join(' ');
+}
+// Typographie française : apostrophe courbe, espace fine insécable avant ; : ! ? et dans les guillemets
+function typo(s) {
+  return esc(s).replace(/'/g, '’')
+    .replace(/[  ]+([!?;:»])/g, ' $1')
+    .replace(/([^\s ])([!?;»])/g, '$1 $2')
+    .replace(/«[  ]*/g, '« ');
+}
+function quoteHTML(s) { return `<span class="g">«</span> ${typo(s)} <span class="g">»</span>`; }
+// Nom en casse de titre pour les listes (« PÈRE BLAISE » → « Père Blaise », « LA DAME DU LAC » → « La Dame du Lac »)
+const PETITS = new Set(['de', 'du', 'des', 'et', 'le', 'la', 'les', 'aux', 'au', 'à', 'en', 'sur']);
+function nameCase(n) {
+  return n.toLowerCase().split(/(\s+|-)/).map((w, k) => {
+    if (!w.trim() || w === '-') return w;
+    if (k > 0 && PETITS.has(w)) return w;
+    const m = /^(l'|l’|d'|d’)(.+)$/.exec(w);
+    if (m) return (k ? m[1] : m[1].charAt(0).toUpperCase() + m[1].slice(1)) + m[2].charAt(0).toUpperCase() + m[2].slice(1);
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join('');
+}
+// Corps de la réplique selon sa longueur : jamais tronquée (la scène défile si besoin)
+function quoteSize(s) {
+  const L = s.length, k = window.innerWidth < 360 ? .86 : 1;
+  const px = L <= 30 ? 36 : L <= 60 ? 32 : L <= 110 ? 28 : L <= 180 ? 25 : L <= 280 ? 22 : L <= 420 ? 20 : 18;
+  return Math.round(px * k);
+}
+function fold(s) { return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[’']/g, "'"); }
+function highlight(text, query) {
+  const t = typo(text);
+  if (!query) return t;
+  // surlignage insensible aux accents : on cherche dans la version sans accents et on reporte les positions
+  const plain = text.replace(/'/g, '’'), f = fold(plain), qf = fold(query);
+  if (!qf || f.indexOf(qf) < 0) return t;
+  let out = '', from = 0, at;
+  while ((at = f.indexOf(qf, from)) >= 0) {
+    out += typo(plain.slice(from, at)) + '<mark>' + typo(plain.slice(at, at + qf.length)) + '</mark>';
+    from = at + qf.length;
+  }
+  return out + typo(plain.slice(from));
 }
 function getCharList() {
   const map = {};
   allQuotes.forEach(q => { map[q.name] = (map[q.name] || 0) + 1; });
-  return Object.entries(map).sort((a,b) => b[1] - a[1]);
+  return Object.entries(map).sort((a, b) => b[1] - a[1]);
 }
-// ===== CHARACTER AVATARS (SVG généré — couleur par perso, teinte par livre) =====
+function setMast(t) { const el = document.getElementById('mast-sub'); if (el) el.textContent = t; }
 
-// Teinte (hue) spécifique à chaque personnage
-const CHAR_HUE = {
-  'ARTHUR':          42,   // or royal
-  'PERCEVAL':        110,  // vert forêt
-  'LÉODAGAN':        4,    // rouge sang
-  'LANCELOT':        215,  // bleu acier
-  'GUENIÈVRE':       290,  // violet
-  'KARADOC':         28,   // orange
-  'SÉLI':            325,  // rose
-  'MERLIN':          265,  // violet foncé
-  'PÈRE BLAISE':     175,  // teal
-  'BOHORT':          200,  // bleu ciel
-  'YVAIN':           155,  // vert menthe
-  'GAUVAIN':         90,   // vert lime
-  'LA DAME DU LAC':  190,  // bleu océan
-  'PENDRAGON':       235,  // bleu nuit
-  'ATTILA':          15,   // rouge-orange
-  'GUETHENOC':       75,   // vert olive
-  'LE TAVERNIER':    35,   // brun chaud
-  'DEMETRA':         50,   // jaune doré
-  'VENEC':           130,  // vert clair
-  'GALESSIN':        170,  // turquoise
-  'ARTURUS':         42,   // même qu'Arthur (version latine)
-};
+// ===== FEUILLE (réglages, signalement) =====
+function openSheet(html) {
+  const sheet = document.getElementById('sheet'), back = document.getElementById('sheet-back');
+  sheet.innerHTML = html;
+  sheet.hidden = false; back.hidden = false;
+  back.onclick = closeSheet;
+  return sheet;
+}
+function closeSheet() {
+  document.getElementById('sheet').hidden = true;
+  document.getElementById('sheet-back').hidden = true;
+  document.getElementById('sheet').innerHTML = '';
+}
+function sheetOpen() { return !document.getElementById('sheet').hidden; }
 
-// Luminosité de fond selon le livre (de I clair → VI sombre)
-const LIVRE_LIGHTNESS = { 'I': 32, 'II': 30, 'III': 27, 'IV': 24, 'V': 21, 'VI': 18 };
-
-function getInitials(name) {
-  if (name.startsWith('LA ') || name.startsWith('LE ') || name.startsWith("L'")) {
-    const parts = name.split(/\s+/);
-    return parts[parts.length - 1].charAt(0);
-  }
-  const parts = name.split(/\s+/);
-  return parts[0].charAt(0);
+// ===== RÉGLAGES =====
+const SRC_LABEL = { all: 'Tout', serie: 'Série', film: 'Film' };
+function inSrc(q, s) { return s === 'all' || !!q.film === (s === 'film'); }
+function countFor(s, m) {
+  if (m === 'video') return videoIdx.reduce((n, i) => n + inSrc(allQuotes[i], s), 0);
+  if (m === 'audio') return audioIdx.reduce((n, i) => n + inSrc(allQuotes[i], s), 0);
+  return s === 'all' ? allQuotes.length : allQuotes.reduce((n, q) => n + inSrc(q, s), 0);
+}
+function toVerifyCount() {
+  return allQuotes.reduce((n, q) => n + ((q.audio || q.video) && !avisFaits[q.i] && inSrc(q, source) ? 1 : 0), 0);
+}
+function mediaMode() { return videoOnly ? 'video' : audioOnly ? 'audio' : 'text'; }
+function settingsHTML() {
+  const m = mediaMode();
+  const opt = (on, attrs, label, small, red) =>
+    `<button class="opt${on ? ' on' : ''}${red && on ? ' red' : ''}" ${attrs}>${label}<small>${small}</small></button>`;
+  return `
+    <div class="sh-head">
+      <div><h2>Réglages</h2></div>
+      <button class="sh-close" id="sheet-close"><span class="arr">↓</span>Fermer</button>
+    </div>
+    <div class="set"><div class="set-lab">Source</div><div class="opts">
+      ${['all', 'serie', 'film'].map(s => opt(source === s, `data-src="${s}"`, SRC_LABEL[s], nf(countFor(s, m)))).join('')}
+    </div></div>
+    <div class="set"><div class="set-lab">Affichage</div><div class="opts">
+      ${opt(m === 'text', 'id="chip-text"', 'Texte', nf(countFor(source, 'text')))}
+      ${opt(m === 'audio', 'id="chip-audio-only"', 'Son', nf(countFor(source, 'audio')))}
+      ${videoIdx.length ? opt(m === 'video', 'id="chip-video-only"', 'Vidéo', nf(countFor(source, 'video'))) : ''}
+    </div></div>
+    <div class="set"><div class="set-lab">Ordre</div><div class="opts">
+      ${opt(!inOrder, 'data-order="random"', 'Aléatoire', 'au hasard')}
+      ${opt(inOrder, 'data-order="seq"', 'Dans l’ordre', 'épisode par épisode')}
+    </div></div>
+    <div class="set"><div class="set-lab">Lecture auto</div><div class="opts">
+      ${opt(!autoPlay, 'data-auto="0"', 'Non', 'son à la demande')}
+      ${opt(autoPlay, 'data-auto="1"', 'Oui', 'son joué d’office')}
+    </div></div>
+    <div class="set"><div class="set-lab">Vérifier</div><div class="opts">
+      ${opt(!verifyMode, 'data-verify="0"', 'Non', 'lecture normale')}
+      ${opt(verifyMode, 'data-verify="1" id="chip-verify"', 'Oui', `${nf(toVerifyCount())} à contrôler`, true)}
+    </div></div>
+    <p class="set-note">Chaque nombre indique combien de répliques ce choix vous présentera, avec les autres réglages actuels. Vérifier : vous validez ou signalez chaque son et chaque scène, les sons estimés d’abord.</p>`;
+}
+function openSettings() {
+  const sheet = openSheet(settingsHTML());
+  bindSettings(sheet);
+}
+function refreshAfterSetting() {
+  const P = pool();
+  if (P && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
+  const sheet = document.getElementById('sheet');
+  sheet.innerHTML = settingsHTML();
+  bindSettings(sheet);
+}
+function bindSettings(sheet) {
+  sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
+  sheet.querySelectorAll('[data-src]').forEach(b => b.addEventListener('click', () => {
+    source = b.dataset.src;
+    try { localStorage.setItem('kaam_source', source); } catch {}
+    rebuildVerify(); nextRand = null;
+    refreshAfterSetting();
+  }));
+  const setMedia = m => {
+    audioOnly = m === 'audio'; videoOnly = m === 'video';
+    writePref('kaam_audio_only', audioOnly); writePref('kaam_video_only', videoOnly);
+    nextRand = null;
+    refreshAfterSetting();
+  };
+  sheet.querySelector('#chip-text').addEventListener('click', () => setMedia('text'));
+  sheet.querySelector('#chip-audio-only').addEventListener('click', () => setMedia('audio'));
+  const v = sheet.querySelector('#chip-video-only');
+  if (v) v.addEventListener('click', () => setMedia('video'));
+  sheet.querySelectorAll('[data-order]').forEach(b => b.addEventListener('click', () => {
+    inOrder = b.dataset.order === 'seq'; writePref('kaam_in_order', inOrder); nextRand = null;
+    refreshAfterSetting();
+  }));
+  sheet.querySelectorAll('[data-auto]').forEach(b => b.addEventListener('click', () => {
+    autoPlay = b.dataset.auto === '1'; writePref('kaam_autoplay', autoPlay);
+    refreshAfterSetting();
+  }));
+  sheet.querySelectorAll('[data-verify]').forEach(b => b.addEventListener('click', () => {
+    verifyMode = b.dataset.verify === '1'; writePref('kaam_verify', verifyMode);
+    rebuildVerify(); nextRand = null;
+    refreshAfterSetting();
+  }));
 }
 
-function generateAvatar(name, livre) {
-  const h  = CHAR_HUE[name] ?? 45;
-  const l  = LIVRE_LIGHTNESS[livre?.toUpperCase()] ?? 26;
-  const s  = 55;
-  const bg1 = `hsl(${h},${s}%,${l + 9}%)`;
-  const bg2 = `hsl(${h},${s}%,${l}%)`;
-  const ring = `hsl(${h},${s + 15}%,${l + 28}%)`;
-  const text = `hsl(${h},${Math.min(s + 20, 88)}%,${l + 58}%)`;
-  const init = getInitials(name);
-  const fs   = init.length > 1 ? 34 : 44;
-
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-<defs>
-  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0%" stop-color="${bg1}"/>
-    <stop offset="100%" stop-color="${bg2}"/>
-  </linearGradient>
-</defs>
-<circle cx="50" cy="50" r="50" fill="url(#bg)"/>
-<circle cx="50" cy="50" r="46" fill="none" stroke="${ring}" stroke-width="1" opacity=".4"/>
-<text x="50" y="64" text-anchor="middle"
-  font-family="Georgia,serif" font-size="${fs}" font-weight="bold"
-  fill="${text}" opacity=".95">${init}</text>
-</svg>`;
-
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}
-
-// Purger les anciennes images Wikipedia du localStorage
-(function clearOldWikiCache() {
-  try {
-    Object.keys(localStorage).filter(k => k.startsWith('kaam_img_')).forEach(k => localStorage.removeItem(k));
-  } catch {}
-})();
-
-function loadAvatars() {
-  document.querySelectorAll('[data-name]').forEach(el => {
-    if (el.querySelector('img')) return;
-    const name  = el.dataset.name;
-    const livre = el.dataset.livre || '';
-    el.innerHTML = `<img src="${generateAvatar(name, livre)}" alt="${esc(name)}">`;
-    el.classList.add('has-img');
-  });
-}
-function highlight(text, query) {
-  if (!query) return esc(text);
-  const re = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi');
-  return esc(text).replace(re, '<mark>$1</mark>');
-}
-
-// ===== CITATIONS =====
+// ===== RÉPLIQUES =====
 function renderCitations() {
   const main = document.getElementById('main-content');
   if (!allQuotes.length) return;
-
   stopAudio();
   if (!allQuotes[quoteIdx]) quoteIdx = pickRandom();          // index périmé (filtres, données changées)
   const q = allQuotes[quoteIdx];
   currentQuote = q;
-  const favActive = isFav(q);
-  const ep = fmtEp(q);
+  setMast(verifyMode ? 'Vérification' : 'Répliques');
   const P = pool();
   const counter = verifyMode
-    ? `${verifyIdx.length} ${verifyApprox ? 'sons estimés (≈) à vérifier en premier' : 'à vérifier'} · ${Object.keys(avisFaits).length} vérifiées${avisFile.length ? ` · ${avisFile.length} en attente d'envoi` : ''}`
+    ? `${nf(verifyIdx.length)} à vérifier · ${nf(Object.keys(avisFaits).length)} vérifiées${avisFile.length ? ` · ${avisFile.length} en attente d’envoi` : ''}`
     : P
-    ? `${(P.indexOf(quoteIdx) + 1).toLocaleString('fr-FR')} / ${P.length.toLocaleString('fr-FR')} répliques${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}${source === 'film' ? ' du film' : source === 'serie' ? ' de la série' : ''}`
-    : `${(quoteIdx + 1).toLocaleString('fr-FR')} / ${allQuotes.length.toLocaleString('fr-FR')}`;
-  const media = videoOnly ? 'video' : audioOnly ? 'audio' : 'text';
+    ? `${nf(P.indexOf(quoteIdx) + 1)} / ${nf(P.length)}${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}`
+    : `${nf(quoteIdx + 1)} / ${nf(allQuotes.length)}`;
+  const sep = '<span class="sep">·</span>';
+  const summary = verifyMode
+    ? [verifyApprox ? 'Sons estimés d’abord' : 'Toutes les répliques', source === 'all' ? '' : SRC_LABEL[source]].filter(Boolean).join(sep)
+    : [SRC_LABEL[source], { text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : 'Aléatoire', autoPlay ? 'Lecture auto' : '']
+        .filter(Boolean).join(sep);
   const inlineVideo = (videoOnly || verifyMode) && q.video;
   const reviewable = verifyMode && (q.audio || q.video);
+  const fav = isFav(q);
+  const what = q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : 'Son OK';
 
   main.innerHTML = `
-    <div class="citations-view">
-      <div class="filters">
-        <div class="seg" role="group" aria-label="Source">
-          <button class="${source === 'all' ? 'on' : ''}" data-src="all">Tout</button>
-          <button class="${source === 'serie' ? 'on' : ''}" data-src="serie">Série</button>
-          <button class="${source === 'film' ? 'on' : ''}" data-src="film" id="chip-film">Film</button>
-        </div>
-        <div class="seg" role="group" aria-label="Affichage">
-          <button class="${media === 'text' ? 'on' : ''}" id="chip-text">Texte</button>
-          <button class="${media === 'audio' ? 'on' : ''}" id="chip-audio-only">Son</button>
-          ${videoIdx.length ? `<button class="${media === 'video' ? 'on' : ''}" id="chip-video-only">Vidéo</button>` : ''}
-        </div>
-        <div class="toggles">
-          <button class="tgl" id="chip-order">${icon(inOrder ? 'order' : 'shuffle')}<span>${inOrder ? 'Dans l\'ordre' : 'Aléatoire'}</span></button>
-          <button class="tgl ${autoPlay ? 'on' : ''}" id="chip-autoplay">${icon('autoplay')}<span>Lecture auto</span></button>
-          <button class="tgl ${verifyMode ? 'on' : ''}" id="chip-verify">${icon('check')}<span>Vérifier</span></button>
-        </div>
+    <button class="bar${verifyMode ? ' verify' : ''}" id="btn-settings" aria-label="Réglages">
+      <span class="bar-sum">${summary}</span><span class="bar-btn"><i></i>Réglages</span>
+    </button>
+    <div class="stage swap-in" id="quote-card">
+      ${inlineVideo ? `<div class="frame" id="qvideo-slot"><div class="spin"></div><div class="hint"><i></i>Touchez l’écran pour activer le son</div></div>` : ''}
+      <div class="qblock">
+        <button class="who" id="btn-who">${esc(q.name)}</button>
+        <div class="quote" style="font-size:${inlineVideo ? Math.min(quoteSize(q.quote), window.innerWidth < 360 ? 21 : 26) : quoteSize(q.quote)}px">${quoteHTML(q.quote)}</div>
+        ${fmtEp(q) ? `<div class="src">${esc(fmtEp(q))}</div>` : ''}
       </div>
-      <div class="quote-counter">${counter}</div>
+    </div>
+    <div class="stage-foot"><span class="quote-counter">${counter}</span>
+      <span class="quote-hint">${verifyMode ? 'Glissez pour passer' : inOrder ? 'Touchez pour la suivante' : 'Touchez pour changer'}</span></div>
+    <div class="acts">
+      ${q.audio ? `<button class="cell" id="btn-audio"><span class="tri"></span><span class="stop"></span><span class="lp">Écouter</span><span class="ls">Arrêter</span>${q.approx ? '<span class="x">*</span>' : ''}</button>` : ''}
+      ${q.video && !inlineVideo ? `<button class="cell" id="btn-video"><span class="frm"></span>Scène</button>` : ''}
+      <button class="cell" id="btn-fav" aria-pressed="${fav}"><span class="sq${fav ? ' on' : ''}"></span>Favori</button>
+      <button class="cell" id="btn-share" aria-label="Partager"><span class="arr">↗</span><span class="t">Partager</span></button>
+    </div>
+    ${q.audio && q.approx ? `<p class="est-note"><b>*</b> Son estimé : découpe calculée automatiquement, il peut déborder un peu sur les répliques voisines.</p>` : ''}
+    ${reviewable
+      ? `<div class="vrow"><button class="ok" id="avis-ok"><i></i>${what}</button><button class="ko" id="avis-ko">Problème</button></div>`
+      : `<div class="nav"><button id="btn-prev"><span class="arr">←</span>Préc.</button><button class="mid" id="btn-random">Au hasard</button><button class="nx" id="btn-next">Suiv.<span class="arr">→</span></button></div>`}`;
 
-      <div class="quote-card" id="quote-card">
-        ${inlineVideo
-          ? `<div class="video-slot" id="qvideo-slot"><div class="video-spinner"></div><div class="video-muted">${icon('mute')}Touchez l'écran pour activer le son</div></div>
-             <div class="quote-text quote-text-small">${esc(q.quote)}</div>`
-          : `<div class="quote-text">${esc(q.quote)}</div>`}
-        <div class="quote-char">
-          <div class="char-avatar" data-name="${esc(q.name)}" data-livre="${esc(q.livre)}">${esc(q.name.charAt(0))}</div>
-          <div class="quote-char-name">${esc(q.name)}</div>
-          ${ep ? `<div class="quote-char-ep">${esc(ep)}</div>` : ''}
-        </div>
-        ${verifyMode && inlineVideo && q.audio ? `<div class="quote-audio">${audioBtnHTML('btn-audio', true, q.approx)}</div>` : ''}
-        ${!inlineVideo && (q.audio || q.video) ? `<div class="quote-audio">
-          ${q.audio ? audioBtnHTML('btn-audio', true, q.approx) : ''}
-          ${q.video ? `<button class="audio-btn audio-btn-big" id="btn-video">${icon('film')}<span class="audio-label">Voir la scène</span></button>` : ''}
-        </div>` : ''}
-      </div>
-      ${reviewable ? avisHTML(q) : ''}
-
-      <div class="quote-actions">
-        <button class="quote-action-btn" id="btn-prev" title="Précédente" aria-label="Précédente">${icon('prev')}</button>
-        <button class="quote-action-btn ${favActive ? 'active' : ''}" id="btn-fav" title="Favori" aria-label="Favori">${icon('heart')}</button>
-        <button class="quote-action-btn" id="btn-random" title="Au hasard" aria-label="Au hasard">${icon('shuffle')}</button>
-        <button class="quote-action-btn" id="btn-share" title="Partager" aria-label="Partager">${icon('share')}</button>
-        <button class="quote-action-btn" id="btn-next" title="Suivante" aria-label="Suivante">${icon('next')}</button>
-      </div>
-      <div class="quote-hint">${inOrder ? 'Glisser ou toucher pour la suivante' : 'Glisser ou toucher pour une autre réplique'}</div>
-    </div>`;
-
-  loadAvatars();
-  document.getElementById('btn-prev').addEventListener('click', () => prevQuote());
-  document.getElementById('btn-next').addEventListener('click', () => nextQuote());
-  document.getElementById('btn-random').addEventListener('click', () => randomQuote());
-  document.getElementById('btn-fav').addEventListener('click', () => {
-    toggleFav(currentQuote);
-    document.getElementById('btn-fav').classList.toggle('active', isFav(currentQuote));
+  const $ = id => document.getElementById(id);
+  $('btn-settings').addEventListener('click', openSettings);
+  $('btn-who').addEventListener('click', e => { e.stopPropagation(); openPersonnage(q.name); });
+  $('btn-fav').addEventListener('click', () => {
+    toggleFav(q);
+    const on = isFav(q);
+    $('btn-fav').innerHTML = `<span class="sq${on ? ' on' : ''}"></span>Favori`;
+    $('btn-fav').setAttribute('aria-pressed', on);
   });
-  document.getElementById('btn-share').addEventListener('click', () => shareQuote(q));
-
-  document.getElementById('chip-verify').addEventListener('click', () => {
-    verifyMode = !verifyMode;
-    writePref('kaam_verify', verifyMode);
-    rebuildVerify();
-    const P = pool();
-    if (verifyMode && P && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
-  });
-  if (reviewable) bindAvis(q);
-
-  // Texte / Son / Vidéo : un seul à la fois ; retoucher le choix actif revient à « Texte »
-  const setMedia = m => {
-    if ((m === 'audio' && audioOnly) || (m === 'video' && videoOnly)) m = 'text';
-    audioOnly = m === 'audio'; videoOnly = m === 'video';
-    writePref('kaam_audio_only', audioOnly); writePref('kaam_video_only', videoOnly);
-    const P = pool();
-    if (P && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
-  };
-  document.getElementById('chip-text').addEventListener('click', () => setMedia('text'));
-  const chipVideo = document.getElementById('chip-video-only');
-  if (chipVideo) chipVideo.addEventListener('click', () => setMedia('video'));
-  document.querySelectorAll('[data-src]').forEach(b => b.addEventListener('click', () => {
-    source = b.dataset.src;
-    rebuildVerify();
-    try { localStorage.setItem('kaam_source', source); } catch {}
-    nextRand = null;
-    const P = pool();
-    if (P && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
-  }));
-  const slot = document.getElementById('qvideo-slot');
+  $('btn-share').addEventListener('click', () => shareQuote(q));
+  if (reviewable) {
+    $('avis-ok').addEventListener('click', () => recordAvis(q, true, [], ''));
+    $('avis-ko').addEventListener('click', () => openProblem(q));
+  } else {
+    $('btn-prev').addEventListener('click', () => prevQuote());
+    $('btn-next').addEventListener('click', () => nextQuote());
+    $('btn-random').addEventListener('click', () => randomQuote());
+  }
+  const slot = $('qvideo-slot');
   if (slot) playCardVideo(q, slot);
   else cardVideo.pause();
   prefetchAround();
-  const btnVideo = document.getElementById('btn-video');
-  if (btnVideo) btnVideo.addEventListener('click', e => { e.stopPropagation(); showVideo(q); });
-  document.getElementById('chip-audio-only').addEventListener('click', () => setMedia('audio'));
-  document.getElementById('chip-order').addEventListener('click', () => {
-    inOrder = !inOrder;
-    writePref('kaam_in_order', inOrder);
-    renderCitations();
-  });
-  document.getElementById('chip-autoplay').addEventListener('click', e => {
-    autoPlay = !autoPlay;
-    writePref('kaam_autoplay', autoPlay);
-    e.currentTarget.classList.toggle('on', autoPlay);
-    if (autoPlay && q.audio) playAudio(q.audio, document.getElementById('btn-audio'));
-  });
-  const audioBtn = document.getElementById('btn-audio');
+  const btnVideo = $('btn-video');
+  if (btnVideo) btnVideo.addEventListener('click', () => showVideo(q));
+  const audioBtn = $('btn-audio');
   if (audioBtn) {
-    audioBtn.addEventListener('click', e => { e.stopPropagation(); playAudio(q.audio, audioBtn); });
-    audioBtn.addEventListener('touchend', e => e.stopPropagation());
+    audioBtn.addEventListener('click', () => playAudio(q.audio, audioBtn));
     // Lecture auto : renderCitations est appelé dans le geste (tap/swipe/bouton), donc le navigateur l'autorise
-    if (autoPlay) playAudio(q.audio, audioBtn);
+    if (autoPlay && !inlineVideo) playAudio(q.audio, audioBtn);
   }
 
-  const card = document.getElementById('quote-card');
-  card.addEventListener('click', () => swipeForward());
-
-  // Swipe — bloque le scroll vertical pendant un geste horizontal
-  let sx = 0, sy = 0, swiping = false;
-  card.addEventListener('touchstart', e => {
-    sx = e.touches[0].clientX;
-    sy = e.touches[0].clientY;
-    swiping = false;
-  }, { passive: true });
+  const card = $('quote-card');
+  const fit = () => card.classList.toggle('more', card.scrollHeight > card.clientHeight + 4 && card.scrollTop + card.clientHeight < card.scrollHeight - 4);
+  card.addEventListener('scroll', fit, { passive: true });
+  requestAnimationFrame(fit);
+  card.addEventListener('click', e => { if (!e.target.closest('button')) swipeForward(); });
+  // Glisser horizontalement : réplique suivante / précédente (le défilement vertical reste libre)
+  let sx = 0, sy = 0;
+  card.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
   card.addEventListener('touchmove', e => {
-    const dx = Math.abs(e.touches[0].clientX - sx);
-    const dy = Math.abs(e.touches[0].clientY - sy);
-    if (dx > dy && dx > 8) {
-      swiping = true;
-      e.preventDefault(); // bloque le scroll de la page
-    }
+    const dx = Math.abs(e.touches[0].clientX - sx), dy = Math.abs(e.touches[0].clientY - sy);
+    if (dx > dy && dx > 8) e.preventDefault();
   }, { passive: false });
   card.addEventListener('touchend', e => {
-    const dx = sx - e.changedTouches[0].clientX;
-    const dy = Math.abs(sy - e.changedTouches[0].clientY);
-    if (Math.abs(dx) > 50 && Math.abs(dx) > dy) {
-      if (dx > 0) swipeForward(); else swipeBack();
-    }
-    swiping = false;
+    const dx = sx - e.changedTouches[0].clientX, dy = Math.abs(sy - e.changedTouches[0].clientY);
+    if (Math.abs(dx) > 50 && Math.abs(dx) > dy) { if (dx > 0) swipeForward(); else swipeBack(); }
   }, { passive: true });
 }
 
 // ===== AVIS DE VÉRIFICATION =====
-const PROBLEMES = [
-  ['son_faux', 'Son : mauvaise réplique', 'audio'],
-  ['son_coupe', 'Son : coupé / incomplet', 'audio'],
-  ['son_deborde', 'Son : déborde sur les voisines', 'audio'],
-  ['video_fausse', 'Vidéo : mauvaise scène', 'video'],
-  ['video_coupee', 'Vidéo : coupée / décalée', 'video'],
-  ['texte_faux', 'Texte ou personnage faux', ''],
+// tableau Son / Scène / Texte × Faux / Coupé / Déborde
+const PB_GRID = [
+  ['Faux',    { audio: 'son_faux',    video: 'video_fausse', texte: 'texte_faux' }],
+  ['Coupé',   { audio: 'son_coupe',   video: 'video_coupee' }],
+  ['Déborde', { audio: 'son_deborde' }],
 ];
-function avisHTML(q) {
-  const what = q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : 'Son OK';
-  return `<div class="avis">
-    <div class="avis-bar">
-      <button class="avis-btn avis-ok" id="avis-ok">✓ ${what}</button>
-      <button class="avis-btn avis-ko" id="avis-ko">✗ Problème</button>
+function openProblem(q) {
+  const cols = [['audio', 'Son'], ['video', 'Scène'], ['texte', 'Texte']];
+  const has = k => k === 'texte' || !!q[k];
+  const sheet = openSheet(`
+    <p class="sh-ctx">${esc(nameCase(q.name))}${fmtEp(q) ? ' · ' + esc(fmtEp(q)) : ''}</p>
+    <div class="sh-head">
+      <div><h2>Signaler un problème</h2></div>
+      <button class="sh-close" id="sheet-close">✕ Fermer</button>
     </div>
-    <div class="avis-form hidden" id="avis-form">
-      <div class="avis-choix">
-        ${PROBLEMES.filter(([, , k]) => !k || q[k]).map(([id, label]) =>
-          `<button class="audio-chip" data-pb="${id}">${label}</button>`).join('')}
-      </div>
-      <input class="avis-note" id="avis-note" maxlength="500" placeholder="Précision (facultatif)">
-      <button class="avis-btn avis-send" id="avis-send" disabled>Envoyer</button>
+    <div class="tbl">
+      <div class="th"></div>${cols.map(([, l]) => `<div class="th">${l}</div>`).join('')}
+      ${PB_GRID.map(([row, ids]) => `<div class="rh">${row}</div>` + cols.map(([k]) =>
+        ids[k] && has(k) ? `<button class="tc" data-pb="${ids[k]}" aria-label="${row} : ${k}"><span class="box"></span></button>` : `<div class="tc nil">—</div>`).join('')).join('')}
     </div>
-  </div>`;
-}
-function bindAvis(q) {
-  const form = document.getElementById('avis-form');
-  const send = document.getElementById('avis-send');
+    <label class="note"><span>Précision (facultatif)</span><textarea id="avis-note" maxlength="500"></textarea></label>
+    <div class="sh-acts"><button id="avis-cancel">Annuler</button><button class="go" id="avis-send" disabled>Consigner et passer</button></div>
+    <p class="sh-help" id="avis-help">Cochez au moins une case, ou écrivez une précision.</p>`);
   const picked = new Set();
-  document.getElementById('avis-ok').addEventListener('click', () => recordAvis(q, true, [], ''));
-  document.getElementById('avis-ko').addEventListener('click', e => {
-    form.classList.toggle('hidden');
-    e.currentTarget.classList.toggle('on', !form.classList.contains('hidden'));
-  });
-  form.querySelectorAll('[data-pb]').forEach(b => b.addEventListener('click', () => {
+  const send = sheet.querySelector('#avis-send'), note = sheet.querySelector('#avis-note');
+  const upd = () => { send.disabled = !picked.size && !note.value.trim(); sheet.querySelector('#avis-help').hidden = !send.disabled; };
+  sheet.querySelectorAll('[data-pb]').forEach(b => b.addEventListener('click', () => {
     const id = b.dataset.pb;
     if (picked.has(id)) picked.delete(id); else picked.add(id);
-    b.classList.toggle('on', picked.has(id));
-    send.disabled = !picked.size && !document.getElementById('avis-note').value.trim();
+    b.classList.toggle('on', picked.has(id)); upd();
   }));
-  document.getElementById('avis-note').addEventListener('input', e => {
-    send.disabled = !picked.size && !e.target.value.trim();
-  });
-  send.addEventListener('click', () => recordAvis(q, false, [...picked], document.getElementById('avis-note').value.trim()));
+  note.addEventListener('input', upd);
+  sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
+  sheet.querySelector('#avis-cancel').addEventListener('click', closeSheet);
+  send.addEventListener('click', () => { closeSheet(); recordAvis(q, false, [...picked], note.value.trim()); });
 }
 function recordAvis(q, ok, problemes, note) {
   avisFaits[q.i] = 1;
@@ -621,15 +588,14 @@ function sendAvis() {
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') sendAvis(); });
 
-// Pas suivant/précédent : dans toutes les répliques, ou seulement celles avec son
+// ===== NAVIGATION ENTRE RÉPLIQUES =====
 function stepQuote(dir) {
   const P = pool();
   if (P) {
     const pos = P.indexOf(quoteIdx);
-    const next = pos === -1
+    quoteIdx = pos === -1
       ? (dir > 0 ? P.find(i => i > quoteIdx) ?? P[0] : [...P].reverse().find(i => i < quoteIdx) ?? P[P.length - 1])
       : P[(pos + dir + P.length) % P.length];
-    quoteIdx = next;
   } else {
     quoteIdx = (quoteIdx + dir + allQuotes.length) % allQuotes.length;
   }
@@ -638,10 +604,7 @@ function stepQuote(dir) {
 function nextQuote() { stepQuote(1); }
 function prevQuote() { stepQuote(-1); }
 function randomQuote() {
-  // Coupe l'historique si on était en arrière
-  if (randPos < randHistory.length - 1) {
-    randHistory = randHistory.slice(0, randPos + 1);
-  }
+  if (randPos < randHistory.length - 1) randHistory = randHistory.slice(0, randPos + 1);   // on coupe l'historique si on était en arrière
   const P = pool();
   quoteIdx = nextRand !== null && (!P || P.includes(nextRand)) && nextRand !== quoteIdx ? nextRand : pickRandom();
   nextRand = null;
@@ -649,319 +612,288 @@ function randomQuote() {
   randPos = randHistory.length - 1;
   renderCitations();
 }
-// Swipe / tap : selon le mode choisi, réplique suivante dans l'ordre ou aléatoire (avec historique)
+// Toucher / glisser : selon le mode, réplique suivante dans l'ordre ou au hasard (avec historique)
 function swipeForward() { if (inOrder) stepQuote(1); else historyForward(); }
 function swipeBack()    { if (inOrder) stepQuote(-1); else historyBack(); }
-
 function historyBack() {
-  if (randPos > 0) {
-    randPos--;
-    quoteIdx = randHistory[randPos];
-    renderCitations();
-  }
+  if (randPos > 0) { randPos--; quoteIdx = randHistory[randPos]; renderCitations(); }
 }
 function historyForward() {
-  if (randPos < randHistory.length - 1) {
-    // Il reste des citations dans l'historique → on y retourne
-    randPos++;
-    quoteIdx = randHistory[randPos];
-    renderCitations();
-  } else {
-    // On est au bout → nouvelle citation aléatoire
-    randomQuote();
-  }
+  if (randPos < randHistory.length - 1) { randPos++; quoteIdx = randHistory[randPos]; renderCitations(); }
+  else randomQuote();
+}
+// Ouvre une réplique précise (recherche, favoris, fiche) dans la page Répliques
+function gotoQuote(q) {
+  let idx = allQuotes.indexOf(q);
+  if (idx < 0) idx = allQuotes.findIndex(x => x.quote === q.quote && x.name === q.name);
+  if (idx < 0) return;
+  closeOverlay();
+  quoteIdx = idx;
+  if (randPos < randHistory.length - 1) randHistory = randHistory.slice(0, randPos + 1);
+  randHistory.push(idx); randPos = randHistory.length - 1;
+  setView('citations');
 }
 async function shareQuote(q) {
-  const text = `"${q.quote}" — ${q.name}${fmtEp(q) ? '\n' + fmtEp(q) : ''}\n\nKaamelott`;
+  const text = `« ${q.quote} »\n${q.name}${fmtEp(q) ? ', ' + fmtEp(q) : ''}\n\nKaamelott`;
   if (navigator.share) {
     try { await navigator.share({ text }); } catch {}
   } else {
     await navigator.clipboard.writeText(text).catch(() => {});
-    alert('Réplique copiée !');
+    alert('Réplique copiée.');
   }
 }
 
 // ===== QUIZ =====
 const TOP_CHARS = [
-  'ARTHUR','PERCEVAL','LÉODAGAN','LANCELOT','GUENIÈVRE',
-  'KARADOC','BOHORT','SÉLI','MERLIN','PÈRE BLAISE',
-  'DEMETRA','LE TAVERNIER','GUETHENOC','YVAIN','YGERNE',
-  'LE RÉPURGATEUR','CALOGRENANT','ATTILA','VENEC','GALESSIN',
+  'ARTHUR', 'PERCEVAL', 'LÉODAGAN', 'LANCELOT', 'GUENIÈVRE',
+  'KARADOC', 'BOHORT', 'SÉLI', 'MERLIN', 'PÈRE BLAISE',
+  'DEMETRA', 'LE TAVERNIER', 'GUETHENOC', 'YVAIN', 'YGERNE',
+  'LE RÉPURGATEUR', 'CALOGRENANT', 'ATTILA', 'VENEC', 'GALESSIN',
 ];
-
+let quizPool = null;
 function initQuiz() {
-  quizState = { correct: 0, total: 0, streak: 0, best: 0, answered: false };
+  let best = 0;
+  try { best = +localStorage.getItem('kaam_quiz_best') || 0; } catch {}
+  quizState = { correct: 0, total: 0, streak: 0, best, answered: false };
 }
-
 function renderQuiz() {
   if (!quizState) initQuiz();
+  if (!quizPool) quizPool = allQuotes.filter(x => TOP_CHARS.includes(x.name) && x.quote.length > 12);
+  stopAudio();
+  setMast('Qui a dit ça ?');
   const main = document.getElementById('main-content');
-
-  const q = rand(allQuotes.filter(x => TOP_CHARS.includes(x.name)));
+  const q = rand(quizPool);
   quizState.current = q;
   quizState.answered = false;
-
-  // 3 wrong answers from TOP_CHARS, excluding correct
-  const pool = TOP_CHARS.filter(c => c !== q.name);
+  const others = TOP_CHARS.filter(c => c !== q.name);
   const wrong = [];
-  while (wrong.length < 3) {
-    const pick = rand(pool);
-    if (!wrong.includes(pick)) wrong.push(pick);
-  }
+  while (wrong.length < 3) { const p = rand(others); if (!wrong.includes(p)) wrong.push(p); }
   const choices = [q.name, ...wrong].sort(() => Math.random() - .5);
-  quizState.choices = choices;
-
-  const ep = fmtEp(q);
 
   main.innerHTML = `
-    <div class="quiz-view">
-      <div class="quiz-header">
-        <div class="quiz-score">Score : <strong>${quizState.correct}/${quizState.total}</strong></div>
-        <div class="quiz-streak">Série : <strong>${quizState.streak}</strong></div>
+    <div class="score">
+      <div><span>Score</span><b>${quizState.correct}<em>/${quizState.total}</em></b></div>
+      <div><span>Série</span><b>${quizState.streak}</b></div>
+      <div><span>Record</span><b>${quizState.best}</b></div>
+    </div>
+    <div class="scroll" id="quiz-stage">
+      <div class="quiz-q">
+        <div class="q-ask">Qui a dit ça ?</div>
+        <div class="quote" style="font-size:${Math.min(quoteSize(q.quote), 30)}px">${quoteHTML(q.quote)}</div>
+        <div id="quiz-after"></div>
       </div>
-
-      <div class="quiz-question">
-        <div class="quiz-label">Qui a dit cette réplique ?</div>
-        <div class="quiz-quote">"${esc(q.quote)}"</div>
+      <div id="quiz-scene" class="q-scene"></div>
+      <div class="choices">
+        ${choices.map((c, k) => `<button class="choice" data-choice="${esc(c)}"><span class="l">${'ABCD'[k]}</span><span class="n">${esc(nameCase(c))}</span><span class="v"></span></button>`).join('')}
       </div>
+    </div>
+    <div class="nav one" id="quiz-nav"><button id="quiz-next">Passer<span class="arr">→</span></button></div>`;
 
-      <div class="quiz-choices">
-        ${choices.map(c => `
-          <button class="quiz-choice" data-choice="${esc(c)}">
-            <div class="quiz-choice-avatar" data-name="${esc(c)}" data-livre="${esc(q.livre)}">${esc(c.charAt(0))}</div>
-            <span>${esc(c)}</span>
-          </button>
-        `).join('')}
-      </div>
-
-      <div class="quiz-feedback" id="quiz-feedback"></div>
-      <button class="quiz-next-btn hidden" id="quiz-next">Réplique suivante →</button>
-    </div>`;
-
-  loadAvatars();
-  document.querySelectorAll('.quiz-choice').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (quizState.answered) return;
-      quizState.answered = true;
-      quizState.total++;
-      const chosen = btn.dataset.choice;
-      const correct = chosen === q.name;
-
-      if (correct) {
-        quizState.correct++;
-        quizState.streak++;
-        if (quizState.streak > quizState.best) quizState.best = quizState.streak;
-      } else {
-        quizState.streak = 0;
+  document.getElementById('quiz-next').addEventListener('click', () => renderQuiz());
+  document.querySelectorAll('.choice').forEach(btn => btn.addEventListener('click', () => {
+    if (quizState.answered) return;
+    quizState.answered = true;
+    quizState.total++;
+    const correct = btn.dataset.choice === q.name;
+    if (correct) {
+      quizState.correct++; quizState.streak++;
+      if (quizState.streak > quizState.best) {
+        quizState.best = quizState.streak;
+        try { localStorage.setItem('kaam_quiz_best', String(quizState.best)); } catch {}
       }
-
-      document.querySelectorAll('.quiz-choice').forEach(b => {
-        b.disabled = true;
-        if (b.dataset.choice === q.name) b.classList.add('correct');
-        else if (b === btn && !correct) b.classList.add('wrong');
-      });
-
-      const fb = document.getElementById('quiz-feedback');
-      if (correct) {
-        fb.className = 'quiz-feedback correct';
-        fb.textContent = ['Bien joué !', 'C\'est exact !', 'Parfait !', 'Tu connais bien ta série !'][Math.floor(Math.random()*4)];
-      } else {
-        fb.className = 'quiz-feedback wrong';
-        fb.innerHTML = `Raté ! C'était <strong>${esc(q.name)}</strong>${ep ? `<br><em>${esc(ep)}</em>` : ''}`;
-      }
-
-      document.getElementById('quiz-next').classList.remove('hidden');
-      document.getElementById('quiz-next').addEventListener('click', () => renderQuiz());
+    } else quizState.streak = 0;
+    document.querySelectorAll('.choice').forEach(b => {
+      b.disabled = true;
+      if (b.dataset.choice === q.name) { b.classList.add('right'); b.querySelector('.v').textContent = 'Juste'; }
+      else if (b === btn) { b.classList.add('wrong'); b.querySelector('.v').textContent = 'Faux'; }
+      else b.classList.add('dim', 'hidden');   // on ne garde que la bonne réponse (et l'erreur) : place pour la scène
     });
+    const sc = document.querySelector('.score');
+    sc.children[0].querySelector('b').innerHTML = `${quizState.correct}<em>/${quizState.total}</em>`;
+    sc.children[1].querySelector('b').textContent = quizState.streak;
+    sc.children[2].querySelector('b').textContent = quizState.best;
+    // la récompense : la scène, projetée dans le geste (donc avec le son)
+    if (q.video) {
+      const scene = document.getElementById('quiz-scene');
+      scene.innerHTML = `<div class="frame" id="quiz-frame"><div class="spin"></div><div class="hint"><i></i>Touchez l’écran pour activer le son</div></div>`;
+      playCardVideo(q, document.getElementById('quiz-frame'));
+    } else if (q.audio) playAudio(q.audio, null);
+    document.getElementById('quiz-after').innerHTML = `<p class="src"><b>${esc(nameCase(q.name))}</b>${fmtEp(q) ? ' · ' + esc(fmtEp(q)) : ''}</p>`;
+    document.getElementById('quiz-stage').scrollTop = 0;
+    const nav = document.getElementById('quiz-nav');
+    nav.innerHTML = `<button id="quiz-next">Question suivante<span class="arr">→</span></button>`;
+    document.getElementById('quiz-next').addEventListener('click', () => renderQuiz());
+  }));
+}
+
+// ===== ENTRÉES DE LISTE (fiche, recherche, favoris) =====
+function entHTML(q, k, opts = {}) {
+  const fav = isFav(q);
+  return `<div class="ent" data-k="${k}">
+    <div class="ent-m">${opts.name === false ? '' : `<b>${opts.query ? highlight(nameCase(q.name), opts.query) : esc(nameCase(q.name))}</b>`}${esc(fmtEp(q))}</div>
+    <div class="ent-q" data-act="goto">${opts.query ? highlight(q.quote, opts.query) : typo(q.quote)}</div>
+    <div class="ent-a">
+      ${q.audio ? `<button class="cell" data-act="audio"><span class="tri"></span><span class="stop"></span><span class="lp">Écouter</span><span class="ls">Arrêter</span></button>` : ''}
+      ${q.video ? `<button class="cell" data-act="video"><span class="frm"></span>Scène</button>` : ''}
+      <button class="cell" data-act="fav"><span class="sq${fav ? ' on' : ''}"></span>${opts.remove ? 'Retirer' : fav ? 'En favori' : 'Favori'}</button>
+    </div>
+  </div>`;
+}
+// Délégation des actions d'une liste d'entrées ; list(k) rend la réplique de l'entrée k
+function bindEntries(container, list, onFavChange) {
+  container.addEventListener('click', e => {
+    const a = e.target.closest('[data-act]');
+    if (!a) return;
+    const ent = a.closest('.ent');
+    const q = list(+ent.dataset.k);
+    if (!q) return;
+    if (a.dataset.act === 'audio') playAudio(q.audio, a);
+    else if (a.dataset.act === 'video') showVideo(q);
+    else if (a.dataset.act === 'goto') gotoQuote(q);
+    else if (a.dataset.act === 'fav') {
+      toggleFav(q);
+      if (onFavChange) onFavChange();
+      else { const on = isFav(q); a.innerHTML = `<span class="sq${on ? ' on' : ''}"></span>${on ? 'En favori' : 'Favori'}`; }
+    }
   });
 }
 
 // ===== PERSONNAGES =====
+let persSort = 'count';
 function renderPersonnages() {
+  stopAudio();
+  setMast('Personnages');
   const main = document.getElementById('main-content');
   const chars = getCharList();
-
-  main.innerHTML = `
-    <div class="personnages-view">
-      <div class="section-header">
-        <span class="section-title">${chars.length} personnages</span>
-        <span class="section-line"></span>
-      </div>
-      <div class="perso-list">
-        ${chars.map(([name, count]) => `
-          <div class="perso-row" data-char="${esc(name)}">
-            <div class="perso-avatar" data-name="${esc(name)}">${esc(name.charAt(0))}</div>
-            <div class="perso-info">
-              <div class="perso-name">${esc(name)}</div>
-              <div class="perso-count">${count} réplique${count > 1 ? 's' : ''}</div>
-            </div>
-            <div class="perso-arrow">›</div>
-          </div>`).join('')}
-      </div>
-    </div>`;
-
-  main.querySelectorAll('.perso-row').forEach(row => {
-    row.addEventListener('click', () => openPersonnage(row.dataset.char));
+  const max = chars[0] ? chars[0][1] : 1;
+  const list = persSort === 'alpha' ? [...chars].sort((a, b) => a[0].localeCompare(b[0], 'fr')) : chars;
+  let rows = '', letter = '';
+  list.forEach(([name, count]) => {
+    if (persSort === 'alpha') {
+      const l = fold(name.replace(/^(LE|LA|LES|L')\s*/, '')).charAt(0).toUpperCase();
+      if (l !== letter) { letter = l; rows += `<div class="idx-l">${l}</div>`; }
+    }
+    rows += `<button class="idx-row" data-char="${esc(name)}"><span class="n">${esc(nameCase(name))}</span><span class="c">${nf(count)}</span>
+      <span class="bar-c" style="width:calc((100% - 2 * var(--pad)) * ${Math.max(.02, count / max).toFixed(3)})"></span></button>`;
   });
-  loadAvatars();
+  main.innerHTML = `
+    <div class="scroll">
+      <div class="page-h"><h1>Personnages</h1><p>${nf(chars.length)} personnages · ${nf(allQuotes.length)} répliques</p></div>
+      <div class="sort"><button class="${persSort === 'count' ? 'on' : ''}" data-sort="count">Par nombre de répliques</button><button class="${persSort === 'alpha' ? 'on' : ''}" data-sort="alpha">De A à Z</button></div>
+      <div class="perso-list">${rows}</div>
+    </div>`;
+  main.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => { persSort = b.dataset.sort; renderPersonnages(); }));
+  main.querySelectorAll('.idx-row').forEach(row => row.addEventListener('click', () => openPersonnage(row.dataset.char)));
 }
 
+function closeOverlay() {
+  const overlay = document.getElementById('detail-overlay');
+  overlay.querySelectorAll('video').forEach(v => v.pause());
+  overlay.classList.add('hidden');
+  overlay.innerHTML = '';
+}
 function openPersonnage(name) {
+  stopAudio();
   detailChar = name;
   const quotes = allQuotes.filter(q => q.name === name);
   const overlay = document.getElementById('detail-overlay');
   overlay.classList.remove('hidden');
-  overlay.scrollTop = 0;
-
+  let shown = 0;
   overlay.innerHTML = `
-    <div class="detail-header">
-      <button class="detail-back" id="detail-back">&#8592;</button>
-      <div class="perso-avatar detail-avatar" data-name="${esc(name)}" data-livre="${esc(quotes[0]?.livre||'')}">${esc(name.charAt(0))}</div>
-      <span class="detail-header-title">${esc(name)}</span>
-      <span class="detail-count">${quotes.length} répliques</span>
-    </div>
-    <div class="perso-quotes-list">
-      ${quotes.map((q, i) => `
-        <div class="perso-quote-item" data-idx="${i}">
-          <button class="perso-quote-fav ${isFav(q) ? 'active' : ''}" data-idx="${i}" aria-label="Favori">${icon('heart')}</button>
-          <div class="perso-quote-text">"${esc(q.quote)}"</div>
-          ${q.audio ? `<button class="audio-mini" data-idx="${i}" aria-label="Écouter">${icon('play')}</button>` : ''}
-          ${fmtEp(q) ? `<div class="perso-quote-ep">${esc(fmtEp(q))}</div>` : ''}
-        </div>`).join('')}
+    <button class="back" id="detail-back"><span class="arr">←</span>Personnages</button>
+    <div class="scroll" id="fiche-scroll">
+      <div class="fiche-h"><h1>${esc(nameCase(name))}</h1>
+        <div class="stats">
+          <div><span>Répliques</span><b>${nf(quotes.length)}</b></div>
+          <div><span>Avec son</span><b>${nf(quotes.filter(q => q.audio).length)}</b></div>
+          <div><span>Avec scène</span><b>${nf(quotes.filter(q => q.video).length)}</b></div>
+        </div>
+      </div>
+      <div id="fiche-list"></div>
     </div>`;
-
-  loadAvatars();
-  document.getElementById('detail-back').addEventListener('click', () => {
-    stopAudio();
-    overlay.classList.add('hidden');
-    overlay.innerHTML = '';
-  });
-
-  overlay.querySelectorAll('.audio-mini').forEach(btn => {
-    btn.addEventListener('click', e => { e.stopPropagation(); playAudio(quotes[parseInt(btn.dataset.idx)].audio, btn); });
-  });
-  overlay.querySelectorAll('.perso-quote-fav').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const q = quotes[parseInt(btn.dataset.idx)];
-      toggleFav(q);
-      btn.classList.toggle('active', isFav(q));
-    });
-  });
+  const listEl = overlay.querySelector('#fiche-list');
+  const more = () => {
+    overlay.querySelector('.more')?.remove();
+    const next = quotes.slice(shown, shown + 50);
+    listEl.insertAdjacentHTML('beforeend', next.map((q, j) => entHTML(q, shown + j, { name: false })).join(''));
+    shown += next.length;
+    if (shown < quotes.length) {
+      listEl.insertAdjacentHTML('beforeend', `<button class="more">Afficher la suite (${nf(quotes.length - shown)} restantes)</button>`);
+      listEl.querySelector('.more').addEventListener('click', more);
+    }
+  };
+  more();
+  bindEntries(listEl, k => quotes[k]);
+  overlay.querySelector('#detail-back').addEventListener('click', () => { stopAudio(); closeOverlay(); });
 }
 
 // ===== RECHERCHE =====
-let searchTimeout = null;
-
+let searchTimeout = null, foldCache = null;
 function renderRecherche() {
+  stopAudio();
+  setMast('Chercher');
   const main = document.getElementById('main-content');
   main.innerHTML = `
-    <div class="recherche-view">
-      <div class="search-wrap">
-        <input type="search" class="search-input" id="search-input"
-          placeholder="Chercher une réplique, un personnage…"
-          autocomplete="off" autocorrect="off" spellcheck="false">
-        <span class="search-icon">${icon('search')}</span>
-      </div>
-      <div id="search-results">
-        <div class="search-hint">Cherchez parmi les ${allQuotes.length.toLocaleString('fr-FR')} répliques</div>
-      </div>
-    </div>`;
-
-  const input   = document.getElementById('search-input');
+    <div class="search">
+      <input type="search" id="search-input" placeholder="Un mot, une réplique, un nom" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search">
+      <button class="clr" id="search-clear">Effacer</button>
+    </div>
+    <div class="scroll" id="search-results"></div>`;
+  const input = document.getElementById('search-input');
   const results = document.getElementById('search-results');
-
+  const idle = () => { results.innerHTML = `<div class="empty">Cherchez parmi les ${nf(allQuotes.length)} répliques.<small>Les accents sont facultatifs : « leodagan » trouve Léodagan.</small></div>`; };
+  idle();
   input.addEventListener('input', () => {
     clearTimeout(searchTimeout);
-    const q = input.value.trim();
-    if (q.length < 2) {
-      results.innerHTML = `<div class="search-hint">Cherchez parmi les ${allQuotes.length.toLocaleString('fr-FR')} répliques</div>`;
-      return;
-    }
-    searchTimeout = setTimeout(() => doSearch(q, results), 200);
+    const v = input.value.trim();
+    if (v.length < 2) { idle(); return; }
+    searchTimeout = setTimeout(() => doSearch(v, results), 180);
   });
+  document.getElementById('search-clear').addEventListener('click', () => { input.value = ''; idle(); input.focus(); });
   input.focus();
 }
-
 function doSearch(query, container) {
-  const q = query.toLowerCase();
-  const hits = allQuotes.filter(x =>
-    x.quote.toLowerCase().includes(q) ||
-    x.name.toLowerCase().includes(q) ||
-    x.title.toLowerCase().includes(q)
-  ).slice(0, 60);
-
+  if (!foldCache) foldCache = allQuotes.map(x => fold(`${x.quote} ${x.name} ${x.title}`));
+  const qf = fold(query);
+  const hits = [];
+  for (let i = 0; i < allQuotes.length; i++) if (foldCache[i].includes(qf)) hits.push(allQuotes[i]);
   if (!hits.length) {
-    container.innerHTML = `<div class="search-hint">Aucun résultat pour « ${esc(query)} »</div>`;
+    container.innerHTML = `<div class="empty">Aucune réplique ne contient « ${esc(query)} ».<small>Essayez un seul mot, ou le nom d’un personnage.</small></div>`;
     return;
   }
-
-  container.innerHTML = `
-    <div class="search-count">${hits.length}${hits.length === 60 ? '+' : ''} résultat${hits.length > 1 ? 's' : ''}</div>
-    ${hits.map((x, i) => `
-      <div class="search-result" data-idx="${i}">
-        <div class="search-result-char">${esc(x.name)}${x.audio ? ` <span class="has-audio" title="Avec son">${icon('volume')}</span>` : ''}</div>
-        <div class="search-result-quote">${highlight(x.quote, query)}</div>
-        ${fmtEp(x) ? `<div class="search-result-meta">${esc(fmtEp(x))}</div>` : ''}
-      </div>`).join('')}`;
-
-  container.querySelectorAll('.search-result').forEach(el => {
-    el.addEventListener('click', () => {
-      const q = hits[parseInt(el.dataset.idx)];
-      showQuoteModal(q);
-    });
-  });
+  let shown = 0;
+  container.innerHTML = `<div class="res-n">${nf(hits.length)} réplique${hits.length > 1 ? 's' : ''}</div><div id="res-list"></div>`;
+  const listEl = container.querySelector('#res-list');
+  const more = () => {
+    listEl.querySelector('.more')?.remove();
+    const next = hits.slice(shown, shown + 40);
+    listEl.insertAdjacentHTML('beforeend', next.map((q, j) => entHTML(q, shown + j, { query })).join(''));
+    shown += next.length;
+    if (shown < hits.length) {
+      listEl.insertAdjacentHTML('beforeend', `<button class="more">Afficher la suite (${nf(hits.length - shown)} restantes)</button>`);
+      listEl.querySelector('.more').addEventListener('click', more);
+    }
+  };
+  more();
+  bindEntries(listEl, k => hits[k]);
 }
 
 // ===== FAVORIS =====
+// Les favoris sont gardés tels qu'enregistrés ; on retrouve la réplique à jour (son, scène) quand elle existe
+function liveQuote(f) { return allQuotes.find(x => x.quote === f.quote && x.name === f.name) || f; }
 function renderFavoris() {
+  stopAudio();
+  setMast('Favoris');
   const main = document.getElementById('main-content');
   if (!favorites.length) {
-    main.innerHTML = `
-      <div class="favoris-view">
-        <div class="section-header">
-          <span class="section-title">Favoris</span>
-          <span class="section-line"></span>
-        </div>
-        <div class="favoris-empty">
-          <div class="icon">${icon('heart')}</div>
-          <p>Aucune réplique enregistrée.<br>Touchez le cœur sous une citation pour la garder ici.</p>
-        </div>
-      </div>`;
+    main.innerHTML = `<div class="scroll"><div class="page-h"><h1>Favoris</h1><p>Aucune réplique enregistrée</p></div>
+      <div class="empty">Vos répliques préférées se rangent ici.<small>Touchez « Mettre en favori » sous une réplique pour la garder.</small></div></div>`;
     return;
   }
-
-  main.innerHTML = `
-    <div class="favoris-view">
-      <div class="section-header">
-        <span class="section-title">${favorites.length} favori${favorites.length > 1 ? 's' : ''}</span>
-        <span class="section-line"></span>
-      </div>
-      ${favorites.map((q, i) => `
-        <div class="fav-item" data-idx="${i}">
-          <div class="fav-item-body">
-            <div class="fav-item-char">${esc(q.name)}${audioOf(q) ? ` <span class="has-audio" title="Avec son">${icon('volume')}</span>` : ''}</div>
-            <div class="fav-item-quote">"${esc(q.quote)}"</div>
-            ${fmtEp(q) ? `<div class="fav-item-meta">${esc(fmtEp(q))}</div>` : ''}
-          </div>
-          <button class="fav-remove" data-idx="${i}" title="Retirer">✕</button>
-        </div>`).join('')}
-    </div>`;
-
-  main.querySelectorAll('.fav-remove').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      const q = favorites[parseInt(btn.dataset.idx)];
-      toggleFav(q);
-      renderFavoris();
-    });
-  });
-  main.querySelectorAll('.fav-item').forEach(el => {
-    el.addEventListener('click', e => {
-      if (e.target.closest('.fav-remove')) return;
-      showQuoteModal(favorites[parseInt(el.dataset.idx)]);
-    });
-  });
+  const list = favorites.map(liveQuote);
+  main.innerHTML = `<div class="scroll"><div class="page-h"><h1>Favoris</h1><p>${nf(list.length)} réplique${list.length > 1 ? 's' : ''} enregistrée${list.length > 1 ? 's' : ''}</p></div>
+    <div id="fav-list">${list.map((q, k) => entHTML(q, k, { remove: true })).join('')}</div></div>`;
+  bindEntries(main.querySelector('#fav-list'), k => list[k], () => renderFavoris());
 }
 
 // Lecteur sans commandes : toucher la vidéo la rejoue depuis le début, son activé
@@ -970,89 +902,42 @@ function replayVideo(v) {
   v.play().catch(() => {});
 }
 
-// ===== VIDÉO EN PLEIN ÉCRAN (bouton « Voir la scène ») =====
+// ===== SCÈNE EN GRAND (« Voir la scène ») =====
 function showVideo(q) {
   stopAudio();
   const overlay = document.getElementById('detail-overlay');
-  overlay.classList.remove('hidden'); overlay.scrollTop = 0;
-  overlay.innerHTML = `
-    <div class="detail-header">
-      <button class="detail-back" id="detail-back">&#8592;</button>
-      <span class="detail-header-title">${esc(q.name)}</span>
-    </div>
-    <div class="video-modal">
-      <video class="quote-video" id="mvideo" src="${mediaSrc(videoURL(q))}" playsinline autoplay></video>
-      <div class="quote-text quote-text-small">"${esc(q.quote)}"</div>
-      ${fmtEp(q) ? `<div class="quote-char-ep">${esc(fmtEp(q))}</div>` : ''}
-    </div>`;
-  const v = document.getElementById('mvideo');
-  v.muted = false;
-  v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
-  v.addEventListener('click', () => replayVideo(v));
-  document.getElementById('detail-back').addEventListener('click', () => {
-    v.pause(); overlay.classList.add('hidden'); overlay.innerHTML = '';
-  });
-}
-
-// ===== QUOTE MODAL (from search/fav) =====
-function showQuoteModal(q) {
-  const overlay = document.getElementById('detail-overlay');
   overlay.classList.remove('hidden');
-  overlay.scrollTop = 0;
-  const ep = fmtEp(q);
-  const audio = audioOf(q);
-
   overlay.innerHTML = `
-    <div class="detail-header">
-      <button class="detail-back" id="detail-back">&#8592;</button>
-      <div class="perso-avatar detail-avatar" data-name="${esc(q.name)}" data-livre="${esc(q.livre||'')}">${esc(q.name.charAt(0))}</div>
-      <span class="detail-header-title">${esc(q.name)}</span>
-      <button class="perso-quote-fav ${isFav(q) ? 'active' : ''}" id="modal-fav" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px;">${icon('heart')}</button>
-    </div>
-    <div style="padding:32px 24px;">
-      <div style="font-family:Georgia,serif;font-size:22px;line-height:1.7;color:var(--text);font-style:italic;text-align:center;margin-bottom:24px;">
-        "${esc(q.quote)}"
-      </div>
-      <div style="text-align:center;">
-        <div style="font-size:14px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--gold);margin-bottom:6px;">${esc(q.name)}</div>
-        ${ep ? `<div style="font-size:12px;color:var(--text3);font-style:italic;">${esc(ep)}</div>` : ''}
-      </div>
-      ${audio ? `<div class="quote-audio">${audioBtnHTML('modal-audio', true)}</div>` : ''}
-      <div style="margin-top:32px;display:flex;gap:12px;justify-content:center;">
-        <button id="modal-share" style="background:var(--bg2);border:1px solid var(--border);color:var(--text2);padding:12px 24px;border-radius:4px;font-size:13px;cursor:pointer;">Partager</button>
-        <button id="modal-perso" style="background:var(--bg2);border:1px solid var(--border);color:var(--text2);padding:12px 24px;border-radius:4px;font-size:13px;cursor:pointer;">👑 ${esc(q.name)}</button>
+    <button class="back" id="detail-back"><span class="arr">←</span>Retour</button>
+    <div class="scroll scene-page">
+      <div class="frame" id="mframe"><video class="quote-video" id="mvideo" src="${mediaSrc(videoURL(q))}" playsinline autoplay></video>
+        <div class="hint"><i></i>Touchez l’écran pour activer le son</div></div>
+      <div class="body">
+        <div class="who">${esc(q.name)}</div>
+        <div class="quote" style="font-size:${Math.min(quoteSize(q.quote), 28)}px">${quoteHTML(q.quote)}</div>
+        ${fmtEp(q) ? `<div class="src">${esc(fmtEp(q))}</div>` : ''}
       </div>
     </div>`;
-
-  loadAvatars();
-  document.getElementById('detail-back').addEventListener('click', () => {
-    stopAudio();
-    overlay.classList.add('hidden'); overlay.innerHTML = '';
-  });
-  const modalAudio = document.getElementById('modal-audio');
-  if (modalAudio) modalAudio.addEventListener('click', () => playAudio(audio, modalAudio));
-  document.getElementById('modal-fav').addEventListener('click', () => {
-    toggleFav(q);
-    document.getElementById('modal-fav').classList.toggle('active', isFav(q));
-    if (currentView === 'favoris') renderFavoris();
-  });
-  document.getElementById('modal-share').addEventListener('click', () => shareQuote(q));
-  document.getElementById('modal-perso').addEventListener('click', () => {
-    overlay.classList.add('hidden'); overlay.innerHTML = '';
-    openPersonnage(q.name);
-  });
+  const v = document.getElementById('mvideo'), frame = document.getElementById('mframe');
+  v.addEventListener('volumechange', () => frame.classList.toggle('muted', v.muted));
+  v.muted = false;
+  v.play().catch(e => { if (e.name === 'NotAllowedError') { v.muted = true; v.play().catch(() => {}); } });
+  frame.addEventListener('click', () => replayVideo(v));
+  document.getElementById('detail-back').addEventListener('click', closeOverlay);
 }
 
-// ===== NAV =====
+// ===== NAVIGATION ENTRE ONGLETS =====
 function bindNav() {
   document.getElementById('bottom-nav').querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (btn.dataset.view !== currentView) setView(btn.dataset.view);
+      if (btn.dataset.view !== currentView || !document.getElementById('detail-overlay').classList.contains('hidden')) setView(btn.dataset.view);
     });
   });
 }
 function setView(view) {
   stopAudio();
+  closeSheet();
+  closeOverlay();
   currentView = view;
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
   if      (view === 'citations')   renderCitations();
@@ -1062,26 +947,22 @@ function setView(view) {
   else if (view === 'favoris')     renderFavoris();
 }
 
-// ===== SW =====
+// ===== SERVICE WORKER =====
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.register('sw.js').catch(() => {});
-
   // Rechargement automatique quand le SW signale une nouvelle version
   navigator.serviceWorker.addEventListener('message', e => {
-    if (e.data?.type === 'SW_UPDATED') {
-      window.location.reload();
-    }
+    if (e.data?.type === 'SW_UPDATED') window.location.reload();
   });
 }
 
-// ===== INIT =====
+// ===== DÉMARRAGE =====
 document.addEventListener('DOMContentLoaded', async () => {
   loadFavorites();
   registerSW();
   try {
     await loadData();
-    // Démarrer sur une citation aléatoire et initialiser l'historique
     quoteIdx = pool() ? rand(pool()) : Math.floor(Math.random() * allQuotes.length);
     randHistory = [quoteIdx];
     randPos = 0;
@@ -1089,11 +970,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     bindNav();
     sendAvis();
   } catch (e) {
+    console.error('Chargement des répliques :', e);
     document.getElementById('main-content').innerHTML = `
-      <div style="padding:40px 20px;text-align:center;color:var(--text3);">
-        <p>Impossible de charger les répliques pour le moment.</p>
-        <p style="margin-top:10px;font-size:11px;color:var(--text4);word-break:break-word;">${esc(String(e && e.message || e))}</p>
-        <button id="btn-retry" style="margin-top:16px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:10px 20px;border-radius:999px;font:500 14px var(--font-sans);cursor:pointer;">Réessayer</button>
+      <div class="empty">Impossible de charger les répliques pour le moment.
+        <small>Vérifiez la connexion, puis réessayez.</small>
+        <button id="btn-retry">Réessayer</button>
       </div>`;
     document.getElementById('btn-retry').addEventListener('click', () => location.reload());
   }
