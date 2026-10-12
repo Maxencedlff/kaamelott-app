@@ -20,11 +20,12 @@ let videoOnly = readPref('kaam_video_only');   // mode vidéo : seulement ces r�
 // Sons automatiques (sons/auto/<clé>.m4a) : hébergés sur Hugging Face, dans s/<2 premiers caractères>/ ;
 // les quelques sons manuels (sons/*.mp3) restent sur le site
 const AUDIO_BASE = 'https://huggingface.co/datasets/Maxencedlf/kaamelott-videos/resolve/main/s/';
+// Extrait refait (champs "v" pour le son, "vv" pour la vidéo, dans data.json) : ?v=<n> dans l'URL pour ne pas resservir l'ancienne version en cache
 function audioURL(src) {
-  const m = /^sons\/auto\/(.+\.m4a)$/.exec(src || '');
-  return m ? `${AUDIO_BASE}${m[1].slice(0, 2)}/${m[1]}` : src;
+  const m = /^sons\/auto\/([^?]+\.m4a)(\?.*)?$/.exec(src || '');
+  return m ? `${AUDIO_BASE}${m[1].slice(0, 2)}/${m[1]}${m[2] || ''}` : src;
 }
-function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4` : null; }
+function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4${q.vv ? `?v=${q.vv}` : ''}` : null; }
 // Répliques parcourues (aléatoire / ordre) selon les filtres actifs
 function pool() {
   if (verifyMode) return verifyIdx;
@@ -108,7 +109,7 @@ function parseQuote(item, i) {
   const title   = epM && epM[2] ? epM[2].trim() : '';
   const film    = /premier volet/i.test(rest) ? 'Kaamelott : Premier Volet' : '';
 
-  return { i, quote: item.quote, name, livre, episode, title, film, audio: item.audio || null, video: item.video || null, approx: !!item.approx };
+  return { i, quote: item.quote, name, livre, episode, title, film, audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx };
 }
 
 async function loadData() {
