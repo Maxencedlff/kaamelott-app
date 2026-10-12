@@ -107,8 +107,13 @@ let avisFaits = readJSON('kaam_avis_faits', {});   // index de réplique → 1 (
 let avisFile  = readJSON('kaam_avis_file', []);    // avis pas encore envoyés
 function readJSON(k, def) { try { return JSON.parse(localStorage.getItem(k)) || def; } catch { return def; } }
 function writeJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+// Les sons estimés (≈), les moins sûrs, passent en premier ; les autres ensuite
+let verifyApprox = false;
 function rebuildVerify() {
-  verifyIdx = allQuotes.reduce((acc, q, i) => ((q.audio || q.video) && !avisFaits[q.i] && acc.push(i), acc), []);
+  const todo = allQuotes.reduce((acc, q, i) => ((q.audio || q.video) && !avisFaits[q.i] && acc.push(i), acc), []);
+  const approx = todo.filter(i => allQuotes[i].approx);
+  verifyApprox = approx.length > 0;
+  verifyIdx = verifyApprox ? approx : todo;
 }
 let autoPlay  = readPref('kaam_autoplay');     // jouer le son dès qu'on tombe sur la réplique
 let inOrder   = readPref('kaam_in_order');     // swipe/tap : réplique suivante dans l'ordre au lieu d'aléatoire
@@ -326,7 +331,7 @@ function renderCitations() {
   const ep = fmtEp(q);
   const P = pool();
   const counter = verifyMode
-    ? `${verifyIdx.length} à vérifier · ${Object.keys(avisFaits).length} vérifiées${avisFile.length ? ` · ${avisFile.length} en attente d'envoi` : ''}`
+    ? `${verifyIdx.length} ${verifyApprox ? 'sons estimés (≈) à vérifier en premier' : 'à vérifier'} · ${Object.keys(avisFaits).length} vérifiées${avisFile.length ? ` · ${avisFile.length} en attente d'envoi` : ''}`
     : P
     ? `${P.indexOf(quoteIdx) + 1} / ${P.length} répliques ${P === videoIdx ? 'avec vidéo' : 'avec son'}`
     : `${quoteIdx + 1} / ${allQuotes.length}`;
