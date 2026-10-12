@@ -278,6 +278,8 @@ figure, blockquote { margin: 0; }
 .nav .mid { background: var(--ink); color: var(--paper); justify-content: center; }
 .nav .nx { justify-content: flex-end; }
 .nav.one { grid-template-columns: 1fr; }
+.nav.two { grid-template-columns: 1fr 1.25fr; }
+.nav.two .mid { justify-content: space-between; }
 .nav.one button { justify-content: space-between; background: var(--ink); color: var(--paper); }
 
 /* Vérifier : une seule rangée */
@@ -371,6 +373,7 @@ figure, blockquote { margin: 0; }
 .score span { font-size: var(--t-xs); font-weight: var(--w-meta); color: var(--ink-2); white-space: nowrap; }
 .score b { font-size: var(--t-2xl); font-weight: var(--w-disp); letter-spacing: var(--tr-disp); font-stretch: var(--s-cond); line-height: 1.05; font-variant-numeric: tabular-nums lining-nums; }
 .score b em { font-style: normal; color: var(--ink-2); font-weight: var(--w-meta); }
+.score b.dt { font-size: var(--t-l); white-space: nowrap; }
 .score div.rec { background: var(--red); color: var(--paper); }
 .score div.rec span { color: var(--paper); }
 #quiz-stage { flex: 1; min-height: 0; }
@@ -436,15 +439,15 @@ figure, blockquote { margin: 0; }
 .livres { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); border-top: 1px solid var(--hair); margin: 0 calc(var(--pad) * -1); }
 .livres button { height: 52px; display: flex; flex-direction: column; justify-content: center; padding: 0 0 2px 8px; border-left: 1px solid var(--hair); position: relative; min-width: 0; }
 .livres button:first-child { border-left: 0; padding-left: var(--pad); }
-.livres i { position: absolute; left: 8px; bottom: -1px; height: 3px; background: var(--red); }
-.livres button:first-child i { left: var(--pad); }
+.livres i { position: absolute; left: 8px; bottom: -1px; height: 3px; background: var(--red); width: calc((100% - 20px) * var(--r, 0)); }
+.livres button:first-child i { left: var(--pad); width: calc((100% - var(--pad) - 12px) * var(--r, 0)); }
 .livres b { font-size: var(--t-s); font-weight: var(--w-act); line-height: 1.1; white-space: nowrap; }
 .livres em { font-style: normal; font-size: var(--t-xs); font-weight: var(--w-meta); color: var(--ink-2); font-variant-numeric: tabular-nums; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: clip; }
 .livres button:active { background: var(--paper-2); }
 /* plus de 6 colonnes (Livres, film et inédits) : deux rangées de 4 plutôt que des libellés rognés */
 .livres.two { grid-auto-flow: row; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .livres.two button:nth-child(4n + 1) { border-left: 0; padding-left: var(--pad); }
-.livres.two button:nth-child(4n + 1) i { left: var(--pad); }
+.livres.two button:nth-child(4n + 1) i { left: var(--pad); width: calc((100% - var(--pad) - 12px) * var(--r, 0)); }
 .livres.two button:nth-child(n + 5) { border-top: 1px solid var(--hair); }
 /* en-tête d'épisode collant : la cote n'est plus répétée sur chaque réplique */
 .ep-h { position: sticky; top: 0; z-index: 2; background: var(--paper); display: grid; grid-template-columns: var(--lab) minmax(0, 1fr) auto; align-items: baseline;
@@ -458,6 +461,9 @@ figure, blockquote { margin: 0; }
 .fiche .ent-a .cell + .cell { border-left-color: var(--hair-l); padding-left: 10px; }
 .fiche .ent.playing .ent-q { margin-left: 0; width: 100%; padding-left: var(--pad); }
 .more.top { border-top: 1px solid var(--ink); }
+.f-acts { border-bottom: 1px solid var(--hair); }
+.f-acts button { width: 100%; height: 50px; padding: 0 var(--pad); display: flex; align-items: center; justify-content: space-between; background: var(--ink); color: var(--paper); font-weight: var(--w-act); font-size: var(--t-m); }
+.f-acts button:active { background: #000; }
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--hair); }
 .stats div { padding: 7px 0 10px; }
 .stats div + div { border-left: 1px solid var(--hair); padding-left: 10px; }
@@ -544,7 +550,7 @@ figure, blockquote { margin: 0; }
   .opt { font-size: 14px; }
   .bar-sum .sep { margin: 0 5px; }
   .livres button { padding-left: 5px; }
-  .livres i { left: 5px; }
+  .livres i { left: 5px; width: calc((100% - 14px) * var(--r, 0)); }
   .livres em { font-stretch: 84%; letter-spacing: -.02em; }
 }
 @media (max-width: 379px) {

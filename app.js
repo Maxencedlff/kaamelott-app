@@ -1004,14 +1004,32 @@ function gotoQuote(q) {
   randHistory.push(idx); randPos = randHistory.length - 1;
   setView('citations');
 }
-async function shareQuote(q) {
-  const text = `« ${q.quote} »\n${q.name}${fmtEp(q) ? ', ' + fmtEp(q) : ''}\n\nKaamelott`;
+// Partage : feuille système si elle existe, sinon copie ; la confirmation s'écrit dans le bouton (jamais de fenêtre d'alerte)
+async function shareText(text, btn) {
+  let said = '';
   if (navigator.share) {
-    try { await navigator.share({ text }); } catch {}
+    try { await navigator.share({ text }); said = 'Envoyé'; } catch { return; }
   } else {
-    await navigator.clipboard.writeText(text).catch(() => {});
-    alert('Réplique copiée.');
+    try { await navigator.clipboard.writeText(text); said = 'Copié'; }
+    catch {                                   // presse-papiers refusé : copie à l'ancienne
+      const ta = Object.assign(document.createElement('textarea'), { value: text, readOnly: true });
+      ta.style.cssText = 'position:fixed;opacity:0;top:0';
+      document.body.appendChild(ta); ta.select();
+      let ok = false; try { ok = document.execCommand('copy'); } catch {}
+      ta.remove();
+      said = ok ? 'Copié' : 'Échec';
+    }
   }
+  document.getElementById('sr-live').textContent = said === 'Copié' ? 'Copié dans le presse-papiers.' : said === 'Envoyé' ? 'Envoyé.' : 'Copie impossible.';
+  if (!btn || !btn.isConnected) return;
+  const lab = btn.querySelector('.t') || btn;
+  if (btn._shareTimer) clearTimeout(btn._shareTimer); else btn._shareHTML = lab.innerHTML;
+  lab.textContent = said;
+  btn.classList.add('said');
+  btn._shareTimer = setTimeout(() => { lab.innerHTML = btn._shareHTML; btn.classList.remove('said'); btn._shareTimer = null; }, 1500);
+}
+function shareQuote(q, btn) {
+  return shareText(`« ${q.quote} »\n${nameCase(q.name)}${fmtEp(q) ? ', ' + fmtEp(q) : ''}\n\nKaamelott`, btn);
 }
 
 // ===== QUIZ =====
@@ -1047,26 +1065,48 @@ function quizPick() {
   }
   return allQuotes[rand(quizByChar.m[rand(names)])];
 }
-function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-function renderQuiz() {
+function shuffle(a, rnd = Math.random) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+// ===== QUESTION DU JOUR : la même pour tout le monde ce jour-là (graine = date), une seule tentative =====
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function todayKey() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function dailyState() { const st = readJSON('kaam_qdj', {}); return st.d === todayKey() ? st : null; }
+function dailyQuestion() {
+  quizPick();                                       // construit le pool
+  const rnd = mulberry32(+todayKey().replace(/-/g, ''));
+  const names = Object.keys(quizByChar.m).sort();
+  const list = quizByChar.m[names[Math.floor(rnd() * names.length)]];
+  const q = allQuotes[list[Math.floor(rnd() * list.length)]];
+  const wrong = shuffle(TOP_CHARS.filter(c => c !== q.name), rnd).slice(0, 3);
+  return { q, choices: shuffle([q.name, ...wrong], rnd) };
+}
+const dateFR = () => new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+function renderQuiz(daily = false) {
   if (!quizState) initQuiz();
   stopAudio();
-  setMast('Quiz');
+  setMast(daily ? 'Quiz · question du jour' : 'Quiz');
   const main = document.getElementById('main-content');
-  const q = quizPick();
+  let q, choices;
+  if (daily) ({ q, choices } = dailyQuestion());
+  else {
+    q = quizPick();
+    choices = shuffle([q.name, ...shuffle(TOP_CHARS.filter(c => c !== q.name)).slice(0, 3)]);
+  }
   quizState.current = q;
   quizState.answered = false;
   cachedMedia(videoURL(q));                  // la scène se télécharge pendant que l'on réfléchit
-  const wrong = shuffle(TOP_CHARS.filter(c => c !== q.name)).slice(0, 3);
-  const choices = shuffle([q.name, ...wrong]);
   const short = innerHeight < 620;
   const fs = Math.round(Math.min(quoteSize(q.quote), short ? Q_MAX.quizSE : Q_MAX.quiz) * textScale());
-
+  const done = dailyState();
+  const hist = readJSON('kaam_qdj_hist', {});
+  const daysOk = Object.values(hist).filter(Boolean).length;
   main.innerHTML = `
-    <div class="score">
-      <div><span>Justes</span><b>${quizState.correct}<em>/${quizState.total}</em></b></div>
-      <div><span>Série</span><b>${quizState.streak}</b></div>
-      <div><span>Record</span><b>${quizState.best}</b></div>
+    <div class="score">${daily
+      ? `<div><span>Jour</span><b class="dt">${new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}</b></div>
+         <div><span>Tentative</span><b>${done ? 1 : 0}<em>/1</em></b></div>
+         <div><span>Jours justes</span><b>${daysOk}</b></div>`
+      : `<div><span>Justes</span><b>${quizState.correct}<em>/${quizState.total}</em></b></div>
+         <div><span>Série</span><b>${quizState.streak}</b></div>
+         <div><span>Record</span><b>${quizState.best}</b></div>`}
     </div>
     <div class="scroll" id="quiz-stage">
       <div id="quiz-scene" class="q-scene"></div>
@@ -1078,27 +1118,38 @@ function renderQuiz() {
     <div class="choices" role="group" aria-label="Qui a dit ça ?">
       ${choices.map((c, k) => `<button class="choice" data-choice="${esc(c)}"><span class="l" aria-hidden="true">${'ABCD'[k]}</span><span class="n">${esc(nameCase(c))}</span><span class="v"></span></button>`).join('')}
     </div>
-    <div class="nav one" id="quiz-nav"><button id="quiz-next">Passer<span class="arr" aria-hidden="true">→</span></button></div>`;
+    ${daily
+      ? `<div class="nav one" id="quiz-nav"><button id="quiz-free">Revenir au quiz libre<span class="arr" aria-hidden="true">→</span></button></div>`
+      : `<div class="nav two" id="quiz-nav"><button id="quiz-daily">${done ? `Du jour · ${done.ok ? 'Juste' : 'Faux'}` : 'Question du jour'}</button><button class="mid" id="quiz-next">Passer<span class="arr" aria-hidden="true">→</span></button></div>`}`;
 
   const stage = document.getElementById('quiz-stage');
   const fade = () => stage.classList.toggle('q-more', stage.scrollHeight - stage.scrollTop - stage.clientHeight > 4);
   stage.addEventListener('scroll', fade, { passive: true });
   fade();
-  document.getElementById('quiz-next').addEventListener('click', () => renderQuiz());
-  document.querySelectorAll('.choice').forEach(btn => btn.addEventListener('click', () => {
+  document.getElementById('quiz-next')?.addEventListener('click', () => renderQuiz());
+  document.getElementById('quiz-daily')?.addEventListener('click', () => renderQuiz(true));
+  document.getElementById('quiz-free')?.addEventListener('click', () => renderQuiz());
+  const answer = (btn, replay) => {
     if (quizState.answered) return;
     quizState.answered = true;
-    quizState.total++;
     const correct = btn.dataset.choice === q.name;
     const lost = quizState.streak;
     let record = false;
-    if (correct) {
-      quizState.correct++; quizState.streak++;
-      if (quizState.streak > quizState.best) {
-        quizState.best = quizState.streak; record = true;
-        try { localStorage.setItem('kaam_quiz_best', String(quizState.best)); } catch {}
+    if (daily) {
+      if (!replay) {
+        writeJSON('kaam_qdj', { d: todayKey(), pick: btn.dataset.choice, ok: correct });
+        hist[todayKey()] = correct; writeJSON('kaam_qdj_hist', hist);
       }
-    } else quizState.streak = 0;
+    } else {
+      quizState.total++;
+      if (correct) {
+        quizState.correct++; quizState.streak++;
+        if (quizState.streak > quizState.best) {
+          quizState.best = quizState.streak; record = true;
+          try { localStorage.setItem('kaam_quiz_best', String(quizState.best)); } catch {}
+        }
+      } else quizState.streak = 0;
+    }
     // les 4 lignes restent en place : rien ne bouge sous le doigt
     document.querySelectorAll('.choice').forEach(b => {
       b.setAttribute('aria-disabled', 'true');
@@ -1107,30 +1158,52 @@ function renderQuiz() {
       else b.classList.add('dim');
     });
     const sc = document.querySelector('.score').children;
-    sc[0].querySelector('b').innerHTML = `${quizState.correct}<em>/${quizState.total}</em>`;
-    sc[1].querySelector('b').textContent = quizState.streak;
-    sc[2].querySelector('b').textContent = quizState.best;
-    if (record && quizState.best > 1) { sc[2].classList.add('rec'); sc[2].querySelector('span').textContent = 'Nouveau record'; }
+    if (daily) {
+      sc[1].querySelector('b').innerHTML = '1<em>/1</em>';
+      sc[2].querySelector('b').textContent = Object.values(hist).filter(Boolean).length;
+    } else {
+      sc[0].querySelector('b').innerHTML = `${quizState.correct}<em>/${quizState.total}</em>`;
+      sc[1].querySelector('b').textContent = quizState.streak;
+      sc[2].querySelector('b').textContent = quizState.best;
+      if (record && quizState.best > 1) { sc[2].classList.add('rec'); sc[2].querySelector('span').textContent = 'Nouveau record'; }
+    }
     // source : l'épisode seulement (le nom est déjà dans la ligne « Juste »)
     const after = document.getElementById('quiz-after');
     after.innerHTML = epHTML(q); after.hidden = !fmtEp(q);
-    document.getElementById('sr-live').textContent = correct
+    if (!replay) document.getElementById('sr-live').textContent = correct
       ? `Juste, c’est ${nameCase(q.name)}.${record ? ' Nouveau record.' : ''}`
-      : `Faux, c’était ${nameCase(q.name)}.${lost > 1 ? ` Série de ${lost} perdue.` : ''}`;
+      : `Faux, c’était ${nameCase(q.name)}.${lost > 1 && !daily ? ` Série de ${lost} perdue.` : ''}`;
     // la récompense : la scène, projetée dans le geste (donc avec le son), en tête de la zone
     const scene = document.getElementById('quiz-scene');
     scene.innerHTML = sceneHTML(q, 'quiz-fig');
     const fig = document.getElementById('quiz-fig');
     bindScene(fig, cardVideo);
-    playCardVideo(q, fig);
+    if (!replay) playCardVideo(q, fig);
+    else { fig.querySelector('.frame').prepend(cardVideo); cardVideo.src = mediaSrc(videoURL(q)); setScene(cardVideo, 'loading'); cardVideo.muted = true; cardVideo.play().catch(() => {}); }
     stage.classList.add('answered');
     stage.scrollTop = 0; fade();
     const nav = document.getElementById('quiz-nav');
-    nav.innerHTML = `<button id="quiz-next">Question suivante<span class="arr" aria-hidden="true">→</span></button>`;
-    const nx = document.getElementById('quiz-next');
-    nx.addEventListener('click', () => renderQuiz());
-    if (btn.matches(':focus-visible')) nx.focus({ preventScroll: true });   // clavier : on enchaîne sur « Question suivante »
-  }));
+    if (daily) {
+      const res = readJSON('kaam_qdj', {});
+      nav.className = 'nav two';
+      nav.innerHTML = `<button id="qdj-share"><span class="t">Partager</span></button><button class="mid" id="quiz-free">Quiz libre<span class="arr" aria-hidden="true">→</span></button>`;
+      const d = new Date().toLocaleDateString('fr-FR');
+      document.getElementById('qdj-share').addEventListener('click', e => shareText(`Kaamelott · Qui a dit ça ? · ${d} · ${res.ok ? 'Juste' : 'Faux'}${quizState.best ? ` (record ${quizState.best})` : ''}`, e.currentTarget));
+      document.getElementById('quiz-free').addEventListener('click', () => renderQuiz());
+    } else {
+      nav.className = 'nav one';
+      nav.innerHTML = `<button id="quiz-next">Question suivante<span class="arr" aria-hidden="true">→</span></button>`;
+      const nx = document.getElementById('quiz-next');
+      nx.addEventListener('click', () => renderQuiz());
+      if (btn.matches(':focus-visible')) nx.focus({ preventScroll: true });   // clavier : on enchaîne sur « Question suivante »
+    }
+  };
+  document.querySelectorAll('.choice').forEach(btn => btn.addEventListener('click', () => answer(btn, false)));
+  // question du jour déjà jouée : on montre la réponse donnée, sans nouvelle tentative
+  if (daily && done) {
+    const b = [...document.querySelectorAll('.choice')].find(x => x.dataset.choice === done.pick);
+    if (b) answer(b, true);
+  }
 }
 
 // ===== ENTRÉES DE LISTE (fiche, recherche, favoris) =====
@@ -1326,8 +1399,9 @@ function openPersonnage(name, restore) {
           <div><span>Épisodes</span><b>${nf(epCount.size)}</b></div>
           <div><span>Première</span><b><small>${esc(coteEp(first) || '—')}</small></b></div>
         </div>
-        ${livres.length > 1 ? `<div class="livres${livres.length > 6 ? ' two' : ''}" role="group" aria-label="Aller au Livre">${livres.map(L => `<button data-livre="${L}" aria-label="${/^[IV]+$/.test(L) ? 'Livre ' + L : L}, ${nf(byLivre.get(L))} répliques"><i style="width:calc((100% - 12px) * ${(byLivre.get(L) / lmax).toFixed(3)})"></i><b>${L}</b><em>${nf(byLivre.get(L))}</em></button>`).join('')}</div>` : ''}
+        ${livres.length > 1 ? `<div class="livres${livres.length > 6 ? ' two' : ''}" role="group" aria-label="Aller au Livre">${livres.map(L => `<button data-livre="${L}" aria-label="${/^[IV]+$/.test(L) ? 'Livre ' + L : L}, ${nf(byLivre.get(L))} répliques"><i style="--r:${(byLivre.get(L) / lmax).toFixed(3)}"></i><b>${L}</b><em>${nf(byLivre.get(L))}</em></button>`).join('')}</div>` : ''}
       </div>
+      <div class="f-acts"><button id="f-rand">Une au hasard<span class="arr" aria-hidden="true">→</span></button></div>
       <div id="fiche-list" class="fiche"></div>
     </div>`);
   const sc = overlay.querySelector('#fiche-scroll');
@@ -1370,6 +1444,7 @@ function openPersonnage(name, restore) {
     sc.scrollTop = listEl.offsetTop - sc.offsetTop;
   }));
   bindEntries(listEl, k => quotes[k]);
+  overlay.querySelector('#f-rand').addEventListener('click', () => gotoQuote(rand(quotes)));   // la fiche est retrouvée au retour
   overlay._ficheSnap = () => ({ name, start, shown, top: sc.scrollTop });
   overlay.querySelector('#detail-back').addEventListener('click', () => { stopAudio(); ficheState = null; closeOverlay(); });
 }
