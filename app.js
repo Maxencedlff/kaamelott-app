@@ -223,8 +223,16 @@ function parseQuote(item, i) {
 }
 
 async function loadData() {
-  const res  = await fetch('data.json');
-  const raw  = await res.json();
+  // jusqu'à 3 essais : le premier peut tomber sur la page de contrôle anti-robot de Vercel (403), qui se lève seule
+  let raw = null;
+  for (let essai = 0; essai < 3 && !raw; essai++) {
+    if (essai) await new Promise(r => setTimeout(r, 2500));
+    try {
+      const res = await fetch('data.json', { cache: essai ? 'reload' : 'default' });
+      if (res.ok) raw = await res.json();
+    } catch {}
+  }
+  if (!raw) throw new Error('data.json indisponible');
   allQuotes  = raw.map(parseQuote).filter(q => q.quote && q.name && !q.hide);   // hide : doublon masqué (index i conservé)
   audioIdx   = allQuotes.reduce((acc, q, i) => (q.audio && acc.push(i), acc), []);
   videoIdx   = allQuotes.reduce((acc, q, i) => (q.video && acc.push(i), acc), []);
@@ -1060,7 +1068,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (e) {
     document.getElementById('main-content').innerHTML = `
       <div style="padding:40px 20px;text-align:center;color:var(--text3);">
-        <p style="font-family:Georgia,serif;font-style:italic;">Erreur de chargement des données.</p>
+        <p>Impossible de charger les répliques pour le moment.</p>
+        <button onclick="location.reload()" style="margin-top:16px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:10px 20px;border-radius:999px;font:500 14px var(--font-sans);cursor:pointer;">Réessayer</button>
       </div>`;
   }
 });

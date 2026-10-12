@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v16';
+const CACHE = 'kaamelott-v17';
 const ASSETS = [
   '/',
   '/index.html',
@@ -53,8 +53,10 @@ self.addEventListener('fetch', e => {
         if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE).then(c => c.put(e.request, clone));
+          return response;
         }
-        return response;
+        // réponse refusée (ex. page de contrôle anti-robot de Vercel, 403) : la dernière version en cache plutôt qu'une erreur
+        return caches.match(e.request).then(hit => hit || response);
       })
       .catch(() => caches.match(e.request))
   );
