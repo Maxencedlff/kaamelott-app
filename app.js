@@ -1730,6 +1730,23 @@ async function boot() {
     else if (!autoRetried) { autoRetried = true; retryTimer = setTimeout(() => { if (!allQuotes.length && currentView === 'citations') boot(); }, 10000); }
   }
 }
+// Point d'accès stable pour le banc de test (tests/e2e) : lecture de l'état et fonctions existantes, rien de nouveau.
+// Le banc ne dépend que de ce pont : les noms internes peuvent changer sans le casser.
+window.__kaam = {
+  get allQuotes() { return allQuotes; },
+  get quoteIdx() { return quoteIdx; }, set quoteIdx(v) { quoteIdx = v; },
+  get verifyIdx() { return verifyIdx; },
+  get avisFaits() { return avisFaits; },
+  get avisFile() { return avisFile; },
+  get quizState() { return quizState; },
+  get favorites() { return favorites; },
+  get player() { return player; },
+  pool: () => pool(),
+  render: dir => renderCitations(dir),
+  random: () => randomQuote(),
+  rebuildVerify: () => rebuildVerify(),
+  sendAvis: () => sendAvis(),
+};
 document.addEventListener('touchstart', () => {}, { passive: true });   // iOS n'applique :active qu'avec un écouteur tactile
 document.addEventListener('DOMContentLoaded', () => {
   loadFavorites();

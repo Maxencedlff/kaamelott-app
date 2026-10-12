@@ -1,2 +1,6 @@
 sons/auto/
 app.png
+tests/e2e/shots/
+tests/e2e/.results/
+tests/e2e/rapport.md
+__pycache__/
