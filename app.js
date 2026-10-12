@@ -26,6 +26,73 @@ function audioURL(src) {
   return m ? `${AUDIO_BASE}${m[1].slice(0, 2)}/${m[1]}${m[2] || ''}` : src;
 }
 function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4${q.vv ? `?v=${q.vv}` : ''}` : null; }
+// ===== PRÉCHARGEMENT =====
+// Hugging Face met ~1 s à servir chaque extrait : on télécharge à l'avance ceux des répliques suivantes
+// (fichiers de 30 à 200 Ko) et on les lit depuis la mémoire, ce qui rend le passage d'une réplique à l'autre immédiat.
+const mediaCache = new Map();   // url distante → téléchargement en cours ou terminé
+const mediaReady = new Map();   // url distante → url blob (extrait déjà en mémoire)
+const MEDIA_CACHE_MAX = 16;
+function cachedMedia(url) {
+  if (!url || mediaCache.has(url)) return;
+  mediaCache.set(url, fetch(url).then(r => r.ok ? r.blob() : Promise.reject())
+    .then(b => { if (mediaCache.has(url)) mediaReady.set(url, URL.createObjectURL(b)); })
+    .catch(() => mediaCache.delete(url)));
+  while (mediaCache.size > MEDIA_CACHE_MAX) {             // les plus anciens sont libérés
+    const old = mediaCache.keys().next().value;
+    mediaCache.delete(old);
+    const u = mediaReady.get(old);
+    if (u && cardVideo.src !== u && player.src !== u) URL.revokeObjectURL(u);
+    mediaReady.delete(old);
+  }
+}
+// source à lire : la copie en mémoire si elle est prête, sinon le fichier distant (et on le garde pour la suite)
+function mediaSrc(url) { const u = mediaReady.get(url); if (!u) cachedMedia(url); return u || url; }
+// Répliques probables après celle-ci : on précharge leur vidéo (modes vidéo / vérification) et leur son
+function prefetchAround() {
+  const P = pool();
+  const next = [];
+  // suivante dans l'ordre (boutons ◀ ▶, mode « Dans l'ordre ») et, en aléatoire, la prochaine tirée à l'avance
+  if (P) { const pos = P.indexOf(quoteIdx); if (pos !== -1) next.push(P[(pos + 1) % P.length], P[(pos + 2) % P.length]); }
+  else next.push((quoteIdx + 1) % allQuotes.length);
+  if (!inOrder) { if (nextRand === null) nextRand = pickRandom(); next.push(nextRand); }
+  if (randPos > 0) next.push(randHistory[randPos - 1]);
+  next.filter(i => i != null && allQuotes[i]).forEach(i => {
+    const q = allQuotes[i];
+    if ((videoOnly || verifyMode) && q.video) cachedMedia(videoURL(q));
+    if (q.audio && (autoPlay || verifyMode || audioOnly)) cachedMedia(audioURL(q.audio));
+  });
+}
+let nextRand = null;      // prochaine réplique aléatoire, tirée à l'avance pour être préchargée
+function pickRandom() { return pool() ? rand(pool()) : Math.floor(Math.random() * allQuotes.length); }
+
+// Un seul lecteur vidéo pour toutes les cartes : une fois le son autorisé par un toucher (iOS), il le reste
+const cardVideo = document.createElement('video');
+cardVideo.className = 'quote-video';
+cardVideo.id = 'qvideo';
+cardVideo.playsInline = true;
+cardVideo.setAttribute('playsinline', '');
+cardVideo.preload = 'auto';
+['touchstart', 'touchend'].forEach(ev => cardVideo.addEventListener(ev, e => e.stopPropagation()));   // les gestes sur le lecteur ne changent pas de réplique
+cardVideo.addEventListener('click', e => { e.stopPropagation(); replayVideo(cardVideo); });              // toucher = rejouer, avec le son
+['loadeddata', 'playing'].forEach(ev => cardVideo.addEventListener(ev, () => cardVideo.parentElement?.classList.remove('loading')));
+cardVideo.addEventListener('volumechange', () => cardVideo.parentElement?.classList.toggle('muted', cardVideo.muted));
+function playCardVideo(q, slot) {
+  const url = videoURL(q);
+  const src = mediaSrc(url);
+  slot.classList.toggle('loading', !src.startsWith('blob:'));
+  slot.appendChild(cardVideo);
+  if (cardVideo.src !== src) cardVideo.src = src;
+  else if (cardVideo.readyState >= 2) slot.classList.remove('loading');
+  cardVideo.currentTime = 0;
+  // son activé par défaut ; si le navigateur refuse (aucun toucher encore), lecture sans son, signalée
+  cardVideo.muted = false;
+  slot.classList.remove('muted');
+  cardVideo.play().catch(e => {
+    if (e.name !== 'NotAllowedError') return;            // lecture interrompue par la réplique suivante : rien à faire
+    cardVideo.muted = true; cardVideo.play().catch(() => {});
+  });
+}
+
 // Répliques parcourues (aléatoire / ordre) selon les filtres actifs
 function pool() {
   if (verifyMode) return verifyIdx;
@@ -66,6 +133,7 @@ function setPlayingBtn(btn) {
 }
 function stopAudio() {
   player.pause();
+  cardVideo.pause();
   document.querySelectorAll('video').forEach(v => v.pause());
   setPlayingBtn(null);
 }
@@ -73,7 +141,7 @@ function playAudio(src, btn) {
   if (!src) return;
   // Re-tap sur le bouton en cours de lecture = stop
   if (btn && btn === playingBtn && !player.paused) { stopAudio(); return; }
-  player.src = audioURL(src);
+  player.src = mediaSrc(audioURL(src));
   player.currentTime = 0;
   setPlayingBtn(btn || null);
   player.play().catch(() => setPlayingBtn(null));
@@ -280,7 +348,7 @@ function renderCitations() {
         <div class="quote-card-line-top"></div>
         <div class="quote-card-line-bottom"></div>
         ${inlineVideo
-          ? `<video class="quote-video" id="qvideo" src="${videoURL(q)}" playsinline preload="auto"></video>
+          ? `<div class="video-slot" id="qvideo-slot"><div class="video-spinner"></div><div class="video-muted">🔇 Touche la vidéo pour le son</div></div>
              <div class="quote-text quote-text-small">${esc(q.quote)}</div>`
           : `<div class="quote-mark">"</div>
              <div class="quote-text">${esc(q.quote)}</div>`}
@@ -331,13 +399,10 @@ function renderCitations() {
     writePref('kaam_video_only', videoOnly);
     if (videoOnly && !q.video) randomQuote(); else renderCitations();
   });
-  const vid = document.getElementById('qvideo');
-  if (vid) {
-    // les gestes sur le lecteur ne doivent pas changer de réplique
-    ['touchstart', 'touchend'].forEach(ev => vid.addEventListener(ev, e => e.stopPropagation()));
-    vid.addEventListener('click', e => { e.stopPropagation(); replayVideo(vid); });   // toucher = rejouer (avec le son)
-    vid.play().catch(() => { vid.muted = true; vid.play().catch(() => {}); });   // son coupé si le navigateur l'exige
-  }
+  const slot = document.getElementById('qvideo-slot');
+  if (slot) playCardVideo(q, slot);
+  else cardVideo.pause();
+  prefetchAround();
   const btnVideo = document.getElementById('btn-video');
   if (btnVideo) btnVideo.addEventListener('click', e => { e.stopPropagation(); showVideo(q); });
   document.getElementById('chip-audio-only').addEventListener('click', () => {
@@ -487,7 +552,9 @@ function randomQuote() {
   if (randPos < randHistory.length - 1) {
     randHistory = randHistory.slice(0, randPos + 1);
   }
-  quoteIdx = pool() ? rand(pool()) : Math.floor(Math.random() * allQuotes.length);
+  const P = pool();
+  quoteIdx = nextRand !== null && (!P || P.includes(nextRand)) && nextRand !== quoteIdx ? nextRand : pickRandom();
+  nextRand = null;
   randHistory.push(quoteIdx);
   randPos = randHistory.length - 1;
   renderCitations();
@@ -824,11 +891,12 @@ function showVideo(q) {
       <span class="detail-header-title">${esc(q.name)}</span>
     </div>
     <div class="video-modal">
-      <video class="quote-video" id="mvideo" src="${videoURL(q)}" playsinline autoplay></video>
+      <video class="quote-video" id="mvideo" src="${mediaSrc(videoURL(q))}" playsinline autoplay></video>
       <div class="quote-text quote-text-small">"${esc(q.quote)}"</div>
       ${fmtEp(q) ? `<div class="quote-char-ep">${esc(fmtEp(q))}</div>` : ''}
     </div>`;
   const v = document.getElementById('mvideo');
+  v.muted = false;
   v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
   v.addEventListener('click', () => replayVideo(v));
   document.getElementById('detail-back').addEventListener('click', () => {
