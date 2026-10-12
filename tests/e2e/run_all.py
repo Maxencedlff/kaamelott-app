@@ -649,12 +649,12 @@ def scenario_vague2(w):
     def s_fiche(rec):
         pg = page(); w.nav(pg, "personnages")
         pg.locator(".idx-row").first.click(); pg.wait_for_selector("#fiche-list .ent")
-        r = pg.evaluate("({ ep: document.querySelectorAll('.ep-h').length, cells: [...document.querySelectorAll('#fiche-list .ent-a')].map(a => a.children.length), livres: document.querySelectorAll('.livres button').length })")
+        r = pg.evaluate("({ ep: document.querySelectorAll('.ep-h').length, cells: [...document.querySelectorAll('#fiche-list .ent-a')].map(a => a.children.length + a.querySelectorAll('.w2').length), livres: document.querySelectorAll('.livres button').length })")
         w.shot(pg, rec, "32-fiche-se")
         pg.close()
-        if not r["ep"] or set(r["cells"]) != {3}: raise RuntimeError(f"fiche : {r}")
-        return f"{r['ep']} en-têtes d'épisode, 3 cellules par entrée, {r['livres']} Livres"
-    w.step("Fiche personnage : épisodes, 3 cellules fixes", s_fiche)
+        if not r["ep"] or set(r["cells"]) != {4}: raise RuntimeError(f"fiche : {r}")
+        return f"{r['ep']} en-têtes d'épisode, 4 cellules par entrée, {r['livres']} Livres"
+    w.step("Fiche personnage : épisodes, 4 cellules fixes", s_fiche)
 
     def s_search(rec):
         pg = page(); w.nav(pg, "recherche")
@@ -668,10 +668,10 @@ def scenario_vague2(w):
         v = pg.evaluate("document.getElementById('search-input').value")
         w.shot(pg, rec, "33-chercher-memoire")
         pg.close()
-        if not marks or any(m != "roi" for m in marks): raise RuntimeError(f"surlignage absent ou hors mot : {marks[:6]}")
+        if not marks or any(not re.fullmatch(r"roi\w*", m) for m in marks): raise RuntimeError(f"surlignage absent ou hors mot entier : {marks[:6]}")
         if not n: raise RuntimeError("« c est pas faux » ne trouve rien")
         if v != "c est pas faux": raise RuntimeError(f"recherche oubliée : {v!r}")
-        return f"« roi » : {len(marks)} soulignés, tous « roi » ; « c est pas faux » : {n} ; recherche gardée"
+        return f"« roi » : {len(marks)} mots entiers soulignés ; « c est pas faux » : {n} ; recherche gardée"
     w.step("Chercher : surlignage, ponctuation facultative, mémoire", s_search)
 
     def s_fav(rec):
@@ -701,7 +701,7 @@ def scenario_vague2(w):
         fin = pg.evaluate("({ fin: !!document.querySelector('.fin'), ok: !!document.getElementById('avis-ok') })")
         w.shot(pg, rec, "36-verifier-fini")
         pg.close()
-        if not re.search(r"Consigné|Signalé", line) or left != 0 or not fin["fin"] or fin["ok"]: raise RuntimeError(f"ligne={line!r} restant={left} fin={fin}")
+        if not re.search(r"Validé|Signalé", line) or left != 0 or not fin["fin"] or fin["ok"]: raise RuntimeError(f"ligne={line!r} restant={left} fin={fin}")
         return "la ligne d'avis permet d'annuler ; tout vérifié : écran de fin, plus de bouton OK"
     w.step("Vérifier : Annuler, puis écran de fin", s_verify)
 
@@ -725,7 +725,7 @@ def scenario_vague2(w):
             pg.goto(w.base, wait_until="domcontentloaded")
             pg.wait_for_selector("#btn-myfav", timeout=20000)
             pg.click(".nav-btn[data-view=favoris]"); pg.wait_for_timeout(200)
-            r = pg.evaluate("({ sub: document.getElementById('mast-sub').dataset.t, n: document.querySelectorAll('.ent').length })")
+            r = pg.evaluate("({ sub: document.querySelector('.page-h h1')?.textContent, n: document.querySelectorAll('.ent').length })")
             w.shot(pg, rec, "37-erreur-favoris")
         finally:
             pg.close(); w.expect_errors = False

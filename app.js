@@ -115,8 +115,9 @@ cardVideo.preload = 'auto';
 // ===== SCÈNE : figure du registre (image 16:9, repères de coupe, filet d'avancement, légende d'état) =====
 // Rien n'est écrit sur l'image : l'état (chargement, sans le son, durée, fin, échec) est dans la légende dessous.
 function sceneHTML(q, id) {
-  return `<figure class="scene"${id ? ` id="${id}"` : ''} data-s="loading"><div class="frame"><span class="cm" aria-hidden="true"></span><div class="prog" aria-hidden="true"><b></b></div></div>`
-    + `<figcaption class="leg"><span class="cote">${esc(coteEp(q))}</span><span class="st"></span></figcaption></figure>`;
+  // la source est écrite en clair sous la scène : la légende ne porte que l'état
+  return `<figure class="scene"${id ? ` id="${id}"` : ''} data-s="loading"><div class="frame"><div class="prog" aria-hidden="true"><b></b></div></div>`
+    + `<figcaption class="leg"><span class="st"></span></figcaption></figure>`;
 }
 const mmss = t => { t = Math.max(0, Math.round(t || 0)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 function setScene(v, st) {
@@ -129,9 +130,9 @@ function setScene(v, st) {
   const el = f.querySelector('.st');
   if (!el) return;
   const T = {
-    loading: ['mono', 'Chargement…'],
+    loading: ['', 'Chargement…'],
     muted:   ['red', '<i aria-hidden="true"></i>Touchez l’image pour le son'],
-    playing: ['mono', `${mmss(v.currentTime)} / ${mmss(v.duration)}`],
+    playing: ['num', `${mmss(v.currentTime)} / ${mmss(v.duration)}`],
     ended:   ['ink', '<span aria-hidden="true">↻</span> Revoir'],
     error:   ['red', navigator.onLine === false ? 'Hors ligne · Réessayer' : 'Scène indisponible · Réessayer'],
   }[st];
@@ -539,14 +540,27 @@ function foldMap(s) {
   }
   return { f, at };
 }
-// surligne chaque mot cherché à partir d'un début de mot ; la typographie est appliquée une seule fois, sur le HTML découpé
+// Surlignage : d'abord la phrase cherchée telle quelle (accents et apostrophes ignorés), sinon chaque mot cherché
+// d'au moins 3 lettres ; toujours des mots entiers (« perce » souligne « Perceval »), jamais une lettre isolée.
+// La typographie est appliquée une seule fois, sur le HTML découpé.
 function highlight(text, query) {
   const plain = text.replace(/'/g, '’');
   const toks = foldIx(query).trim().split(' ').filter(Boolean);
   if (!toks.length) return typo(text);
   const { f, at } = foldMap(plain);
   const marks = new Uint8Array(plain.length);
-  for (const t of toks) { let p = -1; while ((p = f.indexOf(t, p + 1)) >= 0) if (p === 0 || f[p - 1] === ' ') marks.fill(1, at[p], at[p + t.length - 1] + 1); }
+  const mark = t => {                            // occurrences en début de mot, étendues jusqu'à la fin du mot
+    let p = -1, n = 0;
+    while ((p = f.indexOf(t, p + 1)) >= 0) {
+      if (p > 0 && f[p - 1] !== ' ') continue;
+      let e = p + t.length;
+      while (e < f.length && f[e] !== ' ') e++;
+      marks.fill(1, at[p], at[e - 1] + 1); n++;
+    }
+    return n;
+  };
+  const phrase = toks.join(' ');
+  if (phrase.length < 3 || !mark(phrase)) toks.filter(t => t.length >= 3).forEach(mark);
   let out = '', i = 0;
   while (i < plain.length) {
     let j = i; while (j < plain.length && marks[j] === marks[i]) j++;
@@ -606,13 +620,14 @@ function closeSheet() {
   sheetFocus = null;
 }
 function sheetOpen() { return !document.getElementById('sheet').hidden; }
-// glisser l'en-tête de la feuille vers le bas (plus de 80 px) la ferme
+// glisser la feuille vers le bas (plus de 80 px) la ferme, depuis n'importe où tant qu'elle n'a pas défilé
+let sheetSwipe = false;
 function bindSheetGestures(sheet) {
-  const head = sheet.querySelector('.sh-head');
-  if (!head) return;
+  if (sheetSwipe) return;                         // écouteurs posés une seule fois (la feuille est réutilisée)
+  sheetSwipe = true;
   let y0 = null;
-  head.addEventListener('touchstart', e => { y0 = e.touches[0].clientY; }, { passive: true });
-  head.addEventListener('touchend', e => { if (y0 !== null && e.changedTouches[0].clientY - y0 > 80) closeSheet(); y0 = null; }, { passive: true });
+  sheet.addEventListener('touchstart', e => { y0 = sheet.scrollTop <= 0 && !e.target.closest('textarea') ? e.touches[0].clientY : null; }, { passive: true });
+  sheet.addEventListener('touchend', e => { if (y0 !== null && e.changedTouches[0].clientY - y0 > 80) closeSheet(); y0 = null; }, { passive: true });
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheetOpen()) closeSheet(); });
 // Clavier iOS : la feuille (position fixe en bas) remonte au-dessus du clavier tant qu'il est ouvert
@@ -641,31 +656,34 @@ function mediaMode() { return videoOnly ? 'video' : audioOnly ? 'audio' : 'text'
 function settingsHTML() {
   const m = mediaMode();
   const opt = (on, attrs, label, small) =>
-    `<button class="opt${on ? ' on' : ''}" role="radio" aria-checked="${on}" ${attrs}>${label}<small>${small}</small></button>`;
+    `<button class="opt${on ? ' on' : ''}" role="radio" aria-checked="${on}" ${attrs}>${label}${small ? `<small>${small}</small>` : ''}</button>`;
   const row = (no, lab, id, body, off) =>
     `<div class="set${off ? ' off' : ''}"><div class="set-lab" id="${id}"><span class="no">${no}</span>${lab}</div><div class="opts" role="radiogroup" aria-labelledby="${id}"${off ? ' aria-disabled="true"' : ''}>${body}</div></div>`;
   const { approx, others } = verifyTodo;
   const todoTxt = approx + others === 0
-    ? 'Tout est vérifié sur cet appareil pour cette source.'
+    ? 'Tout est vérifié sur ce téléphone pour cette source.'
     : approx
-    ? `<b>${nf(approx)}</b> son${approx > 1 ? 's' : ''} estimé${approx > 1 ? 's' : ''} passe${approx > 1 ? 'nt' : ''} d’abord, puis <b>${nf(others)}</b> autre${others > 1 ? 's' : ''}.`
-    : `<b>${nf(others)}</b> réplique${others > 1 ? 's' : ''} à vérifier.`;
+    ? `On commence par les <b>${nf(approx)}</b> son${approx > 1 ? 's' : ''} les moins sûrs.`
+    : `Il en reste <b>${nf(others)}</b>.`;
+  const P = verifyMode ? null : pool();
+  const n = P ? P.length : allQuotes.length;
   return `
     <div class="sh-head">
       <div><h2 id="sh-title">Réglages</h2></div>
       <button class="sh-close" id="sheet-close">Fermer</button>
     </div>
-    ${row('01', 'Source', 'set-src', ['all', 'serie', 'film'].map(s => opt(source === s, `data-src="${s}"`, SRC_LABEL[s], nf(countFor(s, m)))).join(''))}
-    ${row('02', 'Affichage', 'set-aff', opt(m === 'text', 'id="chip-text"', 'Texte', nf(countFor(source, 'text')))
-      + opt(m === 'audio', 'id="chip-audio-only"', 'Son', nf(countFor(source, 'audio')))
-      + (videoIdx.length ? opt(m === 'video', 'id="chip-video-only"', 'Vidéo', nf(countFor(source, 'video'))) : ''), verifyMode)}
+    ${row('01', 'Source', 'set-src', ['all', 'serie', 'film'].map(s => opt(source === s, `data-src="${s}"`, SRC_LABEL[s])).join(''))}
+    ${row('02', 'Affichage', 'set-aff', opt(m === 'text', 'id="chip-text"', 'Texte')
+      + opt(m === 'audio', 'id="chip-audio-only"', 'Son')
+      + (videoIdx.length ? opt(m === 'video', 'id="chip-video-only"', 'Vidéo') : ''), verifyMode)}
     ${row('03', 'Ordre', 'set-ord', opt(!inOrder, 'data-order="random"', 'Aléatoire', 'au hasard') + opt(inOrder, 'data-order="seq"', 'Dans l’ordre', 'par épisode'), verifyMode)}
     ${row('04', 'Lecture auto', 'set-auto', opt(!autoPlay, 'data-auto="0"', 'Non', 'à la demande') + opt(autoPlay, 'data-auto="1"', 'Oui', 'son d’office'), verifyMode)}
-    <p class="set-note">${verifyMode ? 'Affichage, ordre et lecture auto sont suspendus pendant la vérification.' : 'Chaque nombre indique combien de répliques ce choix vous présentera.'}</p>
+    <p class="set-note" role="status">${verifyMode ? 'Affichage, ordre et lecture auto sont suspendus pendant la vérification.' : `<b>${nf(n)}</b> réplique${n > 1 ? 's' : ''} correspond${n > 1 ? 'ent' : ''}`}</p>
     <div class="contrib"><div class="contrib-row"><div class="set-lab"><span class="no">05</span>Vérifier</div><div class="contrib-body">
-      <p>Écouter chaque son, regarder chaque scène, signaler ce qui cloche. ${todoTxt}</p>
-      <button class="contrib-go${verifyMode ? ' on' : ''}" id="chip-verify">${verifyMode ? 'Quitter la vérification' : 'Commencer la vérification'}<span class="arr" aria-hidden="true">→</span></button>
-    </div></div></div>`;
+      <p>Écouter et regarder les répliques, signaler ce qui cloche. ${todoTxt}</p>
+      <button class="contrib-go${verifyMode ? ' on' : ''}" id="chip-verify">${verifyMode ? '<span class="l">Quitter la vérification</span><span class="s">Quitter</span>' : '<span class="l">Commencer la vérification</span><span class="s">Vérifier</span>'}<span class="arr" aria-hidden="true">→</span></button>
+    </div></div></div>
+    <div class="sh-foot"><button class="sh-close2" id="sheet-close2">Fermer</button></div>`;
 }
 function openSettings() {
   const sheet = openSheet(settingsHTML());
@@ -684,6 +702,7 @@ function refreshAfterSetting(focusSel) {
 }
 function bindSettings(sheet) {
   sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
+  sheet.querySelector('#sheet-close2').addEventListener('click', closeSheet);
   sheet.querySelectorAll('[data-src]').forEach(b => b.addEventListener('click', () => {
     source = b.dataset.src;
     try { localStorage.setItem('kaam_source', source); } catch {}
@@ -742,8 +761,9 @@ function textScale() {
   const fs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 17;
   return Math.min(1.6, Math.max(.85, fs / 17));
 }
-function swipeCount() { try { return +localStorage.getItem('kaam_swipes') || 0; } catch { return 0; } }
-function countSwipe() { try { localStorage.setItem('kaam_swipes', String(swipeCount() + 1)); } catch {} }
+// « Touchez ou glissez » : seulement sur les 3 premières répliques montrées (compte mémorisé sur l'appareil)
+function hintCount() { try { return +localStorage.getItem('kaam_hint') || 0; } catch { return 0; } }
+function countHint() { try { localStorage.setItem('kaam_hint', String(hintCount() + 1)); } catch {} }
 let firstRender = true;
 function renderCitations(dir = 0) {
   const main = document.getElementById('main-content');
@@ -765,7 +785,7 @@ function renderCitations(dir = 0) {
     : '';
   const sep = '<span class="sep" aria-hidden="true">·</span>';
   const summary = verifyMode
-    ? [verifyApprox ? 'Sons estimés' : 'Tout', `${nf(verifyIdx.length)} restante${verifyIdx.length > 1 ? 's' : ''}`, source === 'all' ? '' : SRC_LABEL[source]].filter(Boolean).join(sep)
+    ? [verifyApprox ? 'Sons les moins sûrs' : 'Tout', `${nf(verifyIdx.length)} restante${verifyIdx.length > 1 ? 's' : ''}`, source === 'all' ? '' : SRC_LABEL[source]].filter(Boolean).join(sep)
     : [SRC_LABEL[source], { text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : 'Aléatoire', autoPlay ? 'Lecture auto' : '']
         .filter(Boolean).join(sep);
   const inlineVideo = !!((videoOnly || verifyMode) && q.video);
@@ -773,26 +793,28 @@ function renderCitations(dir = 0) {
   const fav = isFav(q);
   const what = q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : 'Son OK';
   const no = String(q.i + 1).padStart(5, '0').replace(/^(\d{2})/, '$1 ');
-  const hint = !verifyMode && !((videoOnly || verifyMode) && q.video) && swipeCount() < 5 ? (inOrder ? 'Touchez ou glissez pour la suivante' : 'Touchez ou glissez pour changer') : '';
+  const hint = !verifyMode && !((videoOnly || verifyMode) && q.video) && hintCount() < 3 ? (inOrder ? 'Touchez ou glissez pour la suivante' : 'Touchez ou glissez pour changer') : '';
+  if (hint) countHint();
   const small = innerWidth < 360;
   const atStart = !inOrder && randPos <= 0;
   // Rangée d'actions : toujours 4 cellules, toujours dans le même ordre ; une pièce absente reste en place, grisée
   const listen = inlineVideo && !verifyMode
     ? `<button class="cell" id="btn-replay"><span class="tri" aria-hidden="true"></span>Revoir</button>`
     : q.audio
-    ? `<button class="cell" id="btn-audio"><span class="tri" aria-hidden="true"></span><span class="stop" aria-hidden="true"></span><span class="lp">Écouter</span><span class="ls">Arrêter</span>${q.approx ? '<span class="x" aria-hidden="true">*</span>' : ''}</button>`
-    : `<button class="cell" disabled aria-label="Écouter : pas de son pour cette réplique"><span class="tri" aria-hidden="true"></span>Écouter</button>`;
+    ? `<button class="cell" id="btn-audio"><span class="tri" aria-hidden="true"></span><span class="stop" aria-hidden="true"></span><span class="lp">Écouter</span><span class="ls">Arrêter</span>${q.approx && verifyMode ? '<span class="x" aria-hidden="true">*</span>' : ''}</button>`
+    : `<span class="cell nil">Pas de son</span>`;
   const scene = q.video
     ? `<button class="cell" id="btn-video"><span class="frm" aria-hidden="true"></span>Scène</button>`
-    : `<button class="cell" disabled aria-label="Scène : pas de scène pour cette réplique"><span class="frm" aria-hidden="true"></span>Scène</button>`;
+    : `<span class="cell nil">Pas de scène</span>`;
+  const textOnly = !q.audio && !q.video;      // ni son ni scène : seules les actions utiles restent
 
   main.innerHTML = `
     <button class="bar${verifyMode ? ' verify' : ''}" id="btn-settings">
-      <span class="bar-sum">${summary}</span><span class="bar-btn"><i aria-hidden="true"></i>Réglages</span>
+      <span class="bar-sum">${verifyMode ? '' : '<span class="bar-k">Réglages :</span>'}${summary}</span><span class="bar-btn" aria-hidden="true"><i></i></span>
     </button>
     ${inlineVideo ? sceneHTML(q, 'qvideo-slot') : ''}
     <div class="stage swap-in${dir < 0 ? ' back' : dir > 0 ? '' : ' rand'}" id="quote-card">
-      ${inlineVideo ? '' : `<div class="cote" aria-hidden="true"><span>N° ${no}</span><span>${esc(coteEp(q))}</span></div>`}
+      ${inlineVideo ? '' : `<div class="cote" aria-hidden="true"><span>N° ${no}</span></div>`}
       <figure class="qblock">
         <button class="who" id="btn-who" aria-label="${esc(nameCase(q.name))}, voir la fiche du personnage">${esc(nameCase(q.name))}</button>
         <blockquote class="quote" lang="fr"${inlineVideo ? ` style="font-size:${Math.round(Math.min(quoteSize(q.quote), small ? Q_MAX.videoSE : Q_MAX.video) * textScale())}px"` : ''}>${quoteHTML(q.quote)}</blockquote>
@@ -802,11 +824,11 @@ function renderCitations(dir = 0) {
     </div>
     ${counter || verifyMode ? `<div class="stage-foot${verifyMode ? ' vf' : ''}"><span class="quote-counter">${counter}</span>${reviewable ? `<button class="skip" id="avis-skip">Passer<span class="arr" aria-hidden="true">→</span></button>` : ''}</div>` : ''}
     <div class="done-slot"></div>
-    <div class="acts">${listen}${scene}
+    <div class="acts${textOnly ? ' a2' : ''}">${textOnly ? '' : listen + scene}
       <button class="cell" id="btn-fav" aria-pressed="${fav}"><span class="sq${fav ? ' on' : ''}" aria-hidden="true"></span>Favori</button>
-      <button class="cell" id="btn-share"><span class="arr" aria-hidden="true">↗</span><span class="t">Partager</span></button>
+      <button class="cell" id="btn-share"><span class="t">Partager</span></button>
     </div>
-    ${q.audio && q.approx && !inlineVideo ? `<p class="est-note"><b>*</b> Son estimé<span class="est-long"> : découpe calculée automatiquement, il peut déborder un peu sur les répliques voisines</span><span class="est-short"> : peut déborder un peu</span>.</p>` : ''}
+    ${verifyMode && q.audio && q.approx ? `<p class="est-note"><b>*</b> Son approximatif, peut déborder un peu.</p>` : ''}
     ${reviewable
       ? `<div class="vrow"><button class="ok" id="avis-ok"><i aria-hidden="true"></i>${what}</button><button class="ko" id="avis-ko">Problème</button></div>`
       : inOrder
@@ -853,14 +875,29 @@ function renderCitations(dir = 0) {
     });
   }
   firstRender = false;
-  // la réplique continue plus bas : fondu et « Suite ↓ », retirés une fois en bas
+  // La réplique continue plus bas : « Suite ↓ » sur sa propre ligne sous la carte, la carte coupée sur une ligne
+  // entière (jamais une ligne tranchée à mi-hauteur), la dernière ligne visible en fondu. Une fois en bas : plus de fondu.
+  const snapLines = () => {
+    const qt = card.querySelector('.quote');
+    if (!qt) return;
+    const lh = parseFloat(getComputedStyle(qt).lineHeight);
+    if (!(lh > 0)) return;
+    card.style.flex = ''; card.style.height = '';
+    const top = qt.getBoundingClientRect().top - card.getBoundingClientRect().top + card.scrollTop;
+    const n = Math.floor((card.clientHeight - top) / lh);
+    if (n < 1) return;
+    card.style.setProperty('--lh', (n >= 2 ? lh : 0) + 'px');   // une seule ligne visible : elle reste nette
+    card.style.flex = '0 0 auto';
+    card.style.height = Math.floor(top + n * lh) + 'px';
+  };
   const fit = () => {
     if (!card.isConnected) return;          // carte déjà remplacée par un rendu plus récent
-    const more = card.scrollHeight > card.clientHeight + 4 && card.scrollTop + card.clientHeight < card.scrollHeight - 4;
+    const over = card.scrollHeight > card.clientHeight + 4;
+    let h = card.nextElementSibling?.classList.contains('more-h') ? card.nextElementSibling : null;
+    if (over && !h) { card.insertAdjacentHTML('afterend', '<p class="more-h" aria-hidden="true">Suite ↓</p>'); h = card.nextElementSibling; snapLines(); }
+    const more = over && card.scrollTop + card.clientHeight < card.scrollHeight - 4;
     card.classList.toggle('ovf', more);
-    let h = card.parentElement.querySelector('.more-h');
-    if (more && !h) { card.insertAdjacentHTML('afterend', '<span class="more-h" aria-hidden="true">Suite ↓</span>'); h = card.nextElementSibling; h.style.top = (card.offsetTop + card.offsetHeight - 26) + 'px'; }
-    else if (!more && h) h.remove();
+    h?.classList.toggle('done', !more);
   };
   let lastScroll = 0;
   card.addEventListener('scroll', () => { lastScroll = Date.now(); fit(); }, { passive: true });
@@ -869,7 +906,7 @@ function renderCitations(dir = 0) {
     if (e.target.closest('button')) return;
     if (getSelection().toString().length) return;           // on sélectionnait du texte pour le copier
     if (Date.now() - lastScroll < 250) return;              // on faisait défiler une réplique longue
-    countSwipe(); swipeForward();
+    swipeForward();
   });
   // Glisser horizontalement : réplique suivante / précédente (le défilement vertical reste libre)
   let sx = 0, sy = 0, st = 0;
@@ -881,7 +918,7 @@ function renderCitations(dir = 0) {
   card.addEventListener('touchend', e => {
     const dx = sx - e.changedTouches[0].clientX, dy = Math.abs(sy - e.changedTouches[0].clientY);
     const fast = Date.now() - st < 250 && Math.abs(dx) > 30;
-    if ((Math.abs(dx) > 50 || fast) && Math.abs(dx) > dy) { countSwipe(); if (dx > 0) swipeForward(); else swipeBack(); }
+    if ((Math.abs(dx) > 50 || fast) && Math.abs(dx) > dy) { if (dx > 0) swipeForward(); else swipeBack(); }
   }, { passive: true });
 
   // VoiceOver : la nouvelle réplique est annoncée (pas au premier affichage), le focus reste sur le bouton touché
@@ -913,7 +950,7 @@ function openProblem(q) {
         ids[k] && has(k) ? `<button class="tc" data-pb="${ids[k]}" role="checkbox" aria-checked="false" aria-label="${row} : ${lab}"><span class="box"></span></button>` : `<div class="tc nil" aria-hidden="true">—</div>`).join('')).join('')}
     </div>
     <label class="note"><span>Précision (facultatif)</span><textarea id="avis-note" maxlength="500"></textarea></label>
-    <div class="sh-acts one"><button class="go" id="avis-send" disabled>Signaler et passer<span class="arr" aria-hidden="true">→</span></button></div>
+    <div class="sh-acts"><button id="avis-cancel">Annuler</button><button class="go" id="avis-send" disabled>Signaler et passer<span class="arr" aria-hidden="true">→</span></button></div>
     <p class="sh-help" id="avis-help">Cochez au moins une case, ou écrivez une précision.</p>`);
   const picked = new Set();
   const send = sheet.querySelector('#avis-send'), note = sheet.querySelector('#avis-note');
@@ -927,6 +964,7 @@ function openProblem(q) {
   note.addEventListener('input', () => { upd(); note.style.height = 'auto'; note.style.height = Math.min(Math.max(note.scrollHeight, 72), 96) + 'px'; });
   note.addEventListener('focus', () => setTimeout(() => note.scrollIntoView({ block: 'center' }), 300));
   sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
+  sheet.querySelector('#avis-cancel').addEventListener('click', closeSheet);
   send.addEventListener('click', () => { closeSheet(); recordAvis(q, false, [...picked], note.value.trim()); });
 }
 function recordAvis(q, ok, problemes, note) {
@@ -936,9 +974,9 @@ function recordAvis(q, ok, problemes, note) {
   // la file d'abord : si elle ne peut pas être écrite, la réplique n'est pas marquée « vérifiée » (elle reviendra)
   if (writeJSON('kaam_avis_file', avisFile)) writeJSON('kaam_avis_faits', avisFaits);
   if (avisFile.length >= 5) sendAvis(); else scheduleSend();
-  // « Consigné · Annuler » pendant 5 s : un pouce qui glisse ne valide rien pour de bon
+  // « Validé · Annuler » ou « Signalé · Annuler » pendant 5 s : un pouce qui glisse ne valide rien pour de bon
   const ts = avisFile[avisFile.length - 1].ts;
-  lastAvis = { i: q.i, idx: quoteIdx, ts, t: Date.now(),
+  lastAvis = { i: q.i, idx: quoteIdx, ts, t: Date.now(), ok,
     label: `${nameCase(q.name)}${q.film ? ', film' : q.livre ? `, Livre ${q.livre}${q.episode ? `, ép. ${q.episode}` : ''}` : ''}` };
   rebuildVerify();
   if (!verifyIdx.length) { renderCitations(); return; }
@@ -952,7 +990,7 @@ function showDoneLine() {
   const left = 5000 - (Date.now() - lastAvis.t);
   if (left <= 0) { lastAvis = null; return; }
   const sent = !avisFile.some(a => a.ts === lastAvis.ts);
-  slot.outerHTML = `<div class="done-line done-slot" role="status"><span><b>Consigné</b> · ${esc(lastAvis.label)}</span><button id="avis-undo"${sent ? ' disabled' : ''}>${sent ? 'Déjà envoyé' : 'Annuler'}</button></div>`;
+  slot.outerHTML = `<div class="done-line done-slot" role="status"><span><b>${lastAvis.ok ? 'Validé' : 'Signalé'}</b> · ${esc(lastAvis.label)}</span><button id="avis-undo"${sent ? ' disabled' : ''}>${sent ? 'Déjà envoyé' : 'Annuler'}</button></div>`;
   document.getElementById('avis-undo').addEventListener('click', undoAvis);
   // écran court : la ligne d'annulation prend la place du compteur le temps de ses 5 s
   const foot = document.querySelector('.stage-foot.vf');
@@ -985,9 +1023,9 @@ function renderVerifyDone() {
   const vals = Object.values(avisFaits);
   const sep = '<span class="sep" aria-hidden="true">·</span>';
   document.getElementById('main-content').innerHTML = `
-    <button class="bar verify" id="btn-settings"><span class="bar-sum">Vérification${sep}Terminé</span><span class="bar-btn"><i></i>Réglages</span></button>
-    <div class="scroll"><div class="fin"><span class="no">${nf(total)} / ${nf(total)}</span><h1>Tout est vérifié.</h1>
-      <p>Chaque son et chaque scène de cette source a reçu un avis depuis cet appareil.</p>
+    <button class="bar verify" id="btn-settings"><span class="bar-sum">Vérification${sep}Terminé</span><span class="bar-btn" aria-hidden="true"><i></i></span></button>
+    <div class="scroll"><div class="fin"><span class="no">${nf(total)} sur ${nf(total)}</span><h1>Tout est vérifié.</h1>
+      <p>Vous avez tout vérifié sur ce téléphone.</p>
       <dl><dt>Validés</dt><dd>${nf(vals.filter(v => v !== 2).length)}</dd><dt>Signalés</dt><dd>${nf(vals.filter(v => v === 2).length)}</dd><dt>En attente d’envoi</dt><dd>${nf(avisFile.length)}</dd></dl></div></div>
     <div class="nav one"><button id="verify-leave">Revenir à la lecture<span class="arr" aria-hidden="true">→</span></button></div>`;
   document.getElementById('btn-settings').addEventListener('click', openSettings);
@@ -1282,14 +1320,20 @@ function renderQuiz(daily = false) {
 
 // ===== ENTRÉES DE LISTE (fiche, recherche, favoris) =====
 // Rangée d'actions à colonnes fixes : Écouter · Scène · Favori (· Partager hors fiche) ; une pièce absente reste une cellule grisée
+// Rangée d'actions à colonnes fixes : Écouter · Scène · Favori · Partager (même jeu partout : listes, fiche, écran principal).
+// Une pièce absente le dit en clair ; ni son ni scène : une seule case sur deux colonnes.
 function entActs(q, opts) {
   const fav = isFav(q);
-  const nil = t => `<span class="cell nil" aria-disabled="true">${t}</span>`;
-  return `<div class="ent-a${opts.fiche ? ' f3' : ''}">
-      ${q.audio ? `<button class="cell" data-act="audio"><span class="tri" aria-hidden="true"></span><span class="stop" aria-hidden="true"></span><span class="lp">Écouter</span><span class="ls">Arrêter</span></button>` : nil(opts.fiche ? 'Sans son' : '—')}
-      ${q.video ? `<button class="cell" data-act="video"><span class="frm" aria-hidden="true"></span>Scène</button>` : nil(opts.fiche ? 'Sans scène' : '—')}
+  const nil = (t, w2) => `<span class="cell nil${w2 ? ' w2' : ''}">${t}</span>`;
+  const media = !allQuotes.length
+    ? nil(navigator.onLine === false ? 'Hors ligne' : 'Indisponible', true)     // favoris relus sans les répliques
+    : !q.audio && !q.video ? nil('Sans son ni scène', true)
+    : (q.audio ? `<button class="cell" data-act="audio"><span class="tri" aria-hidden="true"></span><span class="stop" aria-hidden="true"></span><span class="lp">Écouter</span><span class="ls">Arrêter</span></button>` : nil('Pas de son'))
+      + (q.video ? `<button class="cell" data-act="video"><span class="frm" aria-hidden="true"></span>Scène</button>` : nil('Pas de scène'));
+  return `<div class="ent-a">
+      ${media}
       <button class="cell" data-act="fav" aria-pressed="${fav}"><span class="sq${fav ? ' on' : ''}" aria-hidden="true"></span>${opts.remove ? 'Retirer' : 'Favori'}</button>
-      ${opts.fiche ? '' : `<button class="cell shr" data-act="share" aria-label="Partager"><span class="arr" aria-hidden="true">↗</span></button>`}
+      <button class="cell" data-act="share">Partager</button>
     </div>`;
 }
 function entHTML(q, k, opts = {}) {
@@ -1356,19 +1400,21 @@ function charRank(name) {       // cote « N° 001 » : rang dans le tri par ré
 }
 function renderPersonnages() {
   stopAudio();
-  setMast('Personnages');
+  setMast('');                                   // le grand titre de la page suffit
   const main = document.getElementById('main-content');
   const chars = getCharList();
   const max = chars[0] ? chars[0][1] : 1;
   // tri A→Z sur le nom sans article (« La Dame du Lac » sous D), lettres et tri calculés sur la même clé
   const sortKey = n => fold(n.replace(/^(LE|LA|LES)\s+|^L['’]\s*/, ''));
   const solo = chars.filter(([n]) => !isDuo(n)), duos = chars.filter(([n]) => isDuo(n));
-  const rank = new Map(solo.map(([n], k) => [n, String(k + 1).padStart(3, '0')]));
+  const rank = new Map(solo.map(([n], k) => [n, String(k + 1)]));
+  const az = persSort === 'alpha';             // de A à Z, le rang n'a pas de sens : pas de colonne
   const list = persSort === 'alpha' ? [...solo].sort((a, b) => sortKey(a[0]).localeCompare(sortKey(b[0]), 'fr')) : solo;
   const MINOR = 5;
   const minors = persSort === 'count' ? solo.filter(([, c]) => c < MINOR).length : 0;
-  const row = ([name, count], cls = '') => `<button class="idx-row${cls}" data-char="${esc(name)}" data-f="${esc(fold(nameCase(name)))}"><span class="no" aria-hidden="true">${rank.get(name) || '—'}</span><span class="n">${esc(nameCase(name))}</span><span class="c">${nf(count)}</span>
-      ${count / max >= .005 ? `<span class="bar-c" style="width:calc((100% - 2 * var(--pad) - 40px) * ${(count / max).toFixed(3)})"></span>` : ''}</button>`;
+  // barre de part : dessinée seulement si elle fait au moins 4 px (sinon une poussière rouge)
+  const row = ([name, count], cls = '') => `<button class="idx-row${cls}" data-char="${esc(name)}" data-f="${esc(fold(nameCase(name)))}">${az ? '' : `<span class="no" aria-hidden="true">${rank.get(name) || ''}</span>`}<span class="n">${esc(nameCase(name))}</span><span class="c">${nf(count)}</span>
+      ${count / max * (innerWidth - 72) >= 4 ? `<span class="bar-c" style="width:calc((100% - 2 * var(--pad) - ${az ? 0 : 40}px) * ${(count / max).toFixed(3)})"></span>` : ''}</button>`;
   let rows = '', letter = '';
   list.forEach(c => {
     if (persSort === 'alpha') {
@@ -1384,7 +1430,7 @@ function renderPersonnages() {
       <div class="page-h"><h1>Personnages</h1><p>${nf(solo.length)} personnages · ${nf(allQuotes.length)} répliques</p></div>
       <div class="pf"><input id="pers-filter" type="search" placeholder="Filtrer les noms" aria-label="Filtrer les noms" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"></div>
       <div class="sort"><button class="${persSort === 'count' ? 'on' : ''}" data-sort="count" aria-pressed="${persSort === 'count'}">Par répliques</button><button class="${persSort === 'alpha' ? 'on' : ''}" data-sort="alpha" aria-pressed="${persSort === 'alpha'}">De A à Z</button></div>
-      <div class="perso-list${minors && !persAll ? ' collapsed' : ''}" id="pers-list">${rows}</div>
+      <div class="perso-list${minors && !persAll ? ' collapsed' : ''}${az ? ' az' : ''}" id="pers-list">${rows}</div>
     </div>`;
   const sc = document.getElementById('pers-scroll'), listEl = document.getElementById('pers-list'), input = document.getElementById('pers-filter');
   const applyFilter = () => {
@@ -1422,11 +1468,27 @@ function openOverlay(html) {
   overlay._ficheSnap = null; overlay._fromFiche = null;
   overlay.innerHTML = html;
   overlay.classList.remove('hidden');
+  // le retour est aussi en bas (pouce) : même action que « Retour » en haut
+  overlay.querySelector('#detail-back2')?.addEventListener('click', () => overlay.querySelector('#detail-back')?.click());
+  bindEdgeBack(overlay);
   document.getElementById('main-content').inert = true;
   // clavier : focus sur « Retour » ; toucher : focus sur la page elle-même (aucun contour visible)
   if (usingKeyboard) overlay.querySelector('#detail-back')?.focus({ preventScroll: true });
   else { overlay.setAttribute('tabindex', '-1'); overlay.focus({ preventScroll: true }); }
   return overlay;
+}
+// glisser depuis le bord gauche = Retour (convention iOS) ; écouteurs posés une seule fois
+let edgeBound = false;
+function bindEdgeBack(overlay) {
+  if (edgeBound) return;
+  edgeBound = true;
+  let x0 = null, y0 = 0;
+  overlay.addEventListener('touchstart', e => { const t = e.touches[0]; x0 = t.clientX < 28 ? t.clientX : null; y0 = t.clientY; }, { passive: true });
+  overlay.addEventListener('touchend', e => {
+    const t = e.changedTouches[0];
+    if (x0 !== null && t.clientX - x0 > 70 && Math.abs(t.clientY - y0) < 60) overlay.querySelector('#detail-back')?.click();
+    x0 = null;
+  }, { passive: true });
 }
 function closeOverlay() {
   const overlay = document.getElementById('detail-overlay');
@@ -1436,9 +1498,15 @@ function closeOverlay() {
   overlay.innerHTML = '';
   overlay._ficheSnap = null; overlay._fromFiche = null;
   document.getElementById('main-content').inert = false;
-  if (was) setMast({ citations: verifyMode ? 'Vérification' : 'Répliques', quiz: 'Quiz', personnages: 'Personnages', recherche: 'Chercher', favoris: 'Favoris' }[currentView]);
+  if (was) setMast({ citations: verifyMode ? 'Vérification' : 'Répliques', quiz: 'Quiz', personnages: '', recherche: 'Chercher', favoris: '' }[currentView]);
   if (was && overlayFocus?.isConnected) overlayFocus.focus({ preventScroll: true });
   overlayFocus = null;
+}
+// En-tête d'épisode de la fiche, en clair : « Livre IV · ép. 58 », « Film », « Inédit 3 »
+function epLabel(q) {
+  if (q.film) return 'Film';
+  if (q.inedit) return coteEp(q);
+  return [q.livre ? `Livre ${q.livre}` : '', q.episode ? `ép. ${q.episode}` : ''].filter(Boolean).join(' · ');
 }
 const livreDe = q => q.film ? 'Film' : q.inedit ? 'Inédits' : q.livre || '';
 const LIVRES = ['I', 'II', 'III', 'IV', 'V', 'VI', 'Film', 'Inédits'];
@@ -1447,15 +1515,12 @@ function openPersonnage(name, restore) {
   detailChar = name;
   setMast('Personnages');
   const quotes = allQuotes.filter(q => q.name === name);
-  const no = isDuo(name) ? '' : charRank(name);
   const epKey = q => q.film ? 'film' : q.inedit ? 'x' + q.inedit : `${q.livre}|${q.episode}`;
   const epCount = new Map();
   quotes.forEach(q => epCount.set(epKey(q), (epCount.get(epKey(q)) || 0) + 1));
   const epTitre = q => q.film ? 'Premier volet' : q.inedit ? q.inedit.replace(/^Inédit \d\s*:\s*/, '') : titleCase(q.title || '');
-  // part du corpus, et part des répliques avec son et scène (une seule phrase si les deux sont égales)
+  // part du corpus
   const pc = n => (n * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1, minimumFractionDigits: n * 100 < 10 ? 1 : 0 });
-  const nA = quotes.filter(q => q.audio).length, nV = quotes.filter(q => q.video).length;
-  const media = nA === nV ? `son et scène pour ${pc(nA / quotes.length)} %` : `son pour ${pc(nA / quotes.length)} %, scène pour ${pc(nV / quotes.length)} %`;
   const byLivre = new Map();
   quotes.forEach(q => { const L = livreDe(q); if (L) byLivre.set(L, (byLivre.get(L) || 0) + 1); });
   const livres = LIVRES.filter(L => byLivre.has(L));
@@ -1463,20 +1528,21 @@ function openPersonnage(name, restore) {
   const first = quotes[0];
   let start = restore?.start || 0, shown = start, lastEp = null;
   const overlay = openOverlay(`
-    <div class="back"><button id="detail-back"><span class="arr" aria-hidden="true">←</span>Personnages</button>${no ? `<span class="back-t">N° ${no}</span>` : ''}</div>
+    <div class="back"><button id="detail-back"><span class="arr" aria-hidden="true">←</span>Personnages</button></div>
     <div class="scroll" id="fiche-scroll">
       <div class="fiche-h"><h1${name.length > 14 ? ' class="long"' : ''}>${esc(nameCase(name))}</h1>
-        <p class="part"><b>${pc(quotes.length / allQuotes.length)} %</b> des répliques · ${media}</p>
+        <p class="part"><b>${pc(quotes.length / allQuotes.length)} %</b> des répliques</p>
         <div class="stats">
           <div><span>Répliques</span><b>${nf(quotes.length)}</b></div>
           <div><span>Épisodes</span><b>${nf(epCount.size)}</b></div>
-          <div><span>Première</span><b><small>${esc(coteEp(first) || '—')}</small></b></div>
+          <div><span>Première</span><b><small>${esc(epLabel(first) || '—')}</small></b></div>
         </div>
         ${livres.length > 1 ? `<div class="livres${livres.length > 6 ? ' two' : ''}" role="group" aria-label="Aller au Livre">${livres.map(L => `<button data-livre="${L}" aria-label="${/^[IV]+$/.test(L) ? 'Livre ' + L : L}, ${nf(byLivre.get(L))} répliques"><i style="--r:${(byLivre.get(L) / lmax).toFixed(3)}"></i><b>${L}</b><em>${nf(byLivre.get(L))}</em></button>`).join('')}</div>` : ''}
       </div>
       <div class="f-acts"><button id="f-rand">Une au hasard<span class="arr" aria-hidden="true">→</span></button></div>
       <div id="fiche-list" class="fiche"></div>
-    </div>`);
+    </div>
+    <div class="back-foot"><button id="detail-back2"><span class="arr" aria-hidden="true">←</span>Personnages</button></div>`);
   const sc = overlay.querySelector('#fiche-scroll');
   const listEl = overlay.querySelector('#fiche-list');
   const io = 'IntersectionObserver' in window ? new IntersectionObserver(es => { if (es[0].isIntersecting) more(); }, { root: sc, rootMargin: '600px 0px' }) : null;
@@ -1489,7 +1555,8 @@ function openPersonnage(name, restore) {
       const k = epKey(q);
       if (k !== lastEp) {
         lastEp = k;
-        html += `<div class="ep-h"><span class="c">${esc(coteEp(q))}</span><span class="t">${typo(epTitre(q))}</span><span class="n" aria-label="${epCount.get(k)} répliques">${epCount.get(k)}</span></div>`;
+        const nk = epCount.get(k);
+        html += `<div class="ep-h"><span class="c">${esc(epLabel(q))}</span><span class="t">${typo(epTitre(q))}</span><span class="n">${nf(nk)} réplique${nk > 1 ? 's' : ''}</span></div>`;
       }
       html += entHTML(q, shown + j, { fiche: true });
     });
@@ -1646,7 +1713,7 @@ function liveQuote(f) {
 }
 function renderFavoris() {
   stopAudio();
-  setMast('Favoris');
+  setMast('');                                   // le grand titre de la page suffit
   const main = document.getElementById('main-content');
   if (!favorites.length) {
     main.innerHTML = `<div class="scroll"><div class="page-h"><h1>Favoris</h1><p>Aucune réplique enregistrée</p></div>
@@ -1675,7 +1742,7 @@ function showVideo(q) {
   const fromFiche = ov0._ficheSnap ? ov0._ficheSnap() : null;   // scène ouverte depuis une fiche : « Retour » y ramène
   setMast('Scène');
   const overlay = openOverlay(`
-    <div class="back"><button id="detail-back"><span class="arr" aria-hidden="true">←</span>Retour</button><span class="back-t">Scène</span></div>
+    <div class="back"><button id="detail-back"><span class="arr" aria-hidden="true">←</span>Retour</button></div>
     <div class="scroll scene-page">
       ${sceneHTML(q, 'mfig')}
       <figure class="body">
@@ -1685,10 +1752,11 @@ function showVideo(q) {
       </figure>
       <div class="acts a3">
         <button class="cell" id="m-fav" aria-pressed="${isFav(q)}"><span class="sq${isFav(q) ? ' on' : ''}" aria-hidden="true"></span>Favori</button>
-        <button class="cell" id="m-share"><span class="arr" aria-hidden="true">↗</span><span class="t">Partager</span></button>
+        <button class="cell" id="m-share"><span class="t">Partager</span></button>
         <button class="cell" id="m-goto">Voir la réplique</button>
       </div>
-    </div>`);
+    </div>
+    <div class="back-foot"><button id="detail-back2"><span class="arr" aria-hidden="true">←</span>Retour</button></div>`);
   const fig = document.getElementById('mfig');
   const v = document.createElement('video');
   v.className = 'quote-video'; v.id = 'mvideo';
