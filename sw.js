@@ -1,10 +1,10 @@
-const CACHE = 'kaamelott-v23';
+const CACHE = 'kaamelott-v24';
+const DATA_CACHE = 'kaamelott-data';
 const ASSETS = [
   '/',
   '/index.html',
   '/style.css',
   '/app.js',
-  '/data.json',
   '/manifest.json',
   '/icon.svg'
 ];
@@ -22,7 +22,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && k !== DATA_CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
       .then(() => {
         // Notifie tous les onglets qu'une nouvelle version est active
@@ -45,6 +45,18 @@ self.addEventListener('fetch', e => {
 
   // Sons : laissés au navigateur (requêtes Range / réponses 206 non stockables dans le cache)
   if (url.pathname.startsWith('/sons/')) return;
+
+  // Répliques (data.json, ~7 Mo) : servies tout de suite depuis le cache, mises à jour en arrière-plan
+  // pour la prochaine ouverture (évite d'attendre le téléchargement à chaque lancement)
+  if (url.pathname === '/data.json') {
+    e.respondWith(caches.open(DATA_CACHE).then(async c => {
+      const hit = await c.match('/data.json');
+      const reseau = fetch(e.request).then(r => { if (r.ok) c.put('/data.json', r.clone()); return r; });
+      if (hit) { e.waitUntil(reseau.catch(() => {})); return hit; }
+      return reseau.catch(() => caches.match(e.request));
+    }));
+    return;
+  }
 
   // Network-first : essaie le réseau, met à jour le cache, fallback sur cache si offline
   e.respondWith(
