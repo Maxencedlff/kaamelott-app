@@ -110,6 +110,20 @@ cardVideo.preload = 'auto';
 cardVideo.addEventListener('click', e => { e.stopPropagation(); replayVideo(cardVideo); });              // toucher = rejouer, avec le son
 ['loadeddata', 'playing'].forEach(ev => cardVideo.addEventListener(ev, () => cardVideo.parentElement?.classList.remove('loading')));
 cardVideo.addEventListener('volumechange', () => cardVideo.parentElement?.classList.toggle('muted', cardVideo.muted));
+// iOS n'autorise le son qu'après un premier toucher : au premier toucher n'importe où (bouton, filtre, carte),
+// on relance le lecteur avec le son ; Safari le considère alors comme débloqué pour toutes les vidéos suivantes
+let soundUnlocked = false;
+function unlockSound() {
+  if (soundUnlocked) return;
+  soundUnlocked = true;
+  cardVideo.muted = false;
+  if (cardVideo.src) cardVideo.play().catch(e => {
+    if (e.name === 'NotAllowedError') { cardVideo.muted = true; soundUnlocked = false; }   // refus réel (pas une simple interruption)
+  });
+  else { cardVideo.play().catch(() => {}); cardVideo.pause(); }
+  player.muted = false;
+}
+['touchend', 'click', 'keydown'].forEach(ev => document.addEventListener(ev, unlockSound, { capture: true }));
 function playCardVideo(q, slot) {
   const url = videoURL(q);
   const src = mediaSrc(url);
@@ -416,7 +430,7 @@ function renderCitations() {
 
       <div class="quote-card" id="quote-card">
         ${inlineVideo
-          ? `<div class="video-slot" id="qvideo-slot"><div class="video-spinner"></div><div class="video-muted">${icon('mute')}Touchez la vidéo pour le son</div></div>
+          ? `<div class="video-slot" id="qvideo-slot"><div class="video-spinner"></div><div class="video-muted">${icon('mute')}Touchez l'écran pour activer le son</div></div>
              <div class="quote-text quote-text-small">${esc(q.quote)}</div>`
           : `<div class="quote-text">${esc(q.quote)}</div>`}
         <div class="quote-char">
