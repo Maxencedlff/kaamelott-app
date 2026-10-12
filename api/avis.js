@@ -22,8 +22,24 @@ function propre(a) {
   };
 }
 
+// Seul le site lui-même peut envoyer des avis ; débit limité par adresse (par instance de la fonction)
+const ORIGINES = new Set(['https://kaamelott-app.vercel.app']);
+const fenetres = new Map();   // ip → [horodatages des envois de la dernière heure]
+const MAX_PAR_HEURE = 60;     // un lot = 5 avis ou plus : ~300 avis/heure par personne, largement assez
+function tropRapide(ip) {
+  const now = Date.now();
+  const t = (fenetres.get(ip) || []).filter(x => now - x < 3600e3);
+  t.push(now); fenetres.set(ip, t);
+  if (fenetres.size > 5000) fenetres.clear();
+  return t.length > MAX_PAR_HEURE;
+}
+
 module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ erreur: 'POST uniquement' });
+  if (!ORIGINES.has(req.headers.origin || '')) return res.status(403).json({ erreur: 'origine refusée' });
+  if (!String(req.headers['content-type'] || '').startsWith('application/json')) return res.status(415).json({ erreur: 'JSON attendu' });
+  const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'inconnue';
+  if (tropRapide(ip)) return res.status(429).json({ erreur: 'trop d\'envois, réessayez plus tard' });
   const token = process.env.KAAM_AVIS_TOKEN;
   if (!token) return res.status(500).json({ erreur: 'jeton absent' });
 

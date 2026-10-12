@@ -1093,7 +1093,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       <div style="padding:40px 20px;text-align:center;color:var(--text3);">
         <p>Impossible de charger les répliques pour le moment.</p>
         <p style="margin-top:10px;font-size:11px;color:var(--text4);word-break:break-word;">${esc(String(e && e.message || e))}</p>
-        <button onclick="location.reload()" style="margin-top:16px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:10px 20px;border-radius:999px;font:500 14px var(--font-sans);cursor:pointer;">Réessayer</button>
+        <button id="btn-retry" style="margin-top:16px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:10px 20px;border-radius:999px;font:500 14px var(--font-sans);cursor:pointer;">Réessayer</button>
       </div>`;
+    document.getElementById('btn-retry').addEventListener('click', () => location.reload());
   }
 });
