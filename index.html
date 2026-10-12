@@ -4,15 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#EEE7D7">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Répliques, quiz et personnages de Kaamelott">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Kaamelott">
   <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-180.png">
   <title>Kaamelott</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="preload" href="fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/ebgaramond-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -23,11 +25,11 @@
     </header>
 
     <main id="main-content">
-      <div class="loading">Chargement des répliques…</div>
+      <div class="boot"><div class="t">Chargement des répliques…</div></div>
     </main>
 
-    <nav class="tabs" id="bottom-nav">
-      <button class="nav-btn active" data-view="citations">Répliques</button>
+    <nav class="tabs" id="bottom-nav" aria-label="Sections" aria-disabled="true">
+      <button class="nav-btn active" data-view="citations" aria-current="page">Répliques</button>
       <button class="nav-btn" data-view="quiz">Quiz</button>
       <button class="nav-btn" data-view="personnages">Personnages</button>
       <button class="nav-btn" data-view="recherche">Chercher</button>
@@ -38,6 +40,7 @@
   <div id="detail-overlay" class="hidden"></div>
   <div class="sheet-back" id="sheet-back" hidden></div>
   <section class="sheet" id="sheet" hidden role="dialog" aria-modal="true"></section>
+  <p id="sr-live" class="sr" aria-live="polite"></p>
 
   <script src="app.js"></script>
 </body>
