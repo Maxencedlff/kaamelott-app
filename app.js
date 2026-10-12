@@ -448,6 +448,7 @@ function renderCitations() {
   const inlineVideo = (videoOnly || verifyMode) && q.video;
   const reviewable = verifyMode && (q.audio || q.video);
   const fav = isFav(q);
+  const long = q.quote.length > 320;   // réplique longue : la source passe sous le nom pour rester visible
   const what = q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : 'Son OK';
 
   main.innerHTML = `
@@ -458,8 +459,9 @@ function renderCitations() {
       ${inlineVideo ? `<div class="frame" id="qvideo-slot"><div class="spin"></div><div class="hint"><i></i>Touchez l’écran pour activer le son</div></div>` : ''}
       <div class="qblock">
         <button class="who" id="btn-who">${esc(q.name)}</button>
+        ${long && fmtEp(q) ? `<div class="src src-top">${esc(fmtEp(q))}</div>` : ''}
         <div class="quote" style="font-size:${inlineVideo ? Math.min(quoteSize(q.quote), window.innerWidth < 360 ? 21 : 26) : quoteSize(q.quote)}px">${quoteHTML(q.quote)}</div>
-        ${fmtEp(q) ? `<div class="src">${esc(fmtEp(q))}</div>` : ''}
+        ${!long && fmtEp(q) ? `<div class="src">${esc(fmtEp(q))}</div>` : ''}
       </div>
     </div>
     <div class="stage-foot"><span class="quote-counter">${counter}</span>
@@ -470,7 +472,7 @@ function renderCitations() {
       <button class="cell" id="btn-fav" aria-pressed="${fav}"><span class="sq${fav ? ' on' : ''}"></span>Favori</button>
       <button class="cell" id="btn-share" aria-label="Partager"><span class="arr">↗</span><span class="t">Partager</span></button>
     </div>
-    ${q.audio && q.approx ? `<p class="est-note"><b>*</b> Son estimé : découpe calculée automatiquement, il peut déborder un peu sur les répliques voisines.</p>` : ''}
+    ${q.audio && q.approx ? `<p class="est-note"><b>*</b> Son estimé<span class="est-long"> : découpe calculée automatiquement, il peut déborder un peu sur les répliques voisines</span><span class="est-short"> : peut déborder un peu</span>.</p>` : ''}
     ${reviewable
       ? `<div class="vrow"><button class="ok" id="avis-ok"><i></i>${what}</button><button class="ko" id="avis-ko">Problème</button></div>`
       : `<div class="nav"><button id="btn-prev"><span class="arr">←</span>Préc.</button><button class="mid" id="btn-random">Au hasard</button><button class="nx" id="btn-next">Suiv.<span class="arr">→</span></button></div>`}`;
@@ -507,7 +509,13 @@ function renderCitations() {
   }
 
   const card = $('quote-card');
-  const fit = () => card.classList.toggle('more', card.scrollHeight > card.clientHeight + 4 && card.scrollTop + card.clientHeight < card.scrollHeight - 4);
+  const hint = document.querySelector('.stage-foot .quote-hint');
+  const hintText = hint ? hint.textContent : '';
+  const fit = () => {
+    const more = card.scrollHeight > card.clientHeight + 4 && card.scrollTop + card.clientHeight < card.scrollHeight - 4;
+    card.classList.toggle('more', more);
+    if (hint) hint.textContent = more ? 'Faites défiler pour la suite ↓' : hintText;
+  };
   card.addEventListener('scroll', fit, { passive: true });
   requestAnimationFrame(fit);
   card.addEventListener('click', e => { if (!e.target.closest('button')) swipeForward(); });
@@ -682,10 +690,10 @@ function renderQuiz() {
         <div class="quote" style="font-size:${Math.min(quoteSize(q.quote), 30)}px">${quoteHTML(q.quote)}</div>
         <div id="quiz-after"></div>
       </div>
-      <div id="quiz-scene" class="q-scene"></div>
       <div class="choices">
         ${choices.map((c, k) => `<button class="choice" data-choice="${esc(c)}"><span class="l">${'ABCD'[k]}</span><span class="n">${esc(nameCase(c))}</span><span class="v"></span></button>`).join('')}
       </div>
+      <div id="quiz-scene" class="q-scene"></div>
     </div>
     <div class="nav one" id="quiz-nav"><button id="quiz-next">Passer<span class="arr">→</span></button></div>`;
 

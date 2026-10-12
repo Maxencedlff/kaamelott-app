@@ -340,7 +340,8 @@ input, textarea { font: inherit; color: inherit; }
 /* écrans courts : la vidéo cède un peu de hauteur pour que la réplique reste lisible */
 @media (max-height: 720px) {
   .stage .frame { aspect-ratio: auto; height: min(56.25vw, 28dvh); }
-  .est-note { display: none; }
+  .est-note { font-size: 11.5px; margin-top: 6px; }
+  .est-note .est-long { display: none; }
   .stage:has(.frame) ~ .stage-foot .quote-hint { display: none; }
 }
 @media (max-width: 379px) {
@@ -350,3 +351,9 @@ input, textarea { font: inherit; color: inherit; }
 @media (min-width: 600px) {
   #app { max-width: 480px; margin: 0 auto; border-left: 1px solid var(--hair); border-right: 1px solid var(--hair); }
 }
+
+/* son estimé : version longue par défaut, courte sur les écrans courts */
+.est-note .est-short { display: none; }
+@media (max-height: 720px) { .est-note .est-short { display: inline; } }
+/* réplique longue : source sous le nom */
+.src-top { margin: 2px 0 10px; }
