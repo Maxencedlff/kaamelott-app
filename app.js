@@ -46,30 +46,52 @@ function bySource(arr) {
 // (fichiers de 30 à 200 Ko) et on les lit depuis la mémoire, ce qui rend le passage d'une réplique à l'autre immédiat.
 const mediaCache = new Map();   // url distante → téléchargement en cours ou terminé
 const mediaReady = new Map();   // url distante → url blob (extrait déjà en mémoire)
+const mediaAbort = new Map();   // url distante → AbortController du téléchargement en cours
 const MEDIA_CACHE_MAX = 24;   // extraits de 30 à 650 Ko
+// Une copie en mémoire encore lue (carte, son, scène en grand) n'est libérée qu'une fois lâchée
+const orphanBlobs = new Set();
+const blobInUse = u => !!u && [cardVideo.src, player.src, document.getElementById('mvideo')?.src].includes(u);
+function releaseBlob(u) { if (!u) return; if (blobInUse(u)) orphanBlobs.add(u); else URL.revokeObjectURL(u); }
+function sweepBlobs() { for (const u of orphanBlobs) if (!blobInUse(u)) { URL.revokeObjectURL(u); orphanBlobs.delete(u); } }
+const streamed = new Set();     // fichiers déjà lus directement depuis le réseau : pas de second téléchargement pour « Retour »
 function cachedMedia(url) {
-  if (!url || mediaCache.has(url)) return;
-  mediaCache.set(url, fetch(url).then(r => r.ok ? r.blob() : Promise.reject())
-    .then(b => { if (mediaCache.has(url)) mediaReady.set(url, URL.createObjectURL(b)); })
-    .catch(() => mediaCache.delete(url)));
-  while (mediaCache.size > MEDIA_CACHE_MAX) {             // les plus anciens sont libérés
+  if (!url || mediaCache.has(url) || streamed.has(url)) return;
+  sweepBlobs();
+  const ac = new AbortController();
+  mediaAbort.set(url, ac);
+  const job = fetch(url, { signal: ac.signal }).then(r => r.ok ? r.blob() : Promise.reject())
+    .then(b => { if (mediaCache.get(url) === job) mediaReady.set(url, URL.createObjectURL(b)); })
+    .catch(() => { if (mediaCache.get(url) === job) mediaCache.delete(url); })
+    .finally(() => { if (mediaAbort.get(url) === ac) mediaAbort.delete(url); });
+  mediaCache.set(url, job);
+  while (mediaCache.size > MEDIA_CACHE_MAX) {             // les plus anciens sont libérés (téléchargement en cours : abandonné)
     const old = mediaCache.keys().next().value;
     mediaCache.delete(old);
-    const u = mediaReady.get(old);
-    if (u && cardVideo.src !== u && player.src !== u) URL.revokeObjectURL(u);
+    mediaAbort.get(old)?.abort();
+    releaseBlob(mediaReady.get(old));
     mediaReady.delete(old);
   }
 }
-// source à lire : la copie en mémoire si elle est prête, sinon le fichier distant (et on le garde pour la suite)
-function mediaSrc(url) { const u = mediaReady.get(url); if (!u) cachedMedia(url); return u || url; }
+// Source à lire : la copie en mémoire si elle est prête, sinon le fichier distant, lu directement par le lecteur.
+// Jamais un second téléchargement en parallèle : un préchargement en cours de ce même fichier est abandonné.
+// Reste synchrone : sur iOS, play() doit partir dans le geste de l'utilisateur.
+function mediaSrc(url) {
+  const u = mediaReady.get(url);
+  if (u) return u;
+  if (mediaAbort.has(url)) { mediaAbort.get(url).abort(); mediaCache.delete(url); }
+  streamed.add(url);
+  if (streamed.size > 50) streamed.delete(streamed.values().next().value);
+  return url;
+}
 // Répliques probables après celle-ci : on précharge leur vidéo (modes vidéo / vérification) et leur son
 function prefetchAround() {
   const P = pool();
   const next = [];
-  // suivante dans l'ordre (boutons ◀ ▶, mode « Dans l'ordre ») et, en aléatoire, la prochaine tirée à l'avance
-  if (P) { const pos = P.indexOf(quoteIdx); if (pos !== -1) next.push(P[(pos + 1) % P.length], P[(pos + 2) % P.length]); }
-  else next.push((quoteIdx + 1) % allQuotes.length);
-  if (!inOrder) { if (nextRand === null) nextRand = pickRandom(); next.push(nextRand); }
+  // dans l'ordre : les deux suivantes ; en aléatoire : la prochaine tirée à l'avance (la seule qui sera montrée)
+  if (inOrder) {
+    if (P) { const pos = P.indexOf(quoteIdx); if (pos !== -1) next.push(P[(pos + 1) % P.length], P[(pos + 2) % P.length]); }
+    else next.push((quoteIdx + 1) % allQuotes.length);
+  } else { if (nextRand === null) nextRand = pickRandom(); next.push(nextRand); }
   if (randPos > 0) next.push(randHistory[randPos - 1]);
   if (randPos < randHistory.length - 1) next.push(randHistory[randPos + 1]);
   next.filter(i => i != null && allQuotes[i]).forEach(i => {
@@ -302,27 +324,36 @@ const NAME_FIX = {
   "LE MAITRE D'ARMES": 'LE MAÎTRE D’ARMES', "LE MAÎTRE D'ARMES": 'LE MAÎTRE D’ARMES',
   'LÉODAGANR': 'LÉODAGAN', 'PÈRE BIAISE': 'PÈRE BLAISE',
 };
-function parseQuote(item, i) {
-  const raw = item.character || '';
+// Le champ « character » ne prend que ~2 500 valeurs pour 33 000 répliques : son analyse est gardée par valeur
+const charMemo = new Map();
+function parseCharacter(raw) {
+  let c = charMemo.get(raw);
+  if (c) return c;
   const commaIdx = raw.indexOf(',');
   const n0 = commaIdx > -1
     ? raw.slice(0, commaIdx).trim().replace(/\s+/g, ' ').toUpperCase()
     : raw.trim().replace(/\s+/g, ' ').toUpperCase();
-  const name = NAME_FIX[n0] || n0;
   const rest = commaIdx > -1 ? raw.slice(commaIdx + 1) : '';
-
   const livreM = rest.match(/livre\s+(I{1,3}V?|VI?)/i);
   const epM    = rest.match(/épisode\s+(\d+)\s*(?::\s*(.+))?/i);
-
-  const livre   = livreM ? livreM[1].toUpperCase() : '';
-  const episode = epM ? epM[1] : '';
-  const title   = epM && epM[2] ? epM[2].trim() : '';
-  const film    = /premier volet/i.test(rest) ? 'Kaamelott : Premier Volet' : '';
   // scénarios inédits jamais tournés (« Inédit 3 : Dolor ») : affichés comme tels, jamais de son
-  const inedM   = rest.match(/Inédit\s+(\d)\s*:\s*(.+)/i);
-  const inedit  = item.inedit ? (inedM ? `Inédit ${inedM[1]} : ${inedM[2].trim()}` : 'Inédit') : '';
-
-  return { i, quote: item.quote, name, livre, episode, title, film, inedit, hide: !!item.hide, audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx };
+  const inedM  = rest.match(/Inédit\s+(\d)\s*:\s*(.+)/i);
+  c = {
+    name: NAME_FIX[n0] || n0,
+    livre: livreM ? livreM[1].toUpperCase() : '',
+    episode: epM ? epM[1] : '',
+    title: epM && epM[2] ? epM[2].trim() : '',
+    film: /premier volet/i.test(rest) ? 'Kaamelott : Premier Volet' : '',
+    inedTxt: inedM ? `Inédit ${inedM[1]} : ${inedM[2].trim()}` : 'Inédit',
+  };
+  charMemo.set(raw, c);
+  return c;
+}
+function parseQuote(item, i) {
+  const c = parseCharacter(item.character || '');
+  return { i, quote: item.quote, name: c.name, livre: c.livre, episode: c.episode, title: c.title, film: c.film,
+    inedit: item.inedit ? c.inedTxt : '', hide: !!item.hide,
+    audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx };
 }
 
 const DATA_BYTES = 7000000;   // taille approximative de data.json (le serveur l'envoie compressé, sans longueur)
@@ -804,7 +835,6 @@ function renderCitations(dir = 0) {
   prefetchAround();
   const btnVideo = $('btn-video');
   if (btnVideo) {
-    btnVideo.addEventListener('touchstart', () => cachedMedia(videoURL(q)), { passive: true });
     btnVideo.addEventListener('click', () => showVideo(q));
   }
   $('btn-replay')?.addEventListener('click', () => replayVideo(cardVideo));
@@ -1090,16 +1120,19 @@ function initQuiz() {
 // d'être le bon (plus de « réflexe Arthur »). Pool : réplique avec scène, 25 signes au moins, sans le nom de celui qui parle.
 const QUIZ_RECENT = [];                      // 80 dernières questions : pas de redite
 let quizByChar = null;
+function quizAccepts(q) {
+  if (!TOP_CHARS.includes(q.name) || !q.video || q.quote.length < 25) return false;
+  return !fold(q.quote).includes(fold(q.name.replace(/^(LE|PÈRE) /, '')));
+}
+function buildQuizPool() {
+  if (quizByChar && quizByChar.src === allQuotes) return;
+  quizByChar = { src: allQuotes, m: {} };
+  allQuotes.forEach((q, i) => {
+    if (quizAccepts(q)) (quizByChar.m[q.name] = quizByChar.m[q.name] || []).push(i);   // pas de « ||= » : iOS 13.4 et plus
+  });
+}
 function quizPick() {
-  if (!quizByChar || quizByChar.src !== allQuotes) {
-    quizByChar = { src: allQuotes, m: {} };
-    allQuotes.forEach((q, i) => {
-      if (!TOP_CHARS.includes(q.name) || !q.video || q.quote.length < 25) return;
-      const own = fold(q.name.replace(/^(LE|PÈRE) /, ''));
-      if (fold(q.quote).includes(own)) return;
-      (quizByChar.m[q.name] = quizByChar.m[q.name] || []).push(i);   // pas de « ||= » : iOS 13.4 et plus
-    });
-  }
+  buildQuizPool();
   const names = Object.keys(quizByChar.m);
   for (let t = 0; t < 20; t++) {
     const i = rand(quizByChar.m[rand(names)]);
@@ -1495,6 +1528,24 @@ function openPersonnage(name, restore) {
 const foldIx = s => ' ' + strip(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
 let IX = null;
 function buildIndex() { if (!IX || IX.src !== allQuotes) IX = { src: allQuotes, q: allQuotes.map(x => foldIx(x.quote)) }; }
+// Index de recherche et pool du quiz préparés en arrière-plan, 1,5 s après l'ouverture, par tranches courtes :
+// la première frappe dans Chercher et l'ouverture du Quiz ne gèlent plus l'écran (buildIndex reste le repli immédiat)
+function buildIndexSoon() {
+  const src = allQuotes, q = new Array(src.length), m = {};
+  let k = 0;
+  const step = () => {
+    if (src !== allQuotes) return;                                  // données rechargées entre-temps
+    const end = Math.min(k + 2000, src.length);
+    for (; k < end; k++) {
+      if (!IX || IX.src !== src) q[k] = foldIx(src[k].quote);
+      if (quizAccepts(src[k])) (m[src[k].name] = m[src[k].name] || []).push(k);
+    }
+    if (k < src.length) { setTimeout(step, 0); return; }
+    if (!IX || IX.src !== src) IX = { src, q };
+    if (!quizByChar || quizByChar.src !== src) quizByChar = { src, m };
+  };
+  setTimeout(step, 1500);
+}
 function searchHits(query) {
   buildIndex();
   const toks = foldIx(query).trim().split(' ').filter(Boolean);
@@ -1796,6 +1847,7 @@ async function boot() {
     showRenderError();
   }
   sendAvis();
+  buildIndexSoon();
 }
 const VIEWS = { citations: 1, quiz: 1, personnages: 1, recherche: 1, favoris: 1 };
 function showRenderError() {

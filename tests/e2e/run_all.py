@@ -948,6 +948,37 @@ def scenario_fonctions(w):
         return "stockage plein : « Non enregistré », favori non coché, rien en mémoire"
     w.step("Stockage plein : « Non enregistré »", s_quota)
 
+    def s_media(rec):
+        # un fichier n'est téléchargé qu'une fois : préchargement terminé (fetch) OU lecture directe (media), jamais les deux
+        from collections import Counter
+        def watch(pg, log):
+            pg.on("requestfinished", lambda r: HF_RE.match(r.url) and r.resource_type == "fetch" and log["fetch"].update([r.url.split("?")[0]]))
+            pg.on("request", lambda r: HF_RE.match(r.url) and r.resource_type != "fetch" and log["media"].add(r.url.split("?")[0]))
+        def dups(log):
+            return [u for u in set(log["fetch"]) | log["media"] if log["fetch"][u] + (u in log["media"]) > 1]
+        log = {"fetch": Counter(), "media": set()}
+        pg = w.new_page(w.ctx(), {"kaam_audio_only": "1"}); watch(pg, log)
+        w.goto(pg)
+        for k in range(3):
+            pg.click("#btn-audio"); pg.wait_for_function("() => !__kaam.player.paused")
+            pg.click("#btn-random"); pg.wait_for_timeout(150)
+        pg.close()
+        if dups(log): raise RuntimeError(f"son : fichiers téléchargés deux fois : {dups(log)[:3]}")
+        log = {"fetch": Counter(), "media": set()}
+        pg = w.new_page(w.ctx(), {"kaam_video_only": "1"}); watch(pg, log)
+        w.goto(pg)
+        for k in range(10):
+            pg.click("#btn-next"); pg.wait_for_timeout(100)
+        pg.wait_for_timeout(1600)
+        n = sum(log["fetch"].values()) + len(log["media"])
+        st = pg.evaluate("() => ({ ix: typeof IX !== 'undefined' && !!IX, quiz: typeof quizByChar !== 'undefined' && !!quizByChar })")
+        pg.close()
+        if n > 16: raise RuntimeError(f"mode vidéo aléatoire : {n} fichiers téléchargés pour 11 répliques vues")
+        if dups(log): raise RuntimeError(f"vidéo : fichiers téléchargés deux fois : {dups(log)[:3]}")
+        if not (st["ix"] and st["quiz"]): raise RuntimeError(f"index de recherche / pool du quiz pas prêts en arrière-plan : {st}")
+        return f"aucun double téléchargement ; vidéo aléatoire : {n} fichiers pour 11 répliques ; index et quiz prêts"
+    w.step("Médias : ni double téléchargement ni préchargement inutile", s_media)
+
     def s_compat(rec):
         pg = w.new_page(w.ctx())
         pg.route("**/app.js", lambda r: r.fulfill(status=200, body="let x = ;", headers={"content-type": "text/javascript"}))
