@@ -129,10 +129,14 @@ function playCardVideo(q, slot) {
 
 // Répliques parcourues (aléatoire / ordre) selon les filtres actifs
 function pool() {
-  if (verifyMode) return bySource(verifyIdx);
-  if (videoOnly && videoIdx.length) return bySource(videoIdx);
-  if (audioOnly && audioIdx.length) return bySource(audioIdx);
-  return source === 'all' ? null : bySource(null);
+  let P;
+  if (verifyMode) P = verifyIdx;
+  else if (videoOnly && videoIdx.length) P = bySource(videoIdx);
+  else if (audioOnly && audioIdx.length) P = bySource(audioIdx);
+  else P = source === 'all' ? null : bySource(null);
+  // filtres sans aucune réplique (ex. tout vérifié) : on retombe sur la source seule, jamais sur une liste vide
+  if (P && !P.length) P = source === 'all' ? null : bySource(null);
+  return P && P.length ? P : null;
 }
 // ===== VÉRIFICATION (avis son / vidéo justes ou non, envoyés à /api/avis) =====
 let verifyMode = readPref('kaam_verify');      // ne montrer que les répliques avec son/vidéo pas encore vérifiées
@@ -144,7 +148,9 @@ function writeJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } c
 // Les sons estimés (≈), les moins sûrs, passent en premier ; les autres ensuite
 let verifyApprox = false;
 function rebuildVerify() {
-  const todo = allQuotes.reduce((acc, q, i) => ((q.audio || q.video) && !avisFaits[q.i] && acc.push(i), acc), []);
+  // dans la source choisie (Tout / Série / Film)
+  const todo = allQuotes.reduce((acc, q, i) => ((q.audio || q.video) && !avisFaits[q.i]
+    && (source === 'all' || !!q.film === (source === 'film')) && acc.push(i), acc), []);
   const approx = todo.filter(i => allQuotes[i].approx);
   verifyApprox = approx.length > 0;
   verifyIdx = verifyApprox ? approx : todo;
@@ -372,6 +378,7 @@ function renderCitations() {
   if (!allQuotes.length) return;
 
   stopAudio();
+  if (!allQuotes[quoteIdx]) quoteIdx = pickRandom();          // index périmé (filtres, données changées)
   const q = allQuotes[quoteIdx];
   currentQuote = q;
   const favActive = isFav(q);
@@ -450,7 +457,7 @@ function renderCitations() {
     writePref('kaam_verify', verifyMode);
     rebuildVerify();
     const P = pool();
-    if (verifyMode && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
+    if (verifyMode && P && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
   });
   if (reviewable) bindAvis(q);
 
@@ -467,6 +474,7 @@ function renderCitations() {
   if (chipVideo) chipVideo.addEventListener('click', () => setMedia('video'));
   document.querySelectorAll('[data-src]').forEach(b => b.addEventListener('click', () => {
     source = b.dataset.src;
+    rebuildVerify();
     try { localStorage.setItem('kaam_source', source); } catch {}
     nextRand = null;
     const P = pool();
