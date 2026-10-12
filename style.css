@@ -199,13 +199,15 @@ figure, blockquote { margin: 0; }
 /* ---------- Scène vidéo : figure du registre, sans aucune commande ---------- */
 .scene { flex: none; padding: 14px var(--pad) 0; }
 .frame { position: relative; aspect-ratio: 16 / 9; width: 100%; background: var(--ink); cursor: pointer; }
-.frame video, .quote-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; background: var(--ink); }
+.frame video, .quote-video { position: absolute; top: 0; left: 0; right: 0; bottom: 0; width: 100%; height: 100%; object-fit: contain; display: block; background: var(--ink); }
 .quote-video::-webkit-media-controls, .quote-video::-webkit-media-controls-start-playback-button { display: none !important; -webkit-appearance: none; }
+/* iOS 14 et moins (pas d'aspect-ratio) : 16:9 par la marge intérieure, la vidéo garde sa place */
+@supports not (aspect-ratio: 1) { .frame { height: 0; padding-top: 56.25%; } }
 /* repères de coupe rouges, dans la gouttière */
 .frame::before, .frame::after, .cm::before, .cm::after { content: ""; position: absolute; width: 9px; height: 9px; border: 0 solid var(--red); pointer-events: none; z-index: 1; }
 .frame::before { left: -6px; top: -6px; border-width: 1.5px 0 0 1.5px; }
 .frame::after  { right: -6px; top: -6px; border-width: 1.5px 1.5px 0 0; }
-.cm { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.cm { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 1; }
 .cm::before { left: -6px; bottom: -6px; border-width: 0 0 1.5px 1.5px; }
 .cm::after  { right: -6px; bottom: -6px; border-width: 0 1.5px 1.5px 0; }
 /* avancement : filet rouge de 2 px au pied de l'image ; chargement : le filet avance en boucle */
@@ -303,11 +305,11 @@ figure, blockquote { margin: 0; }
 .fin dd { font-weight: var(--w-act); font-variant-numeric: tabular-nums; text-align: right; }
 
 /* ---------- Feuilles (réglages, signalement) ---------- */
-.sheet-back { position: fixed; inset: 0; background: rgba(22, 19, 14, .45); z-index: 20; }
+.sheet-back { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(22, 19, 14, .45); z-index: 20; }
 .sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 21;
   background: var(--paper); border-top: 6px solid var(--ink);
-  padding: 0 0 calc(var(--sb) + 10px); max-height: 90dvh; overflow-y: auto; overscroll-behavior: contain;
+  padding: 0 0 calc(var(--sb) + 10px); max-height: 90vh; max-height: 90dvh; overflow-y: auto; overscroll-behavior: contain;
   animation: up .22s cubic-bezier(.2, .8, .2, 1);
 }
 @keyframes up { from { transform: translateY(40px); opacity: .5; } to { transform: none; opacity: 1; } }
@@ -562,16 +564,16 @@ figure, blockquote { margin: 0; }
 }
 /* écrans courts : la scène vidéo garde son 16:9, se réduit et reste ferrée à gauche */
 @media (max-height: 600px) {
-  .frame { height: 24dvh; width: auto; max-width: 100%; }
+  .frame { height: 24vh; height: 24dvh; width: auto; max-width: 100%; }
   .scene { padding-top: 10px; }
   .leg { padding: 6px 0 5px; }
   .scene ~ .stage { padding-top: 8px; }
   .scene ~ .stage-foot:not(.vf) { display: none; }
-  .bar.verify ~ .scene .frame { height: 20dvh; }
+  .bar.verify ~ .scene .frame { height: 20vh; height: 20dvh; }
 }
 /* quiz sur écran court : la scène reste petite pour laisser lire le début de la réplique dessous */
 @media (max-height: 620px) {
-  .q-scene .frame { height: 18dvh; width: auto; max-width: 100%; }
+  .q-scene .frame { height: 18vh; height: 18dvh; width: auto; max-width: 100%; }
   /* après la réponse, la place va à la scène : la réplique (déjà lue) laisse sa ligne à l'épisode */
   #quiz-stage.answered .quiz-q .quote { display: none; }
   #quiz-stage.answered .quiz-q { padding-top: 6px; }

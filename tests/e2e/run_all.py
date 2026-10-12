@@ -267,7 +267,7 @@ class Worker:
             elif not self.expect_errors:
                 self._err("console", t)
         page.on("console", on_console)
-        page.on("pageerror", lambda e: self._err("pageerror", e))
+        page.on("pageerror", lambda e: None if self.expect_errors else self._err("pageerror", e))
 
     def new_page(self, ctx, prefs=None, extra_ls=None, clear=True):
         page = ctx.new_page()
@@ -833,7 +833,7 @@ def scenario_fonctions(w):
             pg.wait_for_function("() => caches.open('kaamelott-data').then(c => c.match('/data.json')).then(Boolean)", timeout=15000)
             ctx.set_offline(True)
             out = []
-            for path in [""]:
+            for path in ["", "?utm_source=sms"]:
                 pg.goto(w.base + path, wait_until="domcontentloaded", timeout=15000)
                 w.wait_ready(pg, 15000)
                 if not pg.locator(MAIN_SEL).is_visible(): raise RuntimeError(f"hors ligne : pas de réplique sur /{path}")
@@ -845,6 +845,121 @@ def scenario_fonctions(w):
         finally:
             ctx.close(); br.close()
     w.step("Hors ligne : ouverture servie par le service worker", s_offline)
+
+    def s_liefi(rec):
+        br = w.p.chromium.launch(args=["--mute-audio"], env={**os.environ, "PULSE_SERVER": "unix:/nonexistent/qa-silence"})
+        ctx = w.make_context(br, dict(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True), sw=True)
+        try:
+            pg = ctx.new_page(); w.attach(pg)
+            w.goto(pg)
+            pg.wait_for_function("() => navigator.serviceWorker && navigator.serviceWorker.controller", timeout=15000)
+            pg.wait_for_function("() => caches.open('kaamelott-data').then(c => c.match('/data.json')).then(Boolean)", timeout=15000)
+            pg.wait_for_function("() => caches.keys().then(k => k.some(n => /^kaamelott-v/.test(n)))", timeout=15000)
+            ctx.add_cookies([{"name": "qa_lent", "value": "1", "url": w.base}])
+            t0 = time.time()
+            pg.goto(w.base, wait_until="domcontentloaded", timeout=30000)
+            w.wait_ready(pg, 30000)
+            dt = time.time() - t0
+            if dt > 4.5: raise RuntimeError(f"réseau lent (6 s par fichier) : réplique affichée en {dt:.1f} s (attendu < 4,5 s)")
+            return f"Chromium, réseau lent simulé (6 s par fichier) : réplique affichée en {dt:.1f} s depuis le cache"
+        finally:
+            ctx.close(); br.close()
+    w.step("Réseau lent : ouverture depuis le cache en moins de 4,5 s", s_liefi)
+
+    def s_badfav(rec):
+        out = []
+        for raw in ["null", "{}", '"x"', "[null]", "[{\"quote\":5}]", "pas du json"]:
+            pg = w.new_page(w.ctx(), None, {"kaam_fav": raw}); w.goto(pg)
+            if not pg.locator(MAIN_SEL).is_visible(): raise RuntimeError(f"kaam_fav={raw} : l'app ne s'ouvre pas")
+            w.nav(pg, "favoris")
+            kept = pg.evaluate("localStorage.getItem('kaam_fav')")
+            pg.close()
+            if kept != raw: raise RuntimeError(f"kaam_fav réécrit : {raw!r} -> {kept!r}")
+            out.append(raw)
+        return f"l'app s'ouvre et kaam_fav reste intact pour {len(out)} valeurs abîmées"
+    w.step("Favoris abîmés : l'app s'ouvre, kaam_fav jamais réécrit", s_badfav)
+
+    def s_render_err(rec):
+        hits = []
+        pg = w.new_page(w.ctx())
+        pg.on("request", lambda r: "data.json" in r.url and hits.append(r.url))
+        # le premier calcul de taille de texte du rendu lève une exception (bug d'affichage simulé)
+        pg.add_init_script("(() => { const g = window.getComputedStyle; let n = 1; window.getComputedStyle = function (el, ...a) { if (el === document.documentElement && n > 0) { n--; throw new Error('qa : rendu cassé'); } return g.call(this, el, ...a); }; })()")
+        w.expect_errors = True
+        try:
+            pg.goto(w.base, wait_until="domcontentloaded")
+            pg.wait_for_selector("text=Erreur d’affichage", timeout=15000)
+            w.shot(pg, rec, "42-erreur-affichage")
+            pg.click("#btn-retry"); pg.wait_for_selector(MAIN_SEL)
+        finally:
+            w.expect_errors = False
+        n = len(hits); pg.close()
+        if n != 1: raise RuntimeError(f"{n} téléchargements de data.json (1 attendu)")
+        return "« Erreur d’affichage » (pas « Serveur indisponible »), « Autre réplique » sans retélécharger"
+    w.step("Bug d'affichage : message distinct, pas de nouveau téléchargement", s_render_err)
+
+    def s_reentrant(rec):
+        hits = []
+        pg = w.new_page(w.ctx())
+        # appareil hors ligne (navigator.onLine piloté), répliques jamais téléchargées
+        pg.add_init_script("window.__qaOnline = false; Object.defineProperty(Navigator.prototype, 'onLine', { configurable: true, get() { return window.__qaOnline; } });")
+        pg.route("**/data.json*", lambda r: r.abort("internetdisconnected"))
+        w.expect_errors = True
+        try:
+            pg.goto(w.base, wait_until="domcontentloaded")
+            for k in range(3):
+                pg.wait_for_selector("text=Hors ligne", timeout=15000)
+                if k < 2: pg.click("#btn-retry")
+            pg.unroute("**/data.json*")
+            pg.on("request", lambda r: "data.json" in r.url and hits.append(r.url))
+            pg.evaluate("() => { window.__qaOnline = true; window.dispatchEvent(new Event('online')); }")
+            pg.wait_for_selector(MAIN_SEL, timeout=15000); pg.wait_for_timeout(1500)
+        finally:
+            w.expect_errors = False; pg.close()
+        if len(hits) != 1: raise RuntimeError(f"{len(hits)} téléchargements de data.json au retour du réseau (1 attendu)")
+        return "3 échecs hors ligne, retour du réseau : un seul démarrage, un seul téléchargement"
+    w.step("Démarrage : jamais deux en parallèle après des échecs hors ligne", s_reentrant)
+
+    def s_audio_guard(rec):
+        pg = w.new_page(w.ctx(), {"kaam_audio_only": "1"})
+        pg.route(HF_RE, lambda r: None)          # Hugging Face ne répond jamais
+        w.goto(pg)
+        pg.click("#btn-audio"); pg.wait_for_timeout(400)
+        pg.click("#btn-audio"); pg.wait_for_timeout(150)
+        c1 = pg.evaluate("document.getElementById('btn-audio').className")
+        pg.click("#btn-audio")
+        pg.wait_for_function("() => /Réessayer/.test(document.getElementById('btn-audio').textContent)", timeout=12000)
+        c2 = pg.evaluate("document.getElementById('btn-audio').className")
+        w.shot(pg, rec, "43-son-delai")
+        pg.unroute_all(behavior="ignoreErrors"); pg.close()
+        if "playing" in c1: raise RuntimeError(f"toucher pendant le chargement n'arrête pas : {c1}")
+        if "playing" in c2: raise RuntimeError(f"bouton bloqué après le délai : {c2}")
+        return "toucher pendant le chargement = arrêt ; après 10 s sans réponse : « Réessayer »"
+    w.step("Son : délai de 10 s, toucher = arrêt", s_audio_guard)
+
+    def s_quota(rec):
+        pg = w.new_page(w.ctx()); w.goto(pg)
+        pg.evaluate("() => { const o = Storage.prototype.setItem; Storage.prototype.setItem = function (k, v) { if (k === 'kaam_fav') throw new DOMException('plein', 'QuotaExceededError'); return o.call(this, k, v); }; }")
+        pg.click("#btn-fav"); pg.wait_for_timeout(100)
+        r = pg.evaluate("({ t: document.getElementById('btn-fav').innerText, p: document.getElementById('btn-fav').getAttribute('aria-pressed'), n: __kaam.favorites.length })")
+        w.shot(pg, rec, "44-favori-non-enregistre")
+        pg.close()
+        if "Non enregistré" not in r["t"] or r["p"] != "false" or r["n"] != 0: raise RuntimeError(f"stockage plein : {r}")
+        return "stockage plein : « Non enregistré », favori non coché, rien en mémoire"
+    w.step("Stockage plein : « Non enregistré »", s_quota)
+
+    def s_compat(rec):
+        pg = w.new_page(w.ctx())
+        pg.route("**/app.js", lambda r: r.fulfill(status=200, body="let x = ;", headers={"content-type": "text/javascript"}))
+        w.expect_errors = True
+        try:
+            pg.goto(w.base, wait_until="domcontentloaded")
+            pg.wait_for_selector("text=trop ancien", timeout=16000)
+            w.shot(pg, rec, "45-appareil-ancien")
+        finally:
+            w.expect_errors = False; pg.close()
+        return "app.js illisible : message « appareil trop ancien » (compat.js, ES5)"
+    w.step("Appareil trop ancien : message au lieu d'un chargement sans fin", s_compat)
 
 
 def worker_main(kind, base, out):
@@ -902,6 +1017,11 @@ class H(SimpleHTTPRequestHandler):
             if rx.match(path):
                 for h in hs: self.send_header(h['key'], h['value'])
         super().end_headers()
+    def send_head(self):
+        # réseau faible simulé (« lie-fi ») pour les seuls contextes qui portent le cookie qa_lent : 6 s par fichier de l'app
+        if 'qa_lent=1' in (self.headers.get('Cookie') or '') and not self.path.startswith('/data.json'):
+            import time; time.sleep(6)
+        return super().send_head()
     def do_POST(self):
         self.send_response(501); self.send_header('Content-Length', '0'); self.end_headers()
 ThreadingHTTPServer.daemon_threads = True

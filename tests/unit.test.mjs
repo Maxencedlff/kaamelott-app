@@ -12,9 +12,11 @@ test('titleCase : casse de phrase, chiffres romains, personnages', () => {
   assert.equal(t.titleCase('VOX POPULI III'), 'Vox populi III');
   assert.equal(t.titleCase('Guenièvre Et L’Orage'), 'Guenièvre et l’Orage');
 });
-test('titleCase : lieux et noms propres', { todo: 'lot 1 : Aquitaine, Graal' }, () => {
+test('titleCase : lieux et noms propres', () => {
   assert.equal(t.titleCase('LOTH ET LE GRAAL'), 'Loth et le Graal');
   assert.equal(t.titleCase('SÉFRIANE D’AQUITAINE'), 'Séfriane d’Aquitaine');
+  assert.equal(t.titleCase('LE CAMP ROMAIN'), 'Le camp romain');
+  assert.equal(t.titleCase('LES CLOUS DE LA SAINTE-CROIX'), 'Les clous de la Sainte-Croix');
 });
 test('typo : apostrophe, espaces fines, échappement', () => {
   assert.equal(t.typo("C'est pas faux !"), `C’est pas faux${NNBSP}!`);
@@ -35,10 +37,15 @@ test('recherche : accents et ponctuation facultatifs', () => {
   assert.deepEqual([...t.searchHits('arthur').who.map(w => w[0])], ['ARTHUR']);
   assert.equal(t.searchHits('  '), null);
 });
-test('recherche : coeur = cœur, soeur = sœur', { todo: 'lot 1 : œ/æ non pliés' }, () => {
+test('recherche : coeur = cœur, soeur = sœur', () => {
   assert.ok(t.searchHits('cœur').text.length > 0);
   assert.equal(t.searchHits('coeur').text.length, t.searchHits('cœur').text.length);
   assert.equal(t.searchHits('soeur').text.length, t.searchHits('sœur').text.length);
+});
+test('highlight : ligatures', () => {
+  assert.equal(t.highlight('Mon cœur bat', 'coeur'), 'Mon <mark>cœur</mark> bat');
+  assert.equal(t.highlight('Mon cœur bat', 'cœur'), 'Mon <mark>cœur</mark> bat');
+  assert.equal(t.highlight('Ma sœur, mon cœur !', 'soeur'), `Ma <mark>sœur</mark>, mon cœur${NNBSP}!`);
 });
 test('pool : chaque filtre est respecté', () => {
   const cases = [['film', 'videoOnly', q => q.film && q.video], ['serie', 'audioOnly', q => !q.film && q.audio], ['all', 'videoOnly', q => q.video]];

@@ -1,4 +1,5 @@
 'use strict';
+window.__kaamOK = 1;   // app.js s'exécute : compat.js n'affichera pas « appareil trop ancien »
 
 // ===== STATE =====
 let allQuotes = [];       // parsed quotes
@@ -110,7 +111,7 @@ function setScene(v, st) {
     muted:   ['red', '<i aria-hidden="true"></i>Touchez l’image pour le son'],
     playing: ['mono', `${mmss(v.currentTime)} / ${mmss(v.duration)}`],
     ended:   ['ink', '<span aria-hidden="true">↻</span> Revoir'],
-    error:   ['red', 'Scène indisponible · Réessayer'],
+    error:   ['red', navigator.onLine === false ? 'Hors ligne · Réessayer' : 'Scène indisponible · Réessayer'],
   }[st];
   el.className = 'st ' + T[0];
   el.innerHTML = T[1];
@@ -137,7 +138,11 @@ function wireScene(v) {
 function bindScene(fig, v) {
   fig.addEventListener('click', e => {
     e.stopPropagation();
-    if (fig.dataset.s === 'error') { setScene(v, 'loading'); v.load(); v.play().catch(() => {}); return; }
+    if (fig.dataset.s === 'error') {
+      if (fig.dataset.src && offlineMiss(fig.dataset.src)) { setScene(v, 'error'); return; }
+      if (fig.dataset.src && !v.getAttribute('src')) v.src = mediaSrc(fig.dataset.src);
+      setScene(v, 'loading'); v.load(); v.play().catch(() => {}); return;
+    }
     replayVideo(v);
   });
 }
@@ -161,6 +166,8 @@ function playCardVideo(q, fig) {
   const src = mediaSrc(url);
   const frame = fig.querySelector('.frame');
   frame.prepend(cardVideo);
+  fig.dataset.src = url;   // « Réessayer » relance ce fichier
+  if (offlineMiss(url)) { cardVideo.pause(); cardVideo.removeAttribute('src'); setScene(cardVideo, 'error'); return; }
   if (cardVideo.src !== src) { cardVideo.src = src; setScene(cardVideo, 'loading'); }
   cardVideo.currentTime = 0;
   // son activé par défaut ; si le navigateur refuse (aucun toucher encore), lecture sans son, signalée
@@ -187,8 +194,13 @@ let verifyMode = readPref('kaam_verify');      // ne montrer que les répliques 
 let verifyIdx = [];
 let avisFaits = readJSON('kaam_avis_faits', {});   // index de réplique → 1 (déjà vérifiée sur cet appareil)
 let avisFile  = readJSON('kaam_avis_file', []);    // avis pas encore envoyés
-function readJSON(k, def) { try { return JSON.parse(localStorage.getItem(k)) || def; } catch { return def; } }
-function writeJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+// lecture validée : une valeur abîmée (autre type que la valeur par défaut) est ignorée en mémoire, jamais réécrite
+function readJSON(k, def) {
+  try { const v = JSON.parse(localStorage.getItem(k)); return v && typeof v === 'object' && Array.isArray(v) === Array.isArray(def) ? v : def; }
+  catch { return def; }
+}
+// vrai si l'écriture a réussi (stockage plein ou refusé : faux, l'appelant le dit)
+function writeJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } }
 // Les sons estimés (≈), les moins sûrs, passent en premier ; les autres ensuite
 let verifyApprox = false;
 function rebuildVerify() {
@@ -239,13 +251,18 @@ function tickAudio() {
   if (r && player.duration) r.style.setProperty('--p', Math.min(1, player.currentTime / player.duration).toFixed(3));
   if (playingBtn && !player.paused) requestAnimationFrame(tickAudio);
 }
-function audioFailed() {
+// échec : « Réessayer » 2,5 s dans le bouton (ou « Hors ligne » quand l'appareil n'a pas de réseau)
+function audioFailed(why) {
+  clearTimeout(audioGuard);
   const b = playingBtn;
   setPlayingBtn(null);
   const lp = b?.querySelector('.lp');
-  if (lp) { lp.textContent = 'Réessayer'; setTimeout(() => { lp.textContent = 'Écouter'; }, 2500); }
+  if (lp) { lp.textContent = why || 'Réessayer'; setTimeout(() => { if (lp.isConnected) lp.textContent = 'Écouter'; }, 2500); }
 }
+const offlineMiss = url => navigator.onLine === false && !mediaReady.has(url);   // hors ligne et pas en mémoire : inutile d'attendre
+let audioGuard = null;   // délai maximum de chargement d'un son (Hugging Face qui ne répond pas)
 function stopAudio() {
+  clearTimeout(audioGuard);
   player.pause();
   cardVideo.pause();
   document.querySelectorAll('video').forEach(v => v.pause());
@@ -253,21 +270,22 @@ function stopAudio() {
 }
 function playAudio(src, btn) {
   if (!src) return;
-  if (btn && btn === playingBtn) {
-    if (btn.classList.contains('wait')) return;          // second toucher pendant le chargement : ignoré
-    if (!player.paused) { stopAudio(); return; }         // toucher pendant la lecture = arrêter
-  }
+  if (btn && btn === playingBtn) { stopAudio(); return; }   // toucher pendant le chargement ou la lecture = arrêter
+  const url = audioURL(src);
+  if (offlineMiss(url)) { player.pause(); setPlayingBtn(btn || null); audioFailed('Hors ligne'); return; }
   // jamais deux sons à la fois : la scène (carte ou fenêtre) s'arrête
   cardVideo.pause();
   document.getElementById('mvideo')?.pause();
   switching = true;
-  player.src = mediaSrc(audioURL(src));
+  player.src = mediaSrc(url);
   player.currentTime = 0;
   setPlayingBtn(btn || null);
+  clearTimeout(audioGuard);
+  audioGuard = setTimeout(() => { if (playingBtn?.classList.contains('wait')) { player.pause(); audioFailed(); } }, 10000);
   player.play().catch(e => { if (e.name !== 'AbortError') audioFailed(); });
   switching = false;
 }
-player.addEventListener('playing', () => { playingBtn?.classList.remove('wait'); tickAudio(); });
+player.addEventListener('playing', () => { clearTimeout(audioGuard); playingBtn?.classList.remove('wait'); tickAudio(); });
 player.addEventListener('ended', () => setPlayingBtn(null));
 player.addEventListener('pause', () => { if (!switching && !player.ended && playingBtn && !playingBtn.classList.contains('wait')) setPlayingBtn(null); });
 player.addEventListener('error', () => { if (playingBtn) audioFailed(); });
@@ -325,6 +343,8 @@ async function loadData() {
     try {
       const res = await fetch('data.json', { cache: essai ? 'reload' : 'default' });
       detail = `HTTP ${res.status} ${res.headers.get('content-type') || ''} ${res.headers.get('x-vercel-mitigated') || ''}`;
+      const json = /json/.test(res.headers.get('content-type') || '');   // un portail Wi-Fi renvoie du HTML en 200
+      if (res.ok && !json) throw new Error('réponse qui n’est pas du JSON');
       if (res.ok && res.body && res.body.getReader) {
         // progression réelle (octets reçus) ; data.json est souvent compressé : on rapporte à sa taille connue
         const total = +(res.headers.get('content-encoding') ? 0 : res.headers.get('content-length')) || DATA_BYTES;
@@ -362,19 +382,34 @@ async function loadData() {
 }
 
 // ===== STORAGE =====
+// kaam_fav est filtré en mémoire (entrées abîmées ignorées) mais jamais réécrit au chargement :
+// la valeur stockée reste intacte tant que l'utilisateur ne modifie rien.
 function loadFavorites() {
-  try { favorites = JSON.parse(localStorage.getItem('kaam_fav') || '[]'); } catch { favorites = []; }
+  let v; try { v = JSON.parse(localStorage.getItem('kaam_fav') || '[]'); } catch { v = []; }
+  favorites = Array.isArray(v) ? v.filter(f => f && typeof f.quote === 'string' && typeof f.name === 'string') : [];
 }
-function saveFavorites() {
-  try { localStorage.setItem('kaam_fav', JSON.stringify(favorites)); } catch {}
-}
+function saveFavorites() { return writeJSON('kaam_fav', favorites); }
 // même réplique : même texte et même personnage (nom corrigé par NAME_FIX pour les favoris anciens)
 function sameQuote(f, q) { return f.quote === q.quote && (NAME_FIX[f.name] || f.name) === q.name; }
 function isFav(q) { return favorites.some(f => sameQuote(f, q)); }
+// faux si l'enregistrement a échoué (stockage plein ou refusé) : rien n'est changé en mémoire
 function toggleFav(q) {
+  const before = favorites;
   if (isFav(q)) favorites = favorites.filter(f => !sameQuote(f, q));
-  else { const { live, ...keep } = q; favorites.unshift(keep); }   // la réplique entière, avec son index stable i
-  saveFavorites();
+  else { const { live, ...keep } = q; favorites = [keep, ...favorites]; }   // la réplique entière, avec son index stable i
+  if (saveFavorites()) return true;
+  favorites = before;
+  return false;
+}
+// bouton Favori : état coché à jour, ou « Non enregistré » 2 s si le stockage a refusé
+function favButton(btn, q, label = 'Favori') {
+  const ok = toggleFav(q), on = isFav(q);
+  btn.innerHTML = `<span class="sq${on ? ' on' : ''}" aria-hidden="true"></span>${ok ? label : 'Non enregistré'}`;
+  btn.setAttribute('aria-pressed', on);
+  if (!ok) {
+    document.getElementById('sr-live').textContent = 'Favori non enregistré : le stockage de l’appareil est plein ou bloqué.';
+    setTimeout(() => { if (btn.isConnected) btn.innerHTML = `<span class="sq${isFav(q) ? ' on' : ''}" aria-hidden="true"></span>${label}`; }, 2000);
+  }
 }
 
 // ===== UTILS =====
@@ -406,9 +441,11 @@ function coteEp(q) {
 // Titres d'épisode tout en capitales dans les scripts (« AU BONHEUR DES DAMES ») : remis en casse de phrase,
 // en gardant les chiffres romains (« Vox populi III ») et la capitale des noms de personnages (« Le monde d’Arthur »)
 let KNOWN = null;   // noms de personnages d'un seul mot, sans accents ni casse
+// noms propres des titres qui ne sont pas des personnages (lieux, objets, figures) ; les adjectifs (« romain ») restent en minuscule
+const PROPRES = ['graal', 'aquitaine', 'tintagel', 'cornouailles', 'dieu', 'sainte', 'croix', 'silbury', 'hill', 'euripide', 'alexandre', 'gauvain', 'dagonet', 'caius', 'sloubi'];
 function knownNames() {
-  if (!KNOWN && allQuotes.length) KNOWN = new Set(getCharList().map(([n]) => n).filter(n => !/[\s’']/.test(n) && n.length > 2 && n !== 'TOUS').map(fold));
-  return KNOWN || new Set();
+  if (!KNOWN && allQuotes.length) KNOWN = new Set(getCharList().map(([n]) => n).filter(n => !/[\s’']/.test(n) && n.length > 2 && n !== 'TOUS').map(fold).concat(PROPRES));
+  return KNOWN || new Set(PROPRES);
 }
 function titleCase(t) {
   if (t === t.toUpperCase()) {
@@ -458,19 +495,28 @@ function quoteSize(s) {
   const px = L <= 30 ? 36 : L <= 60 ? 32 : L <= 110 ? 28 : L <= 180 ? 25 : L <= 280 ? 22 : L <= 420 ? 20 : 18;
   return Math.round(px * k);
 }
-function fold(s) { return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[’']/g, "'"); }
-// Recherche : texte plié (sans accents, minuscules, toute ponctuation → une espace, bordé d'espaces).
-// La longueur est conservée caractère par caractère (hors espace ajoutée en tête), pour reporter les positions du surlignage.
-const fold2 = s => ' ' + (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ' ') + ' ';
-const fold2Len = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').length === (s || '').length;
+// Pliage commun : ligatures dépliées (« cœur » = « coeur », personne ne tape œ sur iPhone), accents retirés
+const DIACRITIQUES = /[\u0300-\u036f]/g;
+const strip = s => (s || '').replace(/œ/g, 'oe').replace(/Œ/g, 'OE').replace(/æ/g, 'ae').replace(/Æ/g, 'AE').normalize('NFD').replace(DIACRITIQUES, '');
+function fold(s) { return strip(s).toLowerCase().replace(/[’']/g, "'"); }
+// Surlignage : texte plié caractère par caractère, avec pour chaque caractère plié l'indice du caractère d'origine
+// (« œ » donne « oe », deux caractères pliés qui pointent sur le même caractère d'origine)
+function foldMap(s) {
+  let f = '';
+  const at = [];
+  for (let k = 0; k < s.length; k++) {
+    for (const x of strip(s[k]).toLowerCase().replace(/[^a-z0-9]/g, ' ')) { f += x; at.push(k); }
+  }
+  return { f, at };
+}
 // surligne chaque mot cherché à partir d'un début de mot ; la typographie est appliquée une seule fois, sur le HTML découpé
 function highlight(text, query) {
   const plain = text.replace(/'/g, '’');
-  const toks = fold2(query).trim().split(/\s+/).filter(Boolean);
-  if (!toks.length || !fold2Len(plain)) return typo(text);
-  const f = fold2(plain).slice(1, -1);
+  const toks = foldIx(query).trim().split(' ').filter(Boolean);
+  if (!toks.length) return typo(text);
+  const { f, at } = foldMap(plain);
   const marks = new Uint8Array(plain.length);
-  for (const t of toks) { let at = -1; while ((at = f.indexOf(t, at + 1)) >= 0) if (at === 0 || f[at - 1] === ' ') marks.fill(1, at, at + t.length); }
+  for (const t of toks) { let p = -1; while ((p = f.indexOf(t, p + 1)) >= 0) if (p === 0 || f[p - 1] === ' ') marks.fill(1, at[p], at[p + t.length - 1] + 1); }
   let out = '', i = 0;
   while (i < plain.length) {
     let j = i; while (j < plain.length && marks[j] === marks[i]) j++;
@@ -740,12 +786,7 @@ function renderCitations(dir = 0) {
   const $ = id => document.getElementById(id);
   $('btn-settings').addEventListener('click', openSettings);
   $('btn-who').addEventListener('click', e => { e.stopPropagation(); openPersonnage(q.name); });
-  $('btn-fav').addEventListener('click', () => {
-    toggleFav(q);
-    const on = isFav(q);
-    $('btn-fav').innerHTML = `<span class="sq${on ? ' on' : ''}" aria-hidden="true"></span>Favori`;
-    $('btn-fav').setAttribute('aria-pressed', on);
-  });
+  $('btn-fav').addEventListener('click', () => favButton($('btn-fav'), q));
   $('btn-share').addEventListener('click', () => shareQuote(q, $('btn-share')));
   if (reviewable) {
     $('avis-ok').addEventListener('click', () => recordAvis(q, true, [], ''));
@@ -785,6 +826,7 @@ function renderCitations(dir = 0) {
   firstRender = false;
   // la réplique continue plus bas : fondu et « Suite ↓ », retirés une fois en bas
   const fit = () => {
+    if (!card.isConnected) return;          // carte déjà remplacée par un rendu plus récent
     const more = card.scrollHeight > card.clientHeight + 4 && card.scrollTop + card.clientHeight < card.scrollHeight - 4;
     card.classList.toggle('ovf', more);
     let h = card.parentElement.querySelector('.more-h');
@@ -862,8 +904,8 @@ function recordAvis(q, ok, problemes, note) {
   if (avisFaits[q.i]) return;                   // jamais deux avis pour la même réplique
   avisFaits[q.i] = ok ? 1 : 2;                  // 1 = validée, 2 = signalée
   avisFile.push({ i: q.i, quote: q.quote, name: q.name, audio: q.audio, video: q.video, approx: q.approx, ok, problemes, note, ts: Date.now() });
-  writeJSON('kaam_avis_faits', avisFaits);
-  writeJSON('kaam_avis_file', avisFile);
+  // la file d'abord : si elle ne peut pas être écrite, la réplique n'est pas marquée « vérifiée » (elle reviendra)
+  if (writeJSON('kaam_avis_file', avisFile)) writeJSON('kaam_avis_faits', avisFaits);
   if (avisFile.length >= 5) sendAvis(); else scheduleSend();
   // « Consigné · Annuler » pendant 5 s : un pouce qui glisse ne valide rien pour de bon
   const ts = avisFile[avisFile.length - 1].ts;
@@ -897,7 +939,7 @@ function undoAvis() {
   if (!last || !avisFile.some(a => a.ts === last.ts)) return;
   delete avisFaits[last.i];
   avisFile = avisFile.filter(a => a.ts !== last.ts);
-  writeJSON('kaam_avis_faits', avisFaits);
+  writeJSON('kaam_avis_faits', avisFaits);   // ordre inverse de recordAvis : jamais un avis en file pour une réplique non marquée
   writeJSON('kaam_avis_file', avisFile);
   lastAvis = null; clearTimeout(doneTimer);
   rebuildVerify();
@@ -1055,7 +1097,7 @@ function quizPick() {
       if (!TOP_CHARS.includes(q.name) || !q.video || q.quote.length < 25) return;
       const own = fold(q.name.replace(/^(LE|PÈRE) /, ''));
       if (fold(q.quote).includes(own)) return;
-      (quizByChar.m[q.name] ||= []).push(i);
+      (quizByChar.m[q.name] = quizByChar.m[q.name] || []).push(i);   // pas de « ||= » : iOS 13.4 et plus
     });
   }
   const names = Object.keys(quizByChar.m);
@@ -1195,7 +1237,7 @@ function renderQuiz(daily = false) {
       nav.innerHTML = `<button id="quiz-next">Question suivante<span class="arr" aria-hidden="true">→</span></button>`;
       const nx = document.getElementById('quiz-next');
       nx.addEventListener('click', () => renderQuiz());
-      if (btn.matches(':focus-visible')) nx.focus({ preventScroll: true });   // clavier : on enchaîne sur « Question suivante »
+      if (usingKeyboard) nx.focus({ preventScroll: true });   // clavier : on enchaîne sur « Question suivante »
     }
   };
   document.querySelectorAll('.choice').forEach(btn => btn.addEventListener('click', () => answer(btn, false)));
@@ -1245,7 +1287,8 @@ function bindEntries(container, list, opts = {}) {
       const at = favorites.findIndex(f => sameQuote(f, q));
       const saved = favorites[at];
       if (at < 0) return;
-      favorites.splice(at, 1); saveFavorites();
+      favorites.splice(at, 1);
+      if (!saveFavorites()) { favorites.splice(at, 0, saved); a.lastChild.textContent = 'Non enregistré'; return; }
       const row = ent.querySelector('.ent-a');
       const rowHTML = row.outerHTML;
       ent.classList.add('off');
@@ -1256,18 +1299,16 @@ function bindEntries(container, list, opts = {}) {
     }
     else if (act === 'undo' && ent._undo) {
       const { at, saved, rowHTML } = ent._undo;
-      if (!isFav(saved)) { favorites.splice(Math.min(at, favorites.length), 0, saved); saveFavorites(); }
+      if (!isFav(saved)) {
+        favorites.splice(Math.min(at, favorites.length), 0, saved);
+        if (!saveFavorites()) { favorites = favorites.filter(f => f !== saved); a.textContent = 'Non enregistré'; return; }
+      }
       ent.classList.remove('off');
       ent.querySelector('.ent-a').outerHTML = rowHTML;
       ent._undo = null;
       opts.onCount?.();
     }
-    else if (act === 'fav') {
-      toggleFav(q);
-      const on = isFav(q);
-      a.innerHTML = `<span class="sq${on ? ' on' : ''}" aria-hidden="true"></span>Favori`;
-      a.setAttribute('aria-pressed', on);
-    }
+    else if (act === 'fav') favButton(a, q);
   });
 }
 
@@ -1451,7 +1492,7 @@ function openPersonnage(name, restore) {
 
 // ===== RECHERCHE =====
 // Débuts de mot, dans l'ordre d'abord, puis tous les mots dans n'importe quel ordre ; ni titres ni noms (un résultat montre toujours pourquoi il est là)
-const foldIx = s => ' ' + (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
+const foldIx = s => ' ' + strip(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() + ' ';
 let IX = null;
 function buildIndex() { if (!IX || IX.src !== allQuotes) IX = { src: allQuotes, q: allQuotes.map(x => foldIx(x.quote)) }; }
 function searchHits(query) {
@@ -1604,16 +1645,14 @@ function showVideo(q) {
   v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
   wireScene(v);
   fig.querySelector('.frame').prepend(v);
-  v.src = mediaSrc(videoURL(q));
-  setScene(v, 'loading');
+  fig.dataset.src = videoURL(q);
+  if (offlineMiss(fig.dataset.src)) setScene(v, 'error');
+  else { v.src = mediaSrc(fig.dataset.src); setScene(v, 'loading'); }
   bindScene(fig, v);
   v.muted = false;
   v.play().catch(e => { if (e.name === 'NotAllowedError') { v.muted = true; v.play().catch(() => {}); } });
   const fav = document.getElementById('m-fav');
-  fav.addEventListener('click', () => {
-    toggleFav(q); const on = isFav(q);
-    fav.innerHTML = `<span class="sq${on ? ' on' : ''}" aria-hidden="true"></span>Favori`; fav.setAttribute('aria-pressed', on);
-  });
+  fav.addEventListener('click', () => favButton(fav, q));
   document.getElementById('m-share').addEventListener('click', e => shareQuote(q, e.currentTarget));
   document.getElementById('m-goto').addEventListener('click', () => gotoQuote(q));
   document.getElementById('m-who').addEventListener('click', () => openPersonnage(q.name));
@@ -1652,7 +1691,7 @@ function setView(view) {
     if (view === 'citations' && !booting) { currentView = 'citations'; boot(); }
     return;
   }
-  reloadIfIdle();
+  if (reloadIfIdle(view)) return;          // nouvelle version : rechargée, la vue demandée s'ouvrira après
   stopAudio();
   closeSheet();
   closeOverlay();
@@ -1672,11 +1711,15 @@ function setView(view) {
 // Une nouvelle version n'est jamais appliquée en plein geste : on recharge seulement à un moment neutre
 // (retour au premier plan, changement d'onglet, aucune feuille ni page superposée ouverte), et jamais au tout premier lancement.
 let updatePending = false;
-function reloadIfIdle() {
+// vrai si la page recharge ; la vue demandée (ou la vue en cours) est rouverte après le rechargement
+function reloadIfIdle(view) {
   if (updatePending && !sheetOpen() && document.getElementById('detail-overlay').classList.contains('hidden')) {
     updatePending = false;
+    try { sessionStorage.setItem('kaam_after_reload', view || currentView); } catch {}
     location.reload();
+    return true;
   }
+  return false;
 }
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
@@ -1687,11 +1730,22 @@ function registerSW() {
     updatePending = true;
   });
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reloadIfIdle(); });
+// L'app installée sur l'écran d'accueil ne « navigue » pas quand iOS la rouvre : on cherche une nouvelle version
+// au retour au premier plan, au plus une fois par heure
+let lastUpdateCheck = Date.now();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (Date.now() - lastUpdateCheck > 3600e3) {
+    lastUpdateCheck = Date.now();
+    navigator.serviceWorker?.getRegistration().then(r => r && r.update()).catch(() => {});
+  }
+  reloadIfIdle();
+});
 
 // ===== DÉMARRAGE =====
-let retryTimer = null, autoRetried = false, booting = false;
+let retryTimer = null, autoRetried = false, booting = false, waitingOnline = false;
 async function boot() {
+  if (booting) return;                     // jamais deux démarrages en parallèle (Réessayer, retour du réseau, minuteur)
   clearTimeout(retryTimer);
   booting = true;
   currentView = 'citations';
@@ -1704,13 +1758,6 @@ async function boot() {
   setTimeout(() => { const p = document.querySelector('.boot p'); if (p) p.hidden = false; }, 1500);
   try {
     await loadData();
-    quoteIdx = pool() ? rand(pool()) : Math.floor(Math.random() * allQuotes.length);
-    randHistory = [quoteIdx];
-    randPos = 0;
-    setTabsEnabled(true);
-    setView('citations');
-    sendAvis();
-    booting = false;
   } catch (e) {
     booting = false;
     console.error('Chargement des répliques :', e);
@@ -1726,9 +1773,41 @@ async function boot() {
     keepTabs(['favoris', 'citations']);
     document.getElementById('btn-retry').addEventListener('click', boot);
     document.getElementById('btn-myfav').addEventListener('click', () => setView('favoris'));
-    if (offline) window.addEventListener('online', boot, { once: true });
-    else if (!autoRetried) { autoRetried = true; retryTimer = setTimeout(() => { if (!allQuotes.length && currentView === 'citations') boot(); }, 10000); }
+    if (offline && !waitingOnline) {         // un seul écouteur, quel que soit le nombre d'échecs
+      waitingOnline = true;
+      window.addEventListener('online', () => { waitingOnline = false; if (!allQuotes.length) boot(); }, { once: true });
+    }
+    else if (!offline && !autoRetried) { autoRetried = true; retryTimer = setTimeout(() => { if (!allQuotes.length && currentView === 'citations') boot(); }, 10000); }
+    return;
   }
+  booting = false;
+  quoteIdx = pickRandom();
+  randHistory = [quoteIdx];
+  randPos = 0;
+  setTabsEnabled(true);
+  // après un rechargement de mise à jour, on rouvre la vue que l'utilisateur avait demandée
+  let after = null;
+  try { after = sessionStorage.getItem('kaam_after_reload'); sessionStorage.removeItem('kaam_after_reload'); } catch {}
+  try {
+    setView(after && after in VIEWS ? after : 'citations');
+  } catch (e) {
+    // un bug d'affichage n'est pas une panne du serveur : on le dit, sans retélécharger les répliques
+    console.error('Affichage :', e);
+    showRenderError();
+  }
+  sendAvis();
+}
+const VIEWS = { citations: 1, quiz: 1, personnages: 1, recherche: 1, favoris: 1 };
+function showRenderError() {
+  const main = document.getElementById('main-content');
+  setMast('Répliques');
+  main.innerHTML = `<div class="empty"><span class="err-k">Erreur d’affichage</span>Une réplique n’a pas pu s’afficher.<small>Les répliques sont bien chargées : essayez-en une autre.</small>
+    <div class="row2"><button id="btn-retry">Autre réplique</button><button id="btn-myfav">Mes favoris</button></div></div>`;
+  document.getElementById('btn-retry').addEventListener('click', () => {
+    quoteIdx = pickRandom();
+    try { setView('citations'); } catch (e) { console.error('Affichage :', e); showRenderError(); }
+  });
+  document.getElementById('btn-myfav').addEventListener('click', () => setView('favoris'));
 }
 // Point d'accès stable pour le banc de test (tests/e2e) : lecture de l'état et fonctions existantes, rien de nouveau.
 // Le banc ne dépend que de ce pont : les noms internes peuvent changer sans le casser.

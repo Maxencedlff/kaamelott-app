@@ -1,3 +1,4 @@
+# À placer dans .github/workflows/tests.yml (le jeton actuel n'a pas le droit « workflow » : à faire par le créateur).
 name: tests
 on: [push, pull_request]
 concurrency: { group: tests-${{ github.ref }}, cancel-in-progress: true }
