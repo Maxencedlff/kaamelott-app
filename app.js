@@ -1,23 +1,40 @@
 'use strict';
 window.__kaamOK = 1;   // app.js s'exécute : compat.js n'affichera pas « appareil trop ancien »
 
-// ===== STATE =====
-let allQuotes = [];       // parsed quotes
-let favorites = [];       // saved quotes
-let currentView = 'citations';
-let currentQuote = null;
-let quoteIdx = 0;
-let quizState = null;
-let detailChar = null;
-
-// ===== SONS =====
-// Seules certaines répliques ont un extrait sonore (champ "audio" de data.json)
-let audioIdx = [];        // index (dans allQuotes) des répliques avec son
+// ===== ÉTAT =====
+// Deux index à ne jamais confondre : q.i = index de la réplique dans data.json, immuable (les avis et les favoris
+// le référencent) ; quoteIdx, randHistory, audioIdx… = positions dans allQuotes (répliques visibles, filtrées).
+// Données
+let allQuotes = [];       // répliques lues (parseQuote), sans les doublons masqués
+let audioIdx = [];        // positions des répliques avec son
+let videoIdx = [];        // positions des répliques avec scène
+let favorites = [];       // favoris enregistrés (kaam_fav), tels qu'enregistrés
+// Préférences (clés localStorage inchangées)
+let source = readStr('kaam_source', 'all');     // toute la série (all), seulement la série (serie) ou le film (film)
 let audioOnly = readPref('kaam_audio_only');   // n'afficher que les répliques avec son
-// ===== VIDÉOS (extraits hébergés sur Hugging Face) =====
-const VIDEO_BASE = 'https://huggingface.co/datasets/Maxencedlf/kaamelott-videos/resolve/main/v/';   // v/<2 premiers caractères>/<clé>.mp4
-let videoIdx = [];        // index des répliques avec extrait vidéo
 let videoOnly = readPref('kaam_video_only');   // mode vidéo : seulement ces répliques, scène jouée dans la carte
+let autoPlay  = readPref('kaam_autoplay');     // jouer le son dès qu'on tombe sur la réplique
+let inOrder   = readPref('kaam_in_order');     // toucher / glisser : réplique suivante dans l'ordre au lieu d'aléatoire
+let verifyMode = readPref('kaam_verify');      // ne montrer que les répliques avec son/vidéo pas encore vérifiées
+// Navigation
+let currentView = 'citations';
+let quoteIdx = 0;         // réplique affichée (position dans allQuotes)
+let randHistory = [];     // répliques vues en aléatoire (positions)
+let randPos = -1;         // position courante dans randHistory
+let nextRand = null;      // prochaine réplique aléatoire, tirée à l'avance pour être préchargée
+let quizState = null;     // score du quiz libre (session)
+// Vérification (avis son / vidéo envoyés à /api/avis)
+let verifyIdx = [];                                 // positions encore à vérifier dans la source choisie
+let verifyApprox = false;                           // vrai si ce sont les sons les moins sûrs (passent en premier)
+let verifyTodo = { approx: 0, others: 0 };
+let avisFaits = readJSON('kaam_avis_faits', {});   // q.i → 1 validée, 2 signalée (sur cet appareil)
+let avisFile  = readJSON('kaam_avis_file', []);    // avis pas encore envoyés
+// Lecture
+let playingBtn = null;    // bouton dont le son est en cours (chargement ou lecture)
+let announceNext = false; // VoiceOver : annoncer la réplique au prochain rendu (pas au premier affichage)
+
+// ===== MÉDIAS (sons et scènes hébergés sur Hugging Face) =====
+const VIDEO_BASE = 'https://huggingface.co/datasets/Maxencedlf/kaamelott-videos/resolve/main/v/';   // v/<2 premiers caractères>/<clé>.mp4
 // Sons automatiques (sons/auto/<clé>.m4a) : hébergés sur Hugging Face, dans s/<2 premiers caractères>/ ;
 // les quelques sons manuels (sons/*.mp3) restent sur le site
 const AUDIO_BASE = 'https://huggingface.co/datasets/Maxencedlf/kaamelott-videos/resolve/main/s/';
@@ -29,14 +46,13 @@ function audioURL(src) {
 function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4${q.vv ? `?v=${q.vv}` : ''}` : null; }
 
 // ===== SOURCE : toute la série, ou seulement la série, ou seulement le film =====
-let source = (() => { try { return localStorage.getItem('kaam_source') || 'all'; } catch { return 'all'; } })();
 const poolCache = new Map();
 function bySource(arr) {
   if (source === 'all') return arr;
   const key = `${source}|${arr === null ? 'all' : arr === audioIdx ? 'a' : arr === videoIdx ? 'v' : 'x' + arr.length}`;
   if (arr !== verifyIdx && poolCache.has(key)) return poolCache.get(key);
   const base = arr || allQuotes.map((_, i) => i);
-  const out = base.filter(i => !!allQuotes[i].film === (source === 'film'));
+  const out = base.filter(i => inSrc(allQuotes[i], source));
   if (arr !== verifyIdx) poolCache.set(key, out);
   return out;
 }
@@ -100,7 +116,6 @@ function prefetchAround() {
     if (q.audio && (autoPlay || verifyMode || audioOnly)) cachedMedia(audioURL(q.audio));
   });
 }
-let nextRand = null;      // prochaine réplique aléatoire, tirée à l'avance pour être préchargée
 function pickRandom() { return pool() ? rand(pool()) : Math.floor(Math.random() * allQuotes.length); }
 
 // Un seul lecteur vidéo pour toutes les cartes : une fois le son autorisé par un toucher (iOS), il le reste
@@ -120,12 +135,13 @@ function sceneHTML(q, id) {
     + `<figcaption class="leg"><span class="st"></span></figcaption></figure>`;
 }
 const mmss = t => { t = Math.max(0, Math.round(t || 0)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+const sceneGuards = new WeakMap();   // lecteur → délai de 8 s avant « Scène indisponible »
 function setScene(v, st) {
   const f = v.closest('.scene');
   v.parentElement?.classList.toggle('muted', v.muted);
   if (!f) return;
-  clearTimeout(v._guard);
-  if (st === 'loading') v._guard = setTimeout(() => { if (f.dataset.s === 'loading' && v.closest('.scene') === f) setScene(v, 'error'); }, 8000);
+  clearTimeout(sceneGuards.get(v));
+  if (st === 'loading') sceneGuards.set(v, setTimeout(() => { if (f.dataset.s === 'loading' && v.closest('.scene') === f) setScene(v, 'error'); }, 8000));
   f.dataset.s = st;
   const el = f.querySelector('.st');
   if (!el) return;
@@ -183,7 +199,6 @@ function unlockSound() {
   else { cardVideo.play().catch(() => {}); cardVideo.pause(); }
   player.muted = false;
 }
-['touchend', 'click', 'keydown'].forEach(ev => document.addEventListener(ev, unlockSound, { capture: true }));
 function playCardVideo(q, fig) {
   const url = videoURL(q);
   const src = mediaSrc(url);
@@ -197,6 +212,7 @@ function playCardVideo(q, fig) {
   cardVideo.muted = false;
   cardVideo.play().catch(e => {
     if (e.name !== 'NotAllowedError') return;            // lecture interrompue par la réplique suivante : rien à faire
+    if (playingBtn) return;                              // refus arrivé après « Écouter » : la scène ne repart pas sous le son
     cardVideo.muted = true; cardVideo.play().catch(() => {});
   });
 }
@@ -213,10 +229,6 @@ function pool() {
   return P && P.length ? P : null;
 }
 // ===== VÉRIFICATION (avis son / vidéo justes ou non, envoyés à /api/avis) =====
-let verifyMode = readPref('kaam_verify');      // ne montrer que les répliques avec son/vidéo pas encore vérifiées
-let verifyIdx = [];
-let avisFaits = readJSON('kaam_avis_faits', {});   // index de réplique → 1 (déjà vérifiée sur cet appareil)
-let avisFile  = readJSON('kaam_avis_file', []);    // avis pas encore envoyés
 // lecture validée : une valeur abîmée (autre type que la valeur par défaut) est ignorée en mémoire, jamais réécrite
 function readJSON(k, def) {
   try { const v = JSON.parse(localStorage.getItem(k)); return v && typeof v === 'object' && Array.isArray(v) === Array.isArray(def) ? v : def; }
@@ -225,32 +237,24 @@ function readJSON(k, def) {
 // vrai si l'écriture a réussi (stockage plein ou refusé : faux, l'appelant le dit)
 function writeJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } }
 // Les sons estimés (≈), les moins sûrs, passent en premier ; les autres ensuite
-let verifyApprox = false;
 function rebuildVerify() {
   // dans la source choisie (Tout / Série / Film)
   const todo = allQuotes.reduce((acc, q, i) => ((q.audio || q.video) && !avisFaits[q.i]
-    && (source === 'all' || !!q.film === (source === 'film')) && acc.push(i), acc), []);
+    && inSrc(q, source) && acc.push(i), acc), []);
   const approx = todo.filter(i => allQuotes[i].approx);
   verifyApprox = approx.length > 0;
   verifyIdx = verifyApprox ? approx : todo;
   verifyTodo = { approx: approx.length, others: todo.length - approx.length };
 }
-let verifyTodo = { approx: 0, others: 0 };
-let autoPlay  = readPref('kaam_autoplay');     // jouer le son dès qu'on tombe sur la réplique
-let inOrder   = readPref('kaam_in_order');     // swipe/tap : réplique suivante dans l'ordre au lieu d'aléatoire
-const player = new Audio();
+const player = new Audio();   // un seul lecteur de son pour toute l'app
 player.preload = 'auto';
-let playingBtn = null;
 
+// Accès au stockage local : toujours par ces fonctions (stockage refusé ou plein : valeur par défaut, jamais d'exception)
 function readPref(k) { try { return localStorage.getItem(k) === '1'; } catch { return false; } }
 function writePref(k, v) { try { localStorage.setItem(k, v ? '1' : '0'); } catch {} }
+function readStr(k, def) { try { return localStorage.getItem(k) || def; } catch { return def; } }
+function writeStr(k, v) { try { localStorage.setItem(k, String(v)); return true; } catch { return false; } }
 
-// Les favoris enregistrés avant l'ajout des sons n'ont pas le champ audio : on le retrouve
-function audioOf(q) {
-  if (q.audio) return q.audio;
-  const hit = audioIdx.map(i => allQuotes[i]).find(x => x.quote === q.quote && x.name === q.name);
-  return hit ? hit.audio : null;
-}
 
 // État du son sur le bouton qui l'a lancé : attente (chargement), lecture (rouge + filet d'avancement), échec
 let switching = false;
@@ -312,10 +316,6 @@ player.addEventListener('playing', () => { clearTimeout(audioGuard); playingBtn?
 player.addEventListener('ended', () => setPlayingBtn(null));
 player.addEventListener('pause', () => { if (!switching && !player.ended && playingBtn && !playingBtn.classList.contains('wait')) setPlayingBtn(null); });
 player.addEventListener('error', () => { if (playingBtn) audioFailed(); });
-
-// Historique des citations vues en mode aléatoire
-let randHistory = [];   // liste des quoteIdx visités
-let randPos = -1;       // position courante dans l'historique
 
 // ===== PARSE DATA =====
 // Coquilles des scripts sur les noms : corrigées à la lecture (data.json n'est pas réécrit, l'index i est conservé)
@@ -433,6 +433,9 @@ function toggleFav(q) {
   favorites = before;
   return false;
 }
+function favCellHTML(q, on = isFav(q)) {
+  return `<button class="cell" id="btn-fav" aria-pressed="${on}"><span class="sq${on ? ' on' : ''}" aria-hidden="true"></span>Favori</button>`;
+}
 // bouton Favori : état coché à jour, ou « Non enregistré » 2 s si le stockage a refusé
 function favButton(btn, q, label = 'Favori') {
   const ok = toggleFav(q), on = isFav(q);
@@ -452,6 +455,8 @@ function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 // ===== MISE EN FORME =====
 const nf = n => n.toLocaleString('fr-FR');
+const plural = (n, w, ws = w + 's') => `${nf(n)} ${n > 1 ? ws : w}`;   // « 1 réplique », « 2 537 répliques »
+const SEP = '<span class="sep" aria-hidden="true">·</span>';          // séparateur des lignes de résumé
 function fmtEp(q) {
   if (q.film) return `Film · ${q.film}`;
   if (q.inedit) return `${q.inedit} · jamais tourné`;
@@ -584,14 +589,17 @@ function setMast(t) {
   el.dataset.t = t;
   el.innerHTML = esc(t) + (navigator.onLine === false ? ' <span class="off">· Hors ligne</span>' : '');
 }
-['online', 'offline'].forEach(ev => window.addEventListener(ev, () => { const el = document.getElementById('mast-sub'); if (el) setMast(el.dataset.t || el.textContent); }));
+// Sous-titre de l'en-tête par vue (Personnages et Favoris : leur grand titre suffit)
+const MAST = { quiz: 'Quiz', personnages: '', recherche: 'Chercher', favoris: '' };
+function mastFor(view) { return view === 'citations' ? (verifyMode ? 'Vérification' : 'Répliques') : MAST[view]; }
+function refreshMast() { const el = document.getElementById('mast-sub'); if (el) setMast(el.dataset.t || el.textContent); }
 // Clavier (iPad, ordinateur) : flèches gauche / droite pour changer de réplique
-document.addEventListener('keydown', e => {
+function onArrowKeys(e) {
   if (currentView !== 'citations' || sheetOpen() || !document.getElementById('detail-overlay').classList.contains('hidden')) return;
   if (e.target.matches?.('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === 'ArrowRight') { e.preventDefault(); swipeForward(); }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); swipeBack(); }
-});
+}
 
 // ===== FEUILLE (réglages, signalement) : vraie fenêtre modale =====
 let sheetFocus = null;
@@ -629,29 +637,18 @@ function bindSheetGestures(sheet) {
   sheet.addEventListener('touchstart', e => { y0 = sheet.scrollTop <= 0 && !e.target.closest('textarea') ? e.touches[0].clientY : null; }, { passive: true });
   sheet.addEventListener('touchend', e => { if (y0 !== null && e.changedTouches[0].clientY - y0 > 80) closeSheet(); y0 = null; }, { passive: true });
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheetOpen()) closeSheet(); });
 // Clavier iOS : la feuille (position fixe en bas) remonte au-dessus du clavier tant qu'il est ouvert
-if (window.visualViewport) {
-  const vv = window.visualViewport;
-  const fitSheet = () => {
-    const sheet = document.getElementById('sheet');
-    if (sheet.hidden) return;
-    const kb = Math.max(0, innerHeight - vv.height - vv.offsetTop);
-    sheet.style.bottom = kb > 40 ? kb + 'px' : '';
-    sheet.style.maxHeight = kb > 40 ? (vv.height - 12) + 'px' : '';
-  };
-  vv.addEventListener('resize', fitSheet);
-  vv.addEventListener('scroll', fitSheet);
+function fitSheetToKeyboard() {
+  const sheet = document.getElementById('sheet'), vv = window.visualViewport;
+  if (sheet.hidden) return;
+  const kb = Math.max(0, innerHeight - vv.height - vv.offsetTop);
+  sheet.style.bottom = kb > 40 ? kb + 'px' : '';
+  sheet.style.maxHeight = kb > 40 ? (vv.height - 12) + 'px' : '';
 }
 
 // ===== RÉGLAGES =====
 const SRC_LABEL = { all: 'Tout', serie: 'Série', film: 'Film' };
-function inSrc(q, s) { return s === 'all' || !!q.film === (s === 'film'); }
-function countFor(s, m) {
-  if (m === 'video') return videoIdx.reduce((n, i) => n + inSrc(allQuotes[i], s), 0);
-  if (m === 'audio') return audioIdx.reduce((n, i) => n + inSrc(allQuotes[i], s), 0);
-  return s === 'all' ? allQuotes.length : allQuotes.reduce((n, q) => n + inSrc(q, s), 0);
-}
+function inSrc(q, s) { return s === 'all' || !!q.film === (s === 'film'); }   // la réplique appartient-elle à la source s
 function mediaMode() { return videoOnly ? 'video' : audioOnly ? 'audio' : 'text'; }
 function settingsHTML() {
   const m = mediaMode();
@@ -705,7 +702,7 @@ function bindSettings(sheet) {
   sheet.querySelector('#sheet-close2').addEventListener('click', closeSheet);
   sheet.querySelectorAll('[data-src]').forEach(b => b.addEventListener('click', () => {
     source = b.dataset.src;
-    try { localStorage.setItem('kaam_source', source); } catch {}
+    writeStr('kaam_source', source);
     rebuildVerify(); nextRand = null;
     refreshAfterSetting(`[data-src="${source}"]`);
   }));
@@ -762,43 +759,39 @@ function textScale() {
   return Math.min(1.6, Math.max(.85, fs / 17));
 }
 // « Touchez ou glissez » : seulement sur les 3 premières répliques montrées (compte mémorisé sur l'appareil)
-function hintCount() { try { return +localStorage.getItem('kaam_hint') || 0; } catch { return 0; } }
-function countHint() { try { localStorage.setItem('kaam_hint', String(hintCount() + 1)); } catch {} }
+function hintCount() { return +readStr('kaam_hint', 0) || 0; }
+function countHint() { writeStr('kaam_hint', hintCount() + 1); }
 let firstRender = true;
-function renderCitations(dir = 0) {
-  const main = document.getElementById('main-content');
-  if (!allQuotes.length) return;
-  if (verifyMode && !verifyIdx.length) { renderVerifyDone(); return; }   // tout est vérifié : on s'arrête
-  const fid = main.contains(document.activeElement) ? document.activeElement.id : '';
-  stopAudio();
-  if (!allQuotes[quoteIdx]) quoteIdx = pickRandom();          // index périmé (filtres, données changées)
-  const q = allQuotes[quoteIdx];
-  currentQuote = q;
-  setMast(verifyMode ? 'Vérification' : 'Répliques');
+// Données de l'écran Répliques (aucun effet sur la page, sauf le compteur de l'aide)
+function citationsModel(q) {
   const P = pool();
-  const pl = (n, w) => `${nf(n)} ${w}${n > 1 ? 's' : ''}`;
-  // le rang n'a de sens que dans l'ordre ; en aléatoire, la cote le remplace
+  // le rang n'a de sens que dans l'ordre ; en aléatoire, rien
   const counter = verifyMode
-    ? `${pl(Object.keys(avisFaits).length, 'vérifiée')}${avisFile.length ? ` · ${nf(avisFile.length)} à envoyer` : ''}`
+    ? `${plural(Object.keys(avisFaits).length, 'vérifiée')}${avisFile.length ? ` · ${nf(avisFile.length)} à envoyer` : ''}`
     : inOrder
     ? (P ? `${nf(P.indexOf(quoteIdx) + 1)} / ${nf(P.length)}${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}` : `${nf(quoteIdx + 1)} / ${nf(allQuotes.length)}`)
     : '';
-  const sep = '<span class="sep" aria-hidden="true">·</span>';
   const summary = verifyMode
-    ? [verifyApprox ? 'Sons les moins sûrs' : 'Tout', `${nf(verifyIdx.length)} restante${verifyIdx.length > 1 ? 's' : ''}`, source === 'all' ? '' : SRC_LABEL[source]].filter(Boolean).join(sep)
+    ? [verifyApprox ? 'Sons les moins sûrs' : 'Tout', plural(verifyIdx.length, 'restante'), source === 'all' ? '' : SRC_LABEL[source]].filter(Boolean).join(SEP)
     : [SRC_LABEL[source], { text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : 'Aléatoire', autoPlay ? 'Lecture auto' : '']
-        .filter(Boolean).join(sep);
+        .filter(Boolean).join(SEP);
   const inlineVideo = !!((videoOnly || verifyMode) && q.video);
-  const reviewable = verifyMode && (q.audio || q.video);
-  const fav = isFav(q);
-  const what = q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : 'Son OK';
-  const no = String(q.i + 1).padStart(5, '0').replace(/^(\d{2})/, '$1 ');
-  const hint = !verifyMode && !((videoOnly || verifyMode) && q.video) && hintCount() < 3 ? (inOrder ? 'Touchez ou glissez pour la suivante' : 'Touchez ou glissez pour changer') : '';
+  const hint = !verifyMode && !inlineVideo && hintCount() < 3 ? (inOrder ? 'Touchez ou glissez pour la suivante' : 'Touchez ou glissez pour changer') : '';
   if (hint) countHint();
-  const small = innerWidth < 360;
-  const atStart = !inOrder && randPos <= 0;
-  // Rangée d'actions : toujours 4 cellules, toujours dans le même ordre ; une pièce absente reste en place, grisée
-  const listen = inlineVideo && !verifyMode
+  return {
+    counter, summary, inlineVideo, hint,
+    reviewable: verifyMode && !!(q.audio || q.video),
+    fav: isFav(q),
+    what: q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : 'Son OK',
+    no: String(q.i + 1).padStart(5, '0').replace(/^(\d{2})/, '$1\u202f'),   // « 03 345 », espace fine
+    atStart: !inOrder && randPos <= 0,
+    textOnly: !q.audio && !q.video,        // ni son ni scène : seules les actions utiles restent
+  };
+}
+// Gabarit de l'écran Répliques
+function citationsHTML(q, m, dir) {
+  // Rangée d'actions : toujours dans le même ordre ; une pièce absente le dit en clair
+  const listen = m.inlineVideo && !verifyMode
     ? `<button class="cell" id="btn-replay"><span class="tri" aria-hidden="true"></span>Revoir</button>`
     : q.audio
     ? `<button class="cell" id="btn-audio"><span class="tri" aria-hidden="true"></span><span class="stop" aria-hidden="true"></span><span class="lp">Écouter</span><span class="ls">Arrêter</span>${q.approx && verifyMode ? '<span class="x" aria-hidden="true">*</span>' : ''}</button>`
@@ -806,41 +799,42 @@ function renderCitations(dir = 0) {
   const scene = q.video
     ? `<button class="cell" id="btn-video"><span class="frm" aria-hidden="true"></span>Scène</button>`
     : `<span class="cell nil">Pas de scène</span>`;
-  const textOnly = !q.audio && !q.video;      // ni son ni scène : seules les actions utiles restent
-
-  main.innerHTML = `
+  const size = Math.round(Math.min(quoteSize(q.quote), innerWidth < 360 ? Q_MAX.videoSE : Q_MAX.video) * textScale());
+  return `
     <button class="bar${verifyMode ? ' verify' : ''}" id="btn-settings">
-      <span class="bar-sum">${verifyMode ? '' : '<span class="bar-k">Réglages :</span>'}${summary}</span><span class="bar-btn" aria-hidden="true"><i></i></span>
+      <span class="bar-sum">${verifyMode ? '' : '<span class="bar-k">Réglages :</span>'}${m.summary}</span><span class="bar-btn" aria-hidden="true"><i></i></span>
     </button>
-    ${inlineVideo ? sceneHTML(q, 'qvideo-slot') : ''}
+    ${m.inlineVideo ? sceneHTML(q, 'qvideo-slot') : ''}
     <div class="stage swap-in${dir < 0 ? ' back' : dir > 0 ? '' : ' rand'}" id="quote-card">
-      ${inlineVideo ? '' : `<div class="cote" aria-hidden="true"><span>N° ${no}</span></div>`}
+      ${m.inlineVideo ? '' : `<div class="cote" aria-hidden="true"><span>N° ${m.no}</span></div>`}
       <figure class="qblock">
         <button class="who" id="btn-who" aria-label="${esc(nameCase(q.name))}, voir la fiche du personnage">${esc(nameCase(q.name))}</button>
-        <blockquote class="quote" lang="fr"${inlineVideo ? ` style="font-size:${Math.round(Math.min(quoteSize(q.quote), small ? Q_MAX.videoSE : Q_MAX.video) * textScale())}px"` : ''}>${quoteHTML(q.quote)}</blockquote>
+        <blockquote class="quote" lang="fr"${m.inlineVideo ? ` style="font-size:${size}px"` : ''}>${quoteHTML(q.quote)}</blockquote>
         ${fmtEp(q) ? `<figcaption class="src">${epHTML(q)}</figcaption>` : ''}
-        ${hint ? `<p class="quote-hint" aria-hidden="true">${hint}</p>` : ''}
+        ${m.hint ? `<p class="quote-hint" aria-hidden="true">${m.hint}</p>` : ''}
       </figure>
     </div>
-    ${counter || verifyMode ? `<div class="stage-foot${verifyMode ? ' vf' : ''}"><span class="quote-counter">${counter}</span>${reviewable ? `<button class="skip" id="avis-skip">Passer<span class="arr" aria-hidden="true">→</span></button>` : ''}</div>` : ''}
+    ${m.counter || verifyMode ? `<div class="stage-foot${verifyMode ? ' vf' : ''}"><span class="quote-counter">${m.counter}</span>${m.reviewable ? `<button class="skip" id="avis-skip">Passer<span class="arr" aria-hidden="true">→</span></button>` : ''}</div>` : ''}
     <div class="done-slot"></div>
-    <div class="acts${textOnly ? ' a2' : ''}">${textOnly ? '' : listen + scene}
-      <button class="cell" id="btn-fav" aria-pressed="${fav}"><span class="sq${fav ? ' on' : ''}" aria-hidden="true"></span>Favori</button>
+    <div class="acts${m.textOnly ? ' a2' : ''}">${m.textOnly ? '' : listen + scene}
+      ${favCellHTML(q, m.fav)}
       <button class="cell" id="btn-share"><span class="t">Partager</span></button>
     </div>
     ${verifyMode && q.audio && q.approx ? `<p class="est-note"><b>*</b> Son approximatif, peut déborder un peu.</p>` : ''}
-    ${reviewable
-      ? `<div class="vrow"><button class="ok" id="avis-ok"><i aria-hidden="true"></i>${what}</button><button class="ko" id="avis-ko">Problème</button></div>`
+    ${m.reviewable
+      ? `<div class="vrow"><button class="ok" id="avis-ok"><i aria-hidden="true"></i>${m.what}</button><button class="ko" id="avis-ko">Problème</button></div>`
       : inOrder
       ? `<div class="nav"><button id="btn-prev" aria-label="Réplique précédente"><span class="arr" aria-hidden="true">←</span>Préc.</button><button class="mid" id="btn-random">Au hasard</button><button class="nx" id="btn-next" aria-label="Réplique suivante">Suiv.<span class="arr" aria-hidden="true">→</span></button></div>`
-      : `<div class="nav"><button id="btn-prev" aria-label="Revenir à la réplique précédente"${atStart ? ' disabled' : ''}><span class="arr" aria-hidden="true">←</span>Retour</button><button class="mid" id="btn-random">Au hasard</button><button class="nx" id="btn-next" aria-label="Autre réplique">Autre<span class="arr" aria-hidden="true">→</span></button></div>`}`;
-
+      : `<div class="nav"><button id="btn-prev" aria-label="Revenir à la réplique précédente"${m.atStart ? ' disabled' : ''}><span class="arr" aria-hidden="true">←</span>Retour</button><button class="mid" id="btn-random">Au hasard</button><button class="nx" id="btn-next" aria-label="Autre réplique">Autre<span class="arr" aria-hidden="true">→</span></button></div>`}`;
+}
+// Boutons de l'écran Répliques ; lance la scène dans la carte et le son en lecture auto (dans le geste)
+function bindCitations(q, m) {
   const $ = id => document.getElementById(id);
   $('btn-settings').addEventListener('click', openSettings);
   $('btn-who').addEventListener('click', e => { e.stopPropagation(); openPersonnage(q.name); });
   $('btn-fav').addEventListener('click', () => favButton($('btn-fav'), q));
   $('btn-share').addEventListener('click', () => shareQuote(q, $('btn-share')));
-  if (reviewable) {
+  if (m.reviewable) {
     $('avis-ok').addEventListener('click', () => recordAvis(q, true, [], ''));
     $('avis-ko').addEventListener('click', () => openProblem(q));
     $('avis-skip')?.addEventListener('click', () => { if (inOrder) stepQuote(1); else randomQuote(); });
@@ -854,61 +848,61 @@ function renderCitations(dir = 0) {
   if (fig) { bindScene(fig, cardVideo); playCardVideo(q, fig); }
   else cardVideo.pause();
   prefetchAround();
-  const btnVideo = $('btn-video');
-  if (btnVideo) {
-    btnVideo.addEventListener('click', () => showVideo(q));
-  }
+  $('btn-video')?.addEventListener('click', () => showVideo(q));
   $('btn-replay')?.addEventListener('click', () => replayVideo(cardVideo));
   const audioBtn = $('btn-audio');
   if (audioBtn) {
     audioBtn.addEventListener('click', () => playAudio(q.audio, audioBtn));
     // Lecture auto : renderCitations est appelé dans le geste (tap/swipe/bouton), donc le navigateur l'autorise
-    if (autoPlay && !inlineVideo) playAudio(q.audio, audioBtn);
+    if (autoPlay && !m.inlineVideo) playAudio(q.audio, audioBtn);
   }
-
-  const card = $('quote-card');
+}
+// La réplique continue plus bas : « Suite ↓ » sur sa propre ligne sous la carte, la carte coupée sur une ligne
+// entière (jamais une ligne tranchée à mi-hauteur), la dernière ligne visible en fondu. Une fois en bas : plus de fondu.
+function snapLines(card) {
+  const qt = card.querySelector('.quote');
+  if (!qt) return;
+  const lh = parseFloat(getComputedStyle(qt).lineHeight);
+  if (!(lh > 0)) return;
+  card.style.flex = ''; card.style.height = '';
+  const top = qt.getBoundingClientRect().top - card.getBoundingClientRect().top + card.scrollTop;
+  const n = Math.floor((card.clientHeight - top) / lh);
+  if (n < 1) return;
+  card.style.setProperty('--lh', (n >= 2 ? lh : 0) + 'px');   // une seule ligne visible : elle reste nette
+  card.style.flex = '0 0 auto';
+  card.style.height = Math.floor(top + n * lh) + 'px';
+}
+function fitOverflow(card) {
+  if (!card.isConnected) return;          // carte déjà remplacée par un rendu plus récent
+  const over = card.scrollHeight > card.clientHeight + 4;
+  let h = card.nextElementSibling?.classList.contains('more-h') ? card.nextElementSibling : null;
+  if (over && !h) { card.insertAdjacentHTML('afterend', '<p class="more-h" aria-hidden="true">Suite ↓</p>'); h = card.nextElementSibling; snapLines(card); }
+  const more = over && card.scrollTop + card.clientHeight < card.scrollHeight - 4;
+  card.classList.toggle('ovf', more);
+  h?.classList.toggle('done', !more);
+}
+// Taille du texte calculée sur la place réelle (puis recalculée une fois les polices chargées)
+function fitCard(card, q, inlineVideo) {
   if (!inlineVideo) {
     fitQuote(card, card.querySelector('.quote'), card.querySelector('.qblock'), q);
     if (firstRender && document.fonts?.ready) document.fonts.ready.then(() => {
       fitMemo.clear();
-      if (card.isConnected) { fitQuote(card, card.querySelector('.quote'), card.querySelector('.qblock'), q); fit(); }
+      if (card.isConnected) { fitQuote(card, card.querySelector('.quote'), card.querySelector('.qblock'), q); fitOverflow(card); }
     });
   }
   firstRender = false;
-  // La réplique continue plus bas : « Suite ↓ » sur sa propre ligne sous la carte, la carte coupée sur une ligne
-  // entière (jamais une ligne tranchée à mi-hauteur), la dernière ligne visible en fondu. Une fois en bas : plus de fondu.
-  const snapLines = () => {
-    const qt = card.querySelector('.quote');
-    if (!qt) return;
-    const lh = parseFloat(getComputedStyle(qt).lineHeight);
-    if (!(lh > 0)) return;
-    card.style.flex = ''; card.style.height = '';
-    const top = qt.getBoundingClientRect().top - card.getBoundingClientRect().top + card.scrollTop;
-    const n = Math.floor((card.clientHeight - top) / lh);
-    if (n < 1) return;
-    card.style.setProperty('--lh', (n >= 2 ? lh : 0) + 'px');   // une seule ligne visible : elle reste nette
-    card.style.flex = '0 0 auto';
-    card.style.height = Math.floor(top + n * lh) + 'px';
-  };
-  const fit = () => {
-    if (!card.isConnected) return;          // carte déjà remplacée par un rendu plus récent
-    const over = card.scrollHeight > card.clientHeight + 4;
-    let h = card.nextElementSibling?.classList.contains('more-h') ? card.nextElementSibling : null;
-    if (over && !h) { card.insertAdjacentHTML('afterend', '<p class="more-h" aria-hidden="true">Suite ↓</p>'); h = card.nextElementSibling; snapLines(); }
-    const more = over && card.scrollTop + card.clientHeight < card.scrollHeight - 4;
-    card.classList.toggle('ovf', more);
-    h?.classList.toggle('done', !more);
-  };
+  requestAnimationFrame(() => fitOverflow(card));
+}
+// Toucher la carte = suivante ; glisser horizontalement = suivante / précédente (le défilement vertical reste libre)
+function bindCardGestures(card) {
   let lastScroll = 0;
-  card.addEventListener('scroll', () => { lastScroll = Date.now(); fit(); }, { passive: true });
-  requestAnimationFrame(fit);
+  card.addEventListener('scroll', () => { lastScroll = Date.now(); fitOverflow(card); }, { passive: true });
   card.addEventListener('click', e => {
     if (e.target.closest('button')) return;
     if (getSelection().toString().length) return;           // on sélectionnait du texte pour le copier
     if (Date.now() - lastScroll < 250) return;              // on faisait défiler une réplique longue
     swipeForward();
   });
-  // Glisser horizontalement : réplique suivante / précédente (le défilement vertical reste libre)
   let sx = 0, sy = 0, st = 0;
   card.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); }, { passive: true });
   card.addEventListener('touchmove', e => {
@@ -920,12 +914,28 @@ function renderCitations(dir = 0) {
     const fast = Date.now() - st < 250 && Math.abs(dx) > 30;
     if ((Math.abs(dx) > 50 || fast) && Math.abs(dx) > dy) { if (dx > 0) swipeForward(); else swipeBack(); }
   }, { passive: true });
-
+}
+function renderCitations(dir = 0) {
+  const main = document.getElementById('main-content');
+  if (!allQuotes.length) return;
+  if (verifyMode && !verifyIdx.length) { renderVerifyDone(); return; }   // tout est vérifié : on s'arrête
+  const fid = main.contains(document.activeElement) ? document.activeElement.id : '';
+  stopAudio();
+  if (!allQuotes[quoteIdx]) quoteIdx = pickRandom();          // index périmé (filtres, données changées)
+  const q = allQuotes[quoteIdx];
+  setMast(verifyMode ? 'Vérification' : 'Répliques');
+  const m = citationsModel(q);
+  main.innerHTML = citationsHTML(q, m, dir);
+  bindCitations(q, m);
+  const card = document.getElementById('quote-card');
+  fitCard(card, q, m.inlineVideo);
+  bindCardGestures(card);
   // VoiceOver : la nouvelle réplique est annoncée (pas au premier affichage), le focus reste sur le bouton touché
-  if (renderCitations.announce) document.getElementById('sr-live').textContent = `${nameCase(q.name)} : ${q.quote.slice(0, 280)}`;
-  renderCitations.announce = true;
+  if (announceNext) document.getElementById('sr-live').textContent = `${nameCase(q.name)} : ${q.quote.slice(0, 280)}`;
+  announceNext = true;
   showDoneLine();
-  if (fid && $(fid) && !$(fid).disabled) $(fid).focus({ preventScroll: true });
+  const f = fid && document.getElementById(fid);
+  if (f && !f.disabled) f.focus({ preventScroll: true });
 }
 
 // ===== AVIS DE VÉRIFICATION =====
@@ -1010,20 +1020,17 @@ function undoAvis() {
   writeJSON('kaam_avis_file', avisFile);
   lastAvis = null; clearTimeout(doneTimer);
   rebuildVerify();
-  quoteIdx = last.idx;
-  renderCitations(-1);
+  showQuote(last.idx, -1);
   document.getElementById('sr-live').textContent = 'Avis annulé.';
 }
 // Écran de fin : plus rien à vérifier dans cette source
 function renderVerifyDone() {
-  stopAudio();
-  cardVideo.pause();
+  stopAudio();                                   // met aussi la scène de la carte en pause
   setMast('Vérification');
   const total = allQuotes.reduce((n, q) => n + ((q.audio || q.video) && inSrc(q, source) ? 1 : 0), 0);
   const vals = Object.values(avisFaits);
-  const sep = '<span class="sep" aria-hidden="true">·</span>';
   document.getElementById('main-content').innerHTML = `
-    <button class="bar verify" id="btn-settings"><span class="bar-sum">Vérification${sep}Terminé</span><span class="bar-btn" aria-hidden="true"><i></i></span></button>
+    <button class="bar verify" id="btn-settings"><span class="bar-sum">Vérification${SEP}Terminé</span><span class="bar-btn" aria-hidden="true"><i></i></span></button>
     <div class="scroll"><div class="fin"><span class="no">${nf(total)} sur ${nf(total)}</span><h1>Tout est vérifié.</h1>
       <p>Vous avez tout vérifié sur ce téléphone.</p>
       <dl><dt>Validés</dt><dd>${nf(vals.filter(v => v !== 2).length)}</dd><dt>Signalés</dt><dd>${nf(vals.filter(v => v === 2).length)}</dd><dt>En attente d’envoi</dt><dd>${nf(avisFile.length)}</dd></dl></div></div>
@@ -1031,7 +1038,7 @@ function renderVerifyDone() {
   document.getElementById('btn-settings').addEventListener('click', openSettings);
   document.getElementById('verify-leave').addEventListener('click', () => {
     verifyMode = false; writePref('kaam_verify', false); nextRand = null;
-    quoteIdx = pickRandom(); renderCitations();
+    showQuote(pickRandom());
   });
 }
 // Envoi par lots ; les avis restent dans l'appareil tant que l'envoi n'a pas réussi.
@@ -1059,45 +1066,49 @@ function sendAvis() {
 }
 function refreshVerifyCounter() {
   const c = document.querySelector('.stage-foot.vf .quote-counter');
-  if (c) { const n = Object.keys(avisFaits).length; c.textContent = `${nf(n)} vérifiée${n > 1 ? 's' : ''}${avisFile.length ? ` · ${nf(avisFile.length)} à envoyer` : ''}`; }
+  if (c) c.textContent = `${plural(Object.keys(avisFaits).length, 'vérifiée')}${avisFile.length ? ` · ${nf(avisFile.length)} à envoyer` : ''}`;
 }
 // envoi après 20 s sans nouvel avis, et dès le retour du réseau
 function scheduleSend() { clearTimeout(idleSend); idleSend = setTimeout(sendAvis, 20000); }
-window.addEventListener('online', sendAvis);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') sendAvis(); });
+
 
 // ===== NAVIGATION ENTRE RÉPLIQUES =====
+// Seul endroit qui change la réplique affichée puis la rend ; dir : 1 suivante, -1 précédente, 0 au hasard
+function showQuote(idx, dir = 0) { quoteIdx = idx; renderCitations(dir); }
+// Ajoute une réplique à l'historique aléatoire (l'historique « en avant » est coupé si l'on était revenu en arrière)
+function pushHistory(idx) {
+  if (randPos < randHistory.length - 1) randHistory = randHistory.slice(0, randPos + 1);
+  randHistory.push(idx);
+  randPos = randHistory.length - 1;
+}
 function stepQuote(dir) {
   const P = pool();
+  let idx;
   if (P) {
     const pos = P.indexOf(quoteIdx);
-    quoteIdx = pos === -1
+    idx = pos === -1
       ? (dir > 0 ? P.find(i => i > quoteIdx) ?? P[0] : [...P].reverse().find(i => i < quoteIdx) ?? P[P.length - 1])
       : P[(pos + dir + P.length) % P.length];
   } else {
-    quoteIdx = (quoteIdx + dir + allQuotes.length) % allQuotes.length;
+    idx = (quoteIdx + dir + allQuotes.length) % allQuotes.length;
   }
-  renderCitations(dir);
+  showQuote(idx, dir);
 }
-function nextQuote() { stepQuote(1); }
-function prevQuote() { stepQuote(-1); }
 function randomQuote() {
-  if (randPos < randHistory.length - 1) randHistory = randHistory.slice(0, randPos + 1);   // on coupe l'historique si on était en arrière
   const P = pool();
-  quoteIdx = nextRand !== null && (!P || P.includes(nextRand)) && nextRand !== quoteIdx ? nextRand : pickRandom();
+  const idx = nextRand !== null && (!P || P.includes(nextRand)) && nextRand !== quoteIdx ? nextRand : pickRandom();
   nextRand = null;
-  randHistory.push(quoteIdx);
-  randPos = randHistory.length - 1;
-  renderCitations(0);
+  pushHistory(idx);
+  showQuote(idx, 0);
 }
 // Toucher / glisser : selon le mode, réplique suivante dans l'ordre ou au hasard (avec historique)
 function swipeForward() { if (inOrder) stepQuote(1); else historyForward(); }
 function swipeBack()    { if (inOrder) stepQuote(-1); else historyBack(); }
 function historyBack() {
-  if (randPos > 0) { randPos--; quoteIdx = randHistory[randPos]; renderCitations(-1); }
+  if (randPos > 0) { randPos--; showQuote(randHistory[randPos], -1); }
 }
 function historyForward() {
-  if (randPos < randHistory.length - 1) { randPos++; quoteIdx = randHistory[randPos]; renderCitations(1); }
+  if (randPos < randHistory.length - 1) { randPos++; showQuote(randHistory[randPos], 1); }
   else randomQuote();
 }
 // Ouvre une réplique précise (recherche, favoris, fiche) dans la page Répliques
@@ -1105,15 +1116,14 @@ function gotoQuote(q) {
   let idx = allQuotes.indexOf(q);
   if (idx < 0) idx = allQuotes.findIndex(x => x.quote === q.quote && x.name === q.name);
   if (idx < 0) return;
-  const ov = document.getElementById('detail-overlay');
-  ficheState = ov._ficheSnap ? ov._ficheSnap() : ov._fromFiche || null;   // on retrouvera la fiche à sa place
+  ficheState = overlaySnapshot();                                       // on retrouvera la fiche à sa place
   closeOverlay();
   quoteIdx = idx;
-  if (randPos < randHistory.length - 1) randHistory = randHistory.slice(0, randPos + 1);
-  randHistory.push(idx); randPos = randHistory.length - 1;
+  pushHistory(idx);
   setView('citations');
 }
 // Partage : feuille système si elle existe, sinon copie ; la confirmation s'écrit dans le bouton (jamais de fenêtre d'alerte)
+const shareTimers = new WeakMap();   // bouton → { libellé d'origine, minuteur } pendant « Copié » / « Envoyé »
 async function shareText(text, btn) {
   let said = '';
   if (navigator.share) {
@@ -1132,10 +1142,12 @@ async function shareText(text, btn) {
   document.getElementById('sr-live').textContent = said === 'Copié' ? 'Copié dans le presse-papiers.' : said === 'Envoyé' ? 'Envoyé.' : 'Copie impossible.';
   if (!btn || !btn.isConnected) return;
   const lab = btn.querySelector('.t') || btn;
-  if (btn._shareTimer) clearTimeout(btn._shareTimer); else btn._shareHTML = lab.innerHTML;
+  const prev = shareTimers.get(btn);
+  if (prev) clearTimeout(prev.timer);
+  const html = prev ? prev.html : lab.innerHTML;
   lab.textContent = said;
   btn.classList.add('said');
-  btn._shareTimer = setTimeout(() => { lab.innerHTML = btn._shareHTML; btn.classList.remove('said'); btn._shareTimer = null; }, 1500);
+  shareTimers.set(btn, { html, timer: setTimeout(() => { lab.innerHTML = html; btn.classList.remove('said'); shareTimers.delete(btn); }, 1500) });
 }
 function shareQuote(q, btn) {
   return shareText(`« ${q.quote} »\n${nameCase(q.name)}${fmtEp(q) ? ', ' + fmtEp(q) : ''}\n\nKaamelott`, btn);
@@ -1149,9 +1161,7 @@ const TOP_CHARS = [
   'LE RÉPURGATEUR', 'CALOGRENANT', 'ATTILA', 'VENEC', 'GALESSIN',
 ];
 function initQuiz() {
-  let best = 0;
-  try { best = +localStorage.getItem('kaam_quiz_best') || 0; } catch {}
-  quizState = { correct: 0, total: 0, streak: 0, best, answered: false };
+  quizState = { correct: 0, total: 0, streak: 0, best: +readStr('kaam_quiz_best', 0) || 0, answered: false };
 }
 // Tirage juste : personnage d'abord (uniforme), puis une de ses répliques. Chaque nom affiché a ainsi 1 chance sur 4
 // d'être le bon (plus de « réflexe Arthur »). Pool : réplique avec scène, 25 signes au moins, sans le nom de celui qui parle.
@@ -1191,7 +1201,96 @@ function dailyQuestion() {
   const wrong = shuffle(TOP_CHARS.filter(c => c !== q.name), rnd).slice(0, 3);
   return { q, choices: shuffle([q.name, ...wrong], rnd) };
 }
-const dateFR = () => new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+// ----- Réponse au quiz : chaque étape séparée (score, lignes, scène, rangée du pouce) -----
+// Score et record ; la question du jour n'est enregistrée qu'une fois (pas en relecture)
+function quizRecord(btn, replay, { q, daily, hist }) {
+  const correct = btn.dataset.choice === q.name;
+  const lost = quizState.streak;
+  let record = false;
+  if (daily) {
+    if (!replay) {
+      writeJSON('kaam_qdj', { d: todayKey(), pick: btn.dataset.choice, ok: correct });
+      hist[todayKey()] = correct; writeJSON('kaam_qdj_hist', hist);
+    }
+  } else {
+    quizState.total++;
+    if (correct) {
+      quizState.correct++; quizState.streak++;
+      if (quizState.streak > quizState.best) {
+        quizState.best = quizState.streak; record = true;
+        writeStr('kaam_quiz_best', quizState.best);
+      }
+    } else quizState.streak = 0;
+  }
+  return { correct, lost, record };
+}
+// les 4 lignes restent en place : rien ne bouge sous le doigt
+function quizMarkChoices(btn, q) {
+  document.querySelectorAll('.choice').forEach(b => {
+    b.setAttribute('aria-disabled', 'true');
+    if (b.dataset.choice === q.name) { b.classList.add('right'); b.querySelector('.v').textContent = 'Juste'; }
+    else if (b === btn) { b.classList.add('wrong'); b.querySelector('.v').textContent = 'Faux'; }
+    else b.classList.add('dim');
+  });
+}
+// cases du score : Jour · Tentative · Jours justes (question du jour) ou Justes · Série · Record
+function quizUpdateScore(daily, hist, record) {
+  const sc = document.querySelector('.score').children;
+  if (daily) {
+    sc[1].querySelector('b').innerHTML = '1<em>/1</em>';
+    sc[2].querySelector('b').textContent = Object.values(hist).filter(Boolean).length;
+  } else {
+    sc[0].querySelector('b').innerHTML = `${quizState.correct}<em>/${quizState.total}</em>`;
+    sc[1].querySelector('b').textContent = quizState.streak;
+    sc[2].querySelector('b').textContent = quizState.best;
+    if (record && quizState.best > 1) { sc[2].classList.add('rec'); sc[2].querySelector('span').textContent = 'Nouveau record'; }
+  }
+}
+// la récompense : la scène, projetée dans le geste (donc avec le son), en tête de la zone ; en relecture, sans le son
+function quizShowScene(q, replay) {
+  const scene = document.getElementById('quiz-scene');
+  scene.innerHTML = sceneHTML(q, 'quiz-fig');
+  const fig = document.getElementById('quiz-fig');
+  bindScene(fig, cardVideo);
+  if (!replay) playCardVideo(q, fig);
+  else { fig.querySelector('.frame').prepend(cardVideo); cardVideo.src = mediaSrc(videoURL(q)); setScene(cardVideo, 'loading'); cardVideo.muted = true; cardVideo.play().catch(() => {}); }
+}
+// rangée du pouce après la réponse : Partager / Quiz libre (question du jour) ou Question suivante
+function quizNavAfter(daily) {
+  const nav = document.getElementById('quiz-nav');
+  if (daily) {
+    const res = readJSON('kaam_qdj', {});
+    nav.className = 'nav two';
+    nav.innerHTML = `<button id="qdj-share"><span class="t">Partager</span></button><button class="mid" id="quiz-free">Quiz libre<span class="arr" aria-hidden="true">→</span></button>`;
+    const d = new Date().toLocaleDateString('fr-FR');
+    document.getElementById('qdj-share').addEventListener('click', e => shareText(`Kaamelott · Qui a dit ça ? · ${d} · ${res.ok ? 'Juste' : 'Faux'}${quizState.best ? ` (record ${quizState.best})` : ''}`, e.currentTarget));
+    document.getElementById('quiz-free').addEventListener('click', () => renderQuiz());
+  } else {
+    nav.className = 'nav one';
+    nav.innerHTML = `<button id="quiz-next">Question suivante<span class="arr" aria-hidden="true">→</span></button>`;
+    const nx = document.getElementById('quiz-next');
+    nx.addEventListener('click', () => renderQuiz());
+    if (usingKeyboard) nx.focus({ preventScroll: true });   // clavier : on enchaîne sur « Question suivante »
+  }
+}
+function quizAnswer(btn, replay, ctx) {
+  if (quizState.answered) return;
+  quizState.answered = true;
+  const { q, daily, stage, fade } = ctx;
+  const { correct, lost, record } = quizRecord(btn, replay, ctx);
+  quizMarkChoices(btn, q);
+  quizUpdateScore(daily, ctx.hist, record);
+  // source : l'épisode seulement (le nom est déjà dans la ligne « Juste »)
+  const after = document.getElementById('quiz-after');
+  after.innerHTML = epHTML(q); after.hidden = !fmtEp(q);
+  if (!replay) document.getElementById('sr-live').textContent = correct
+    ? `Juste, c’est ${nameCase(q.name)}.${record ? ' Nouveau record.' : ''}`
+    : `Faux, c’était ${nameCase(q.name)}.${lost > 1 && !daily ? ` Série de ${lost} perdue.` : ''}`;
+  quizShowScene(q, replay);
+  stage.classList.add('answered');
+  stage.scrollTop = 0; fade();
+  quizNavAfter(daily);
+}
 function renderQuiz(daily = false) {
   if (!quizState) initQuiz();
   stopAudio();
@@ -1241,75 +1340,7 @@ function renderQuiz(daily = false) {
   document.getElementById('quiz-next')?.addEventListener('click', () => renderQuiz());
   document.getElementById('quiz-daily')?.addEventListener('click', () => renderQuiz(true));
   document.getElementById('quiz-free')?.addEventListener('click', () => renderQuiz());
-  const answer = (btn, replay) => {
-    if (quizState.answered) return;
-    quizState.answered = true;
-    const correct = btn.dataset.choice === q.name;
-    const lost = quizState.streak;
-    let record = false;
-    if (daily) {
-      if (!replay) {
-        writeJSON('kaam_qdj', { d: todayKey(), pick: btn.dataset.choice, ok: correct });
-        hist[todayKey()] = correct; writeJSON('kaam_qdj_hist', hist);
-      }
-    } else {
-      quizState.total++;
-      if (correct) {
-        quizState.correct++; quizState.streak++;
-        if (quizState.streak > quizState.best) {
-          quizState.best = quizState.streak; record = true;
-          try { localStorage.setItem('kaam_quiz_best', String(quizState.best)); } catch {}
-        }
-      } else quizState.streak = 0;
-    }
-    // les 4 lignes restent en place : rien ne bouge sous le doigt
-    document.querySelectorAll('.choice').forEach(b => {
-      b.setAttribute('aria-disabled', 'true');
-      if (b.dataset.choice === q.name) { b.classList.add('right'); b.querySelector('.v').textContent = 'Juste'; }
-      else if (b === btn) { b.classList.add('wrong'); b.querySelector('.v').textContent = 'Faux'; }
-      else b.classList.add('dim');
-    });
-    const sc = document.querySelector('.score').children;
-    if (daily) {
-      sc[1].querySelector('b').innerHTML = '1<em>/1</em>';
-      sc[2].querySelector('b').textContent = Object.values(hist).filter(Boolean).length;
-    } else {
-      sc[0].querySelector('b').innerHTML = `${quizState.correct}<em>/${quizState.total}</em>`;
-      sc[1].querySelector('b').textContent = quizState.streak;
-      sc[2].querySelector('b').textContent = quizState.best;
-      if (record && quizState.best > 1) { sc[2].classList.add('rec'); sc[2].querySelector('span').textContent = 'Nouveau record'; }
-    }
-    // source : l'épisode seulement (le nom est déjà dans la ligne « Juste »)
-    const after = document.getElementById('quiz-after');
-    after.innerHTML = epHTML(q); after.hidden = !fmtEp(q);
-    if (!replay) document.getElementById('sr-live').textContent = correct
-      ? `Juste, c’est ${nameCase(q.name)}.${record ? ' Nouveau record.' : ''}`
-      : `Faux, c’était ${nameCase(q.name)}.${lost > 1 && !daily ? ` Série de ${lost} perdue.` : ''}`;
-    // la récompense : la scène, projetée dans le geste (donc avec le son), en tête de la zone
-    const scene = document.getElementById('quiz-scene');
-    scene.innerHTML = sceneHTML(q, 'quiz-fig');
-    const fig = document.getElementById('quiz-fig');
-    bindScene(fig, cardVideo);
-    if (!replay) playCardVideo(q, fig);
-    else { fig.querySelector('.frame').prepend(cardVideo); cardVideo.src = mediaSrc(videoURL(q)); setScene(cardVideo, 'loading'); cardVideo.muted = true; cardVideo.play().catch(() => {}); }
-    stage.classList.add('answered');
-    stage.scrollTop = 0; fade();
-    const nav = document.getElementById('quiz-nav');
-    if (daily) {
-      const res = readJSON('kaam_qdj', {});
-      nav.className = 'nav two';
-      nav.innerHTML = `<button id="qdj-share"><span class="t">Partager</span></button><button class="mid" id="quiz-free">Quiz libre<span class="arr" aria-hidden="true">→</span></button>`;
-      const d = new Date().toLocaleDateString('fr-FR');
-      document.getElementById('qdj-share').addEventListener('click', e => shareText(`Kaamelott · Qui a dit ça ? · ${d} · ${res.ok ? 'Juste' : 'Faux'}${quizState.best ? ` (record ${quizState.best})` : ''}`, e.currentTarget));
-      document.getElementById('quiz-free').addEventListener('click', () => renderQuiz());
-    } else {
-      nav.className = 'nav one';
-      nav.innerHTML = `<button id="quiz-next">Question suivante<span class="arr" aria-hidden="true">→</span></button>`;
-      const nx = document.getElementById('quiz-next');
-      nx.addEventListener('click', () => renderQuiz());
-      if (usingKeyboard) nx.focus({ preventScroll: true });   // clavier : on enchaîne sur « Question suivante »
-    }
-  };
+  const answer = (btn, replay) => quizAnswer(btn, replay, { q, daily, hist, stage, fade });
   document.querySelectorAll('.choice').forEach(btn => btn.addEventListener('click', () => answer(btn, false)));
   // question du jour déjà jouée : on montre la réponse donnée, sans nouvelle tentative
   if (daily && done) {
@@ -1345,6 +1376,7 @@ function entHTML(q, k, opts = {}) {
     ${entActs(q, opts)}
   </div>`;
 }
+const undoByEntry = new WeakMap();   // entrée de favori retirée → de quoi la remettre à sa place
 // Délégation des actions d'une liste d'entrées ; list(k) rend la réplique de l'entrée k
 function bindEntries(container, list, opts = {}) {
   container.addEventListener('click', e => {
@@ -1369,19 +1401,19 @@ function bindEntries(container, list, opts = {}) {
       const rowHTML = row.outerHTML;
       ent.classList.add('off');
       row.outerHTML = `<div class="ent-a undo"><span class="lab">Retirée des favoris</span><button class="cell" data-act="undo">Remettre</button></div>`;
-      ent._undo = { at, saved, rowHTML };
+      undoByEntry.set(ent, { at, saved, rowHTML });
       opts.onCount?.();
       ent.querySelector('[data-act="undo"]').focus({ preventScroll: true });
     }
-    else if (act === 'undo' && ent._undo) {
-      const { at, saved, rowHTML } = ent._undo;
+    else if (act === 'undo' && undoByEntry.has(ent)) {
+      const { at, saved, rowHTML } = undoByEntry.get(ent);
       if (!isFav(saved)) {
         favorites.splice(Math.min(at, favorites.length), 0, saved);
         if (!saveFavorites()) { favorites = favorites.filter(f => f !== saved); a.textContent = 'Non enregistré'; return; }
       }
       ent.classList.remove('off');
       ent.querySelector('.ent-a').outerHTML = rowHTML;
-      ent._undo = null;
+      undoByEntry.delete(ent);
       opts.onCount?.();
     }
     else if (act === 'fav') favButton(a, q);
@@ -1393,14 +1425,9 @@ let persSort = 'count';
 let persTop = 0, persAll = false, persFilter = '';
 let ficheState = null;          // fiche quittée pour ouvrir une réplique : { name, start, shown, top }
 const isDuo = n => / ET /.test(n);
-function charRank(name) {       // cote « N° 001 » : rang dans le tri par répliques
-  const solo = getCharList().filter(([n]) => !isDuo(n));
-  const k = solo.findIndex(([n]) => n === name);
-  return k < 0 ? '' : String(k + 1).padStart(3, '0');
-}
 function renderPersonnages() {
   stopAudio();
-  setMast('');                                   // le grand titre de la page suffit
+  setMast(mastFor('personnages'));
   const main = document.getElementById('main-content');
   const chars = getCharList();
   const max = chars[0] ? chars[0][1] : 1;
@@ -1456,16 +1483,18 @@ function renderPersonnages() {
   sc.addEventListener('scroll', () => { persTop = sc.scrollTop; }, { passive: true });
 }
 
-// Page superposée (fiche personnage, scène) : l'en-tête reste visible, le reste de l'app est inerte dessous
+// Page superposée (fiche personnage, scène) : l'en-tête reste visible, le reste de l'app est inerte dessous.
+// overlayCtx dit ce qui est ouvert : { kind: 'fiche', snap() → position de la fiche } ou { kind: 'scene', from: fiche d'origine }
+let overlayCtx = null;
+function overlaySnapshot() { return !overlayCtx ? null : overlayCtx.kind === 'fiche' ? overlayCtx.snap() : overlayCtx.from || null; }
 let overlayFocus = null;
 let usingKeyboard = false;   // dernière interaction au clavier (sinon toucher / souris)
-document.addEventListener('keydown', e => { if (e.key === 'Tab' || e.key.startsWith('Arrow') || e.key === 'Enter') usingKeyboard = true; }, true);
-['pointerdown', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { usingKeyboard = false; }, { capture: true, passive: true }));
+
 function openOverlay(html) {
   const overlay = document.getElementById('detail-overlay');
   if (overlay.classList.contains('hidden')) overlayFocus = document.activeElement;
   overlay.querySelectorAll('video').forEach(v => v.pause());
-  overlay._ficheSnap = null; overlay._fromFiche = null;
+  overlayCtx = null;
   overlay.innerHTML = html;
   overlay.classList.remove('hidden');
   // le retour est aussi en bas (pouce) : même action que « Retour » en haut
@@ -1496,9 +1525,9 @@ function closeOverlay() {
   const was = !overlay.classList.contains('hidden');
   overlay.classList.add('hidden');
   overlay.innerHTML = '';
-  overlay._ficheSnap = null; overlay._fromFiche = null;
+  overlayCtx = null;
   document.getElementById('main-content').inert = false;
-  if (was) setMast({ citations: verifyMode ? 'Vérification' : 'Répliques', quiz: 'Quiz', personnages: '', recherche: 'Chercher', favoris: '' }[currentView]);
+  if (was) setMast(mastFor(currentView));
   if (was && overlayFocus?.isConnected) overlayFocus.focus({ preventScroll: true });
   overlayFocus = null;
 }
@@ -1512,7 +1541,6 @@ const livreDe = q => q.film ? 'Film' : q.inedit ? 'Inédits' : q.livre || '';
 const LIVRES = ['I', 'II', 'III', 'IV', 'V', 'VI', 'Film', 'Inédits'];
 function openPersonnage(name, restore) {
   stopAudio();
-  detailChar = name;
   setMast('Personnages');
   const quotes = allQuotes.filter(q => q.name === name);
   const epKey = q => q.film ? 'film' : q.inedit ? 'x' + q.inedit : `${q.livre}|${q.episode}`;
@@ -1585,7 +1613,7 @@ function openPersonnage(name, restore) {
   }));
   bindEntries(listEl, k => quotes[k]);
   overlay.querySelector('#f-rand').addEventListener('click', () => gotoQuote(rand(quotes)));   // la fiche est retrouvée au retour
-  overlay._ficheSnap = () => ({ name, start, shown, top: sc.scrollTop });
+  overlayCtx = { kind: 'fiche', snap: () => ({ name, start, shown, top: sc.scrollTop }) };
   overlay.querySelector('#detail-back').addEventListener('click', () => { stopAudio(); ficheState = null; closeOverlay(); });
 }
 
@@ -1623,7 +1651,7 @@ function searchHits(query) {
     if (h.includes(phrase)) text.push(allQuotes[i]);
     else if (toks.length > 1 && toks.every(t => h.includes(' ' + t))) loose.push(allQuotes[i]);
   }
-  const who = getCharList().filter(([n]) => !/ ET /.test(n) && foldIx(n).startsWith(phrase)).slice(0, 3);
+  const who = getCharList().filter(([n]) => !isDuo(n) && foldIx(n).startsWith(phrase)).slice(0, 3);
   return { text: text.concat(loose), who };
 }
 // Ce qu'on cherchait reste là quand on revient sur l'onglet (texte, nombre d'entrées affichées, défilement)
@@ -1631,7 +1659,7 @@ const searchState = { q: '', top: 0, shown: 40 };
 let searchTimeout = null;
 function renderRecherche() {
   stopAudio();
-  setMast('Chercher');
+  setMast(mastFor('recherche'));
   const main = document.getElementById('main-content');
   main.innerHTML = `
     <div class="search">
@@ -1713,7 +1741,7 @@ function liveQuote(f) {
 }
 function renderFavoris() {
   stopAudio();
-  setMast('');                                   // le grand titre de la page suffit
+  setMast(mastFor('favoris'));
   const main = document.getElementById('main-content');
   if (!favorites.length) {
     main.innerHTML = `<div class="scroll"><div class="page-h"><h1>Favoris</h1><p>Aucune réplique enregistrée</p></div>
@@ -1738,8 +1766,7 @@ function replayVideo(v) {
 // ===== SCÈNE EN GRAND (« Scène ») =====
 function showVideo(q) {
   stopAudio();
-  const ov0 = document.getElementById('detail-overlay');
-  const fromFiche = ov0._ficheSnap ? ov0._ficheSnap() : null;   // scène ouverte depuis une fiche : « Retour » y ramène
+  const fromFiche = overlayCtx?.kind === 'fiche' ? overlayCtx.snap() : null;   // scène ouverte depuis une fiche : « Retour » y ramène
   setMast('Scène');
   const overlay = openOverlay(`
     <div class="back"><button id="detail-back"><span class="arr" aria-hidden="true">←</span>Retour</button></div>
@@ -1774,7 +1801,7 @@ function showVideo(q) {
   document.getElementById('m-share').addEventListener('click', e => shareQuote(q, e.currentTarget));
   document.getElementById('m-goto').addEventListener('click', () => gotoQuote(q));
   document.getElementById('m-who').addEventListener('click', () => openPersonnage(q.name));
-  overlay._fromFiche = fromFiche;
+  overlayCtx = { kind: 'scene', from: fromFiche };
   document.getElementById('detail-back').addEventListener('click', () => {
     if (fromFiche) { v.pause(); openPersonnage(fromFiche.name, fromFiche); } else closeOverlay();
   });
@@ -1851,14 +1878,13 @@ function registerSW() {
 // L'app installée sur l'écran d'accueil ne « navigue » pas quand iOS la rouvre : on cherche une nouvelle version
 // au retour au premier plan, au plus une fois par heure
 let lastUpdateCheck = Date.now();
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
+function onVisible() {
   if (Date.now() - lastUpdateCheck > 3600e3) {
     lastUpdateCheck = Date.now();
     navigator.serviceWorker?.getRegistration().then(r => r && r.update()).catch(() => {});
   }
   reloadIfIdle();
-});
+}
 
 // ===== DÉMARRAGE =====
 let retryTimer = null, autoRetried = false, booting = false, waitingOnline = false;
@@ -1900,8 +1926,7 @@ async function boot() {
   }
   booting = false;
   quoteIdx = pickRandom();
-  randHistory = [quoteIdx];
-  randPos = 0;
+  randHistory = []; randPos = -1; pushHistory(quoteIdx);
   setTabsEnabled(true);
   // après un rechargement de mise à jour, on rouvre la vue que l'utilisateur avait demandée
   let after = null;
@@ -1945,8 +1970,25 @@ window.__kaam = {
   rebuildVerify: () => rebuildVerify(),
   sendAvis: () => sendAvis(),
 };
-document.addEventListener('touchstart', () => {}, { passive: true });   // iOS n'applique :active qu'avec un écouteur tactile
+// ===== ÉCOUTEURS GLOBAUX (tous ici ; l'ordre des écouteurs en capture compte pour le déblocage du son iOS) =====
+function bindGlobalEvents() {
+  // iOS n'autorise le son qu'après un toucher : le premier toucher, clic ou touche, où que ce soit, le débloque
+  ['touchend', 'click', 'keydown'].forEach(ev => document.addEventListener(ev, unlockSound, { capture: true }));
+  // dernière interaction : clavier (focus visible sur « Retour », « Question suivante ») ou toucher
+  document.addEventListener('keydown', e => { if (e.key === 'Tab' || e.key.startsWith('Arrow') || e.key === 'Enter') usingKeyboard = true; }, true);
+  ['pointerdown', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { usingKeyboard = false; }, { capture: true, passive: true }));
+  document.addEventListener('touchstart', () => {}, { passive: true });   // iOS n'applique :active qu'avec un écouteur tactile
+  document.addEventListener('keydown', onArrowKeys);                         // flèches : réplique suivante / précédente
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheetOpen()) closeSheet(); });
+  // réseau : « Hors ligne » dans l'en-tête ; au retour du réseau, envoi des avis en attente
+  ['online', 'offline'].forEach(ev => window.addEventListener(ev, refreshMast));
+  window.addEventListener('online', sendAvis);
+  // arrière-plan : envoi des avis ; premier plan : nouvelle version éventuelle
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') sendAvis(); else onVisible(); });
+  if (window.visualViewport) ['resize', 'scroll'].forEach(ev => visualViewport.addEventListener(ev, fitSheetToKeyboard));
+}
 document.addEventListener('DOMContentLoaded', () => {
+  bindGlobalEvents();
   loadFavorites();
   registerSW();
   bindNav();
