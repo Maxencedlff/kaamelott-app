@@ -224,15 +224,16 @@ function parseQuote(item, i) {
 
 async function loadData() {
   // jusqu'à 3 essais : le premier peut tomber sur la page de contrôle anti-robot de Vercel (403), qui se lève seule
-  let raw = null;
+  let raw = null, detail = '';
   for (let essai = 0; essai < 3 && !raw; essai++) {
     if (essai) await new Promise(r => setTimeout(r, 2500));
     try {
       const res = await fetch('data.json', { cache: essai ? 'reload' : 'default' });
+      detail = `HTTP ${res.status} ${res.headers.get('content-type') || ''} ${res.headers.get('x-vercel-mitigated') || ''}`;
       if (res.ok) raw = await res.json();
-    } catch {}
+    } catch (e) { detail += ` · ${e.name}: ${e.message}`; }
   }
-  if (!raw) throw new Error('data.json indisponible');
+  if (!raw) throw new Error(`data.json : ${detail}`);
   allQuotes  = raw.map(parseQuote).filter(q => q.quote && q.name && !q.hide);   // hide : doublon masqué (index i conservé)
   audioIdx   = allQuotes.reduce((acc, q, i) => (q.audio && acc.push(i), acc), []);
   videoIdx   = allQuotes.reduce((acc, q, i) => (q.video && acc.push(i), acc), []);
@@ -1069,6 +1070,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('main-content').innerHTML = `
       <div style="padding:40px 20px;text-align:center;color:var(--text3);">
         <p>Impossible de charger les répliques pour le moment.</p>
+        <p style="margin-top:10px;font-size:11px;color:var(--text4);word-break:break-word;">${esc(String(e && e.message || e))}</p>
         <button onclick="location.reload()" style="margin-top:16px;background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:10px 20px;border-radius:999px;font:500 14px var(--font-sans);cursor:pointer;">Réessayer</button>
       </div>`;
   }

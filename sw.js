@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v17';
+const CACHE = 'kaamelott-v18';
 const ASSETS = [
   '/',
   '/index.html',
