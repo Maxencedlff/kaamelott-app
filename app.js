@@ -198,7 +198,9 @@ function rebuildVerify() {
   const approx = todo.filter(i => allQuotes[i].approx);
   verifyApprox = approx.length > 0;
   verifyIdx = verifyApprox ? approx : todo;
+  verifyTodo = { approx: approx.length, others: todo.length - approx.length };
 }
+let verifyTodo = { approx: 0, others: 0 };
 let autoPlay  = readPref('kaam_autoplay');     // jouer le son dès qu'on tombe sur la réplique
 let inOrder   = readPref('kaam_in_order');     // swipe/tap : réplique suivante dans l'ordre au lieu d'aléatoire
 const player = new Audio();
@@ -305,6 +307,16 @@ function parseQuote(item, i) {
   return { i, quote: item.quote, name, livre, episode, title, film, inedit, hide: !!item.hide, audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx };
 }
 
+const DATA_BYTES = 7000000;   // taille approximative de data.json (le serveur l'envoie compressé, sans longueur)
+function bootProgress(got, total) {
+  const rail = document.querySelector('.boot .rail');
+  if (!rail) return;
+  const pc = Math.min(99, Math.round(got / total * 100));
+  rail.classList.remove('indet');
+  rail.style.setProperty('--p', pc + '%');
+  const m = document.querySelector('.boot .m');
+  if (m) m.innerHTML = `<span>${(got / 1e6).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Mo sur ${(Math.max(got, total) / 1e6).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Mo</span><span>${pc} %</span>`;
+}
 async function loadData() {
   // jusqu'à 3 essais : le premier peut tomber sur la page de contrôle anti-robot de Vercel (403), qui se lève seule
   let raw = null, detail = '';
@@ -313,7 +325,23 @@ async function loadData() {
     try {
       const res = await fetch('data.json', { cache: essai ? 'reload' : 'default' });
       detail = `HTTP ${res.status} ${res.headers.get('content-type') || ''} ${res.headers.get('x-vercel-mitigated') || ''}`;
-      if (res.ok) {
+      if (res.ok && res.body && res.body.getReader) {
+        // progression réelle (octets reçus) ; data.json est souvent compressé : on rapporte à sa taille connue
+        const total = +(res.headers.get('content-encoding') ? 0 : res.headers.get('content-length')) || DATA_BYTES;
+        const copy = window.caches && !navigator.serviceWorker?.controller ? res.clone() : null;
+        const reader = res.body.getReader(), parts = [];
+        let got = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          parts.push(value); got += value.length;
+          bootProgress(got, total);
+        }
+        if (copy) caches.open('kaamelott-data').then(c => c.put('/data.json', copy)).catch(() => {});
+        const buf = new Uint8Array(got); let at = 0;
+        for (const p of parts) { buf.set(p, at); at += p.length; }
+        raw = JSON.parse(new TextDecoder().decode(buf));
+      } else if (res.ok) {
         // premier lancement (aucun service worker aux commandes) : la page range elle-même les répliques dans le cache
         // que le service worker servira ensuite, pour ne jamais les télécharger deux fois
         if (window.caches && !navigator.serviceWorker?.controller) {
@@ -418,6 +446,7 @@ function nameCase(n) {
   return n.toLowerCase().split(/(\s+|-)/).map((w, k) => {
     if (!w.trim() || w === '-') return w;
     if (k > 0 && PETITS.has(w)) return w;
+    if (k > 0 && /^(i{1,3}|iv|vi{0,3}|ix|x)$/.test(w)) return w.toUpperCase();   // « Perceval II »
     const m = /^(l'|l’|d'|d’)(.+)$/.exec(w);
     if (m) return (k ? m[1] : m[1].charAt(0).toUpperCase() + m[1].slice(1)) + m[2].charAt(0).toUpperCase() + m[2].slice(1);
     return w.charAt(0).toUpperCase() + w.slice(1);
@@ -458,22 +487,71 @@ function getCharList() {                       // calculée une fois par chargem
   charCache = { src: allQuotes, list: Object.entries(map).sort((a, b) => b[1] - a[1]) };
   return charCache.list;
 }
-function setMast(t) { const el = document.getElementById('mast-sub'); if (el) el.textContent = t; }
+// Sous-titre de l'en-tête ; hors ligne, il le dit (sans bandeau ni fenêtre)
+function setMast(t) {
+  const el = document.getElementById('mast-sub');
+  if (!el) return;
+  el.dataset.t = t;
+  el.innerHTML = esc(t) + (navigator.onLine === false ? ' <span class="off">· Hors ligne</span>' : '');
+}
+['online', 'offline'].forEach(ev => window.addEventListener(ev, () => { const el = document.getElementById('mast-sub'); if (el) setMast(el.dataset.t || el.textContent); }));
+// Clavier (iPad, ordinateur) : flèches gauche / droite pour changer de réplique
+document.addEventListener('keydown', e => {
+  if (currentView !== 'citations' || sheetOpen() || !document.getElementById('detail-overlay').classList.contains('hidden')) return;
+  if (e.target.matches?.('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); swipeForward(); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); swipeBack(); }
+});
 
-// ===== FEUILLE (réglages, signalement) =====
+// ===== FEUILLE (réglages, signalement) : vraie fenêtre modale =====
+let sheetFocus = null;
 function openSheet(html) {
   const sheet = document.getElementById('sheet'), back = document.getElementById('sheet-back');
+  if (sheet.hidden) sheetFocus = document.activeElement;
   sheet.innerHTML = html;
   sheet.hidden = false; back.hidden = false;
   back.onclick = closeSheet;
+  sheet.setAttribute('aria-labelledby', 'sh-title');
+  document.getElementById('app').inert = true;
+  const h = sheet.querySelector('h2');
+  if (h) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
+  bindSheetGestures(sheet);
   return sheet;
 }
 function closeSheet() {
-  document.getElementById('sheet').hidden = true;
+  const sheet = document.getElementById('sheet');
+  if (sheet.hidden) return;
+  sheet.hidden = true;
   document.getElementById('sheet-back').hidden = true;
-  document.getElementById('sheet').innerHTML = '';
+  sheet.innerHTML = '';
+  sheet.style.bottom = ''; sheet.style.maxHeight = '';
+  document.getElementById('app').inert = false;
+  if (sheetFocus?.isConnected) sheetFocus.focus({ preventScroll: true });
+  sheetFocus = null;
 }
 function sheetOpen() { return !document.getElementById('sheet').hidden; }
+// glisser l'en-tête de la feuille vers le bas (plus de 80 px) la ferme
+function bindSheetGestures(sheet) {
+  const head = sheet.querySelector('.sh-head');
+  if (!head) return;
+  let y0 = null;
+  head.addEventListener('touchstart', e => { y0 = e.touches[0].clientY; }, { passive: true });
+  head.addEventListener('touchend', e => { if (y0 !== null && e.changedTouches[0].clientY - y0 > 80) closeSheet(); y0 = null; }, { passive: true });
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheetOpen()) closeSheet(); });
+// Clavier iOS : la feuille (position fixe en bas) remonte au-dessus du clavier tant qu'il est ouvert
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const fitSheet = () => {
+    const sheet = document.getElementById('sheet');
+    if (sheet.hidden) return;
+    const kb = Math.max(0, innerHeight - vv.height - vv.offsetTop);
+    sheet.style.bottom = kb > 40 ? kb + 'px' : '';
+    sheet.style.maxHeight = kb > 40 ? (vv.height - 12) + 'px' : '';
+  };
+  vv.addEventListener('resize', fitSheet);
+  vv.addEventListener('scroll', fitSheet);
+}
 
 // ===== RÉGLAGES =====
 const SRC_LABEL = { all: 'Tout', serie: 'Série', film: 'Film' };
@@ -483,51 +561,50 @@ function countFor(s, m) {
   if (m === 'audio') return audioIdx.reduce((n, i) => n + inSrc(allQuotes[i], s), 0);
   return s === 'all' ? allQuotes.length : allQuotes.reduce((n, q) => n + inSrc(q, s), 0);
 }
-function toVerifyCount() {
-  return allQuotes.reduce((n, q) => n + ((q.audio || q.video) && !avisFaits[q.i] && inSrc(q, source) ? 1 : 0), 0);
-}
 function mediaMode() { return videoOnly ? 'video' : audioOnly ? 'audio' : 'text'; }
 function settingsHTML() {
   const m = mediaMode();
-  const opt = (on, attrs, label, small, red) =>
-    `<button class="opt${on ? ' on' : ''}${red && on ? ' red' : ''}" ${attrs}>${label}<small>${small}</small></button>`;
+  const opt = (on, attrs, label, small) =>
+    `<button class="opt${on ? ' on' : ''}" role="radio" aria-checked="${on}" ${attrs}>${label}<small>${small}</small></button>`;
+  const row = (no, lab, id, body, off) =>
+    `<div class="set${off ? ' off' : ''}"><div class="set-lab" id="${id}"><span class="no">${no}</span>${lab}</div><div class="opts" role="radiogroup" aria-labelledby="${id}"${off ? ' aria-disabled="true"' : ''}>${body}</div></div>`;
+  const { approx, others } = verifyTodo;
+  const todoTxt = approx + others === 0
+    ? 'Tout est vérifié sur cet appareil pour cette source.'
+    : approx
+    ? `<b>${nf(approx)}</b> son${approx > 1 ? 's' : ''} estimé${approx > 1 ? 's' : ''} passe${approx > 1 ? 'nt' : ''} d’abord, puis <b>${nf(others)}</b> autre${others > 1 ? 's' : ''}.`
+    : `<b>${nf(others)}</b> réplique${others > 1 ? 's' : ''} à vérifier.`;
   return `
     <div class="sh-head">
-      <div><h2>Réglages</h2></div>
-      <button class="sh-close" id="sheet-close"><span class="arr">↓</span>Fermer</button>
+      <div><h2 id="sh-title">Réglages</h2></div>
+      <button class="sh-close" id="sheet-close">Fermer</button>
     </div>
-    <div class="set"><div class="set-lab">Source</div><div class="opts">
-      ${['all', 'serie', 'film'].map(s => opt(source === s, `data-src="${s}"`, SRC_LABEL[s], nf(countFor(s, m)))).join('')}
-    </div></div>
-    <div class="set"><div class="set-lab">Affichage</div><div class="opts">
-      ${opt(m === 'text', 'id="chip-text"', 'Texte', nf(countFor(source, 'text')))}
-      ${opt(m === 'audio', 'id="chip-audio-only"', 'Son', nf(countFor(source, 'audio')))}
-      ${videoIdx.length ? opt(m === 'video', 'id="chip-video-only"', 'Vidéo', nf(countFor(source, 'video'))) : ''}
-    </div></div>
-    <div class="set"><div class="set-lab">Ordre</div><div class="opts">
-      ${opt(!inOrder, 'data-order="random"', 'Aléatoire', 'au hasard')}
-      ${opt(inOrder, 'data-order="seq"', 'Dans l’ordre', 'épisode par épisode')}
-    </div></div>
-    <div class="set"><div class="set-lab">Lecture auto</div><div class="opts">
-      ${opt(!autoPlay, 'data-auto="0"', 'Non', 'son à la demande')}
-      ${opt(autoPlay, 'data-auto="1"', 'Oui', 'son joué d’office')}
-    </div></div>
-    <div class="set"><div class="set-lab">Vérifier</div><div class="opts">
-      ${opt(!verifyMode, 'data-verify="0"', 'Non', 'lecture normale')}
-      ${opt(verifyMode, 'data-verify="1" id="chip-verify"', 'Oui', `${nf(toVerifyCount())} à contrôler`, true)}
-    </div></div>
-    <p class="set-note">Chaque nombre indique combien de répliques ce choix vous présentera, avec les autres réglages actuels. Vérifier : vous validez ou signalez chaque son et chaque scène, les sons estimés d’abord.</p>`;
+    ${row('01', 'Source', 'set-src', ['all', 'serie', 'film'].map(s => opt(source === s, `data-src="${s}"`, SRC_LABEL[s], nf(countFor(s, m)))).join(''))}
+    ${row('02', 'Affichage', 'set-aff', opt(m === 'text', 'id="chip-text"', 'Texte', nf(countFor(source, 'text')))
+      + opt(m === 'audio', 'id="chip-audio-only"', 'Son', nf(countFor(source, 'audio')))
+      + (videoIdx.length ? opt(m === 'video', 'id="chip-video-only"', 'Vidéo', nf(countFor(source, 'video'))) : ''), verifyMode)}
+    ${row('03', 'Ordre', 'set-ord', opt(!inOrder, 'data-order="random"', 'Aléatoire', 'au hasard') + opt(inOrder, 'data-order="seq"', 'Dans l’ordre', 'par épisode'), verifyMode)}
+    ${row('04', 'Lecture auto', 'set-auto', opt(!autoPlay, 'data-auto="0"', 'Non', 'à la demande') + opt(autoPlay, 'data-auto="1"', 'Oui', 'son d’office'), verifyMode)}
+    <p class="set-note">${verifyMode ? 'Affichage, ordre et lecture auto sont suspendus pendant la vérification.' : 'Chaque nombre indique combien de répliques ce choix vous présentera.'}</p>
+    <div class="contrib"><div class="contrib-row"><div class="set-lab"><span class="no">05</span>Vérifier</div><div class="contrib-body">
+      <p>Écouter chaque son, regarder chaque scène, signaler ce qui cloche. ${todoTxt}</p>
+      <button class="contrib-go${verifyMode ? ' on' : ''}" id="chip-verify">${verifyMode ? 'Quitter la vérification' : 'Commencer la vérification'}<span class="arr" aria-hidden="true">→</span></button>
+    </div></div></div>`;
 }
 function openSettings() {
   const sheet = openSheet(settingsHTML());
   bindSettings(sheet);
 }
-function refreshAfterSetting() {
+function refreshAfterSetting(focusSel) {
   const P = pool();
   if (P && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
   const sheet = document.getElementById('sheet');
+  const y = sheet.scrollTop;
   sheet.innerHTML = settingsHTML();
+  sheet.scrollTop = y;
   bindSettings(sheet);
+  const f = focusSel && sheet.querySelector(focusSel);
+  (f || sheet.querySelector('h2'))?.focus({ preventScroll: true });
 }
 function bindSettings(sheet) {
   sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
@@ -535,31 +612,30 @@ function bindSettings(sheet) {
     source = b.dataset.src;
     try { localStorage.setItem('kaam_source', source); } catch {}
     rebuildVerify(); nextRand = null;
-    refreshAfterSetting();
+    refreshAfterSetting(`[data-src="${source}"]`);
   }));
   const setMedia = m => {
     audioOnly = m === 'audio'; videoOnly = m === 'video';
     writePref('kaam_audio_only', audioOnly); writePref('kaam_video_only', videoOnly);
     nextRand = null;
-    refreshAfterSetting();
+    refreshAfterSetting({ text: '#chip-text', audio: '#chip-audio-only', video: '#chip-video-only' }[m]);
   };
   sheet.querySelector('#chip-text').addEventListener('click', () => setMedia('text'));
   sheet.querySelector('#chip-audio-only').addEventListener('click', () => setMedia('audio'));
-  const v = sheet.querySelector('#chip-video-only');
-  if (v) v.addEventListener('click', () => setMedia('video'));
+  sheet.querySelector('#chip-video-only')?.addEventListener('click', () => setMedia('video'));
   sheet.querySelectorAll('[data-order]').forEach(b => b.addEventListener('click', () => {
     inOrder = b.dataset.order === 'seq'; writePref('kaam_in_order', inOrder); nextRand = null;
-    refreshAfterSetting();
+    refreshAfterSetting(`[data-order="${b.dataset.order}"]`);
   }));
   sheet.querySelectorAll('[data-auto]').forEach(b => b.addEventListener('click', () => {
     autoPlay = b.dataset.auto === '1'; writePref('kaam_autoplay', autoPlay);
-    refreshAfterSetting();
+    refreshAfterSetting(`[data-auto="${b.dataset.auto}"]`);
   }));
-  sheet.querySelectorAll('[data-verify]').forEach(b => b.addEventListener('click', () => {
-    verifyMode = b.dataset.verify === '1'; writePref('kaam_verify', verifyMode);
+  sheet.querySelector('#chip-verify').addEventListener('click', () => {
+    verifyMode = !verifyMode; writePref('kaam_verify', verifyMode);
     rebuildVerify(); nextRand = null;
-    refreshAfterSetting();
-  }));
+    refreshAfterSetting('#chip-verify');
+  });
 }
 
 // ===== RÉPLIQUES =====
@@ -740,6 +816,7 @@ function renderCitations(dir = 0) {
   // VoiceOver : la nouvelle réplique est annoncée (pas au premier affichage), le focus reste sur le bouton touché
   if (renderCitations.announce) document.getElementById('sr-live').textContent = `${nameCase(q.name)} : ${q.quote.slice(0, 280)}`;
   renderCitations.announce = true;
+  showDoneLine();
   if (fid && $(fid) && !$(fid).disabled) $(fid).focus({ preventScroll: true });
 }
 
@@ -787,10 +864,46 @@ function recordAvis(q, ok, problemes, note) {
   avisFile.push({ i: q.i, quote: q.quote, name: q.name, audio: q.audio, video: q.video, approx: q.approx, ok, problemes, note, ts: Date.now() });
   writeJSON('kaam_avis_faits', avisFaits);
   writeJSON('kaam_avis_file', avisFile);
-  if (avisFile.length >= 5) sendAvis();
+  if (avisFile.length >= 5) sendAvis(); else scheduleSend();
+  // « Consigné · Annuler » pendant 5 s : un pouce qui glisse ne valide rien pour de bon
+  const ts = avisFile[avisFile.length - 1].ts;
+  lastAvis = { i: q.i, idx: quoteIdx, ts, t: Date.now(),
+    label: `${nameCase(q.name)}${q.film ? ', film' : q.livre ? `, Livre ${q.livre}${q.episode ? `, ép. ${q.episode}` : ''}` : ''}` };
   rebuildVerify();
   if (!verifyIdx.length) { renderCitations(); return; }
   if (inOrder) stepQuote(1); else randomQuote();
+}
+let lastAvis = null, doneTimer = null;
+function showDoneLine() {
+  clearTimeout(doneTimer);
+  const slot = document.querySelector('.done-slot');
+  if (!slot || !verifyMode || !lastAvis) return;
+  const left = 5000 - (Date.now() - lastAvis.t);
+  if (left <= 0) { lastAvis = null; return; }
+  const sent = !avisFile.some(a => a.ts === lastAvis.ts);
+  slot.outerHTML = `<div class="done-line done-slot" role="status"><span><b>Consigné</b> · ${esc(lastAvis.label)}</span><button id="avis-undo"${sent ? ' disabled' : ''}>${sent ? 'Déjà envoyé' : 'Annuler'}</button></div>`;
+  document.getElementById('avis-undo').addEventListener('click', undoAvis);
+  // écran court : la ligne d'annulation prend la place du compteur le temps de ses 5 s
+  const foot = document.querySelector('.stage-foot.vf');
+  if (foot && innerHeight < 620) foot.hidden = true;
+  doneTimer = setTimeout(() => {
+    const d = document.querySelector('.done-line'); if (d) d.outerHTML = '<div class="done-slot"></div>';
+    if (foot) foot.hidden = false;
+    lastAvis = null;
+  }, left);
+}
+function undoAvis() {
+  const last = lastAvis;
+  if (!last || !avisFile.some(a => a.ts === last.ts)) return;
+  delete avisFaits[last.i];
+  avisFile = avisFile.filter(a => a.ts !== last.ts);
+  writeJSON('kaam_avis_faits', avisFaits);
+  writeJSON('kaam_avis_file', avisFile);
+  lastAvis = null; clearTimeout(doneTimer);
+  rebuildVerify();
+  quoteIdx = last.idx;
+  renderCitations(-1);
+  document.getElementById('sr-live').textContent = 'Avis annulé.';
 }
 // Écran de fin : plus rien à vérifier dans cette source
 function renderVerifyDone() {
@@ -812,21 +925,36 @@ function renderVerifyDone() {
     quoteIdx = pickRandom(); renderCitations();
   });
 }
-// Envoi par lots ; les avis restent dans l'appareil tant que l'envoi n'a pas réussi
-let sending = false;
+// Envoi par lots ; les avis restent dans l'appareil tant que l'envoi n'a pas réussi.
+// Un lot refusé pour de bon (400, 415) est écarté ; 429 et 5xx : nouvel essai avec un délai doublé.
+let sending = false, sendDelay = 15000, sendRetry = null, idleSend = null;
 function sendAvis() {
   if (sending || !avisFile.length) return;
   sending = true;
+  clearTimeout(sendRetry);
   const lot = avisFile.slice(0, 100);
   fetch('/api/avis', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ avis: lot }), keepalive: true })
     .then(r => {
-      if (!r.ok) return;
-      avisFile = avisFile.slice(lot.length);
-      writeJSON('kaam_avis_file', avisFile);
+      if (r.ok || r.status === 400 || r.status === 415) {
+        const sent = new Set(lot.map(a => a.ts));
+        avisFile = avisFile.filter(a => !sent.has(a.ts));
+        writeJSON('kaam_avis_file', avisFile);
+        sendDelay = 15000;
+        refreshVerifyCounter();
+      } else if (r.status === 429 || r.status >= 500) {
+        sendRetry = setTimeout(sendAvis, sendDelay); sendDelay = Math.min(sendDelay * 2, 300000);
+      }
     })
     .catch(() => {})
     .finally(() => { sending = false; });
 }
+function refreshVerifyCounter() {
+  const c = document.querySelector('.stage-foot.vf .quote-counter');
+  if (c) { const n = Object.keys(avisFaits).length; c.textContent = `${nf(n)} vérifiée${n > 1 ? 's' : ''}${avisFile.length ? ` · ${nf(avisFile.length)} à envoyer` : ''}`; }
+}
+// envoi après 20 s sans nouvel avis, et dès le retour du réseau
+function scheduleSend() { clearTimeout(idleSend); idleSend = setTimeout(sendAvis, 20000); }
+window.addEventListener('online', sendAvis);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') sendAvis(); });
 
 // ===== NAVIGATION ENTRE RÉPLIQUES =====
@@ -868,6 +996,8 @@ function gotoQuote(q) {
   let idx = allQuotes.indexOf(q);
   if (idx < 0) idx = allQuotes.findIndex(x => x.quote === q.quote && x.name === q.name);
   if (idx < 0) return;
+  const ov = document.getElementById('detail-overlay');
+  ficheState = ov._ficheSnap ? ov._ficheSnap() : ov._fromFiche || null;   // on retrouvera la fiche à sa place
   closeOverlay();
   quoteIdx = idx;
   if (randPos < randHistory.length - 1) randHistory = randHistory.slice(0, randPos + 1);
@@ -1070,6 +1200,14 @@ function bindEntries(container, list, opts = {}) {
 
 // ===== PERSONNAGES =====
 let persSort = 'count';
+let persTop = 0, persAll = false, persFilter = '';
+let ficheState = null;          // fiche quittée pour ouvrir une réplique : { name, start, shown, top }
+const isDuo = n => / ET /.test(n);
+function charRank(name) {       // cote « N° 001 » : rang dans le tri par répliques
+  const solo = getCharList().filter(([n]) => !isDuo(n));
+  const k = solo.findIndex(([n]) => n === name);
+  return k < 0 ? '' : String(k + 1).padStart(3, '0');
+}
 function renderPersonnages() {
   stopAudio();
   setMast('Personnages');
@@ -1078,40 +1216,70 @@ function renderPersonnages() {
   const max = chars[0] ? chars[0][1] : 1;
   // tri A→Z sur le nom sans article (« La Dame du Lac » sous D), lettres et tri calculés sur la même clé
   const sortKey = n => fold(n.replace(/^(LE|LA|LES)\s+|^L['’]\s*/, ''));
-  const duo = n => / ET /.test(n);                // répliques dites à plusieurs voix : en fin de liste
-  const solo = chars.filter(([n]) => !duo(n)), duos = chars.filter(([n]) => duo(n));
+  const solo = chars.filter(([n]) => !isDuo(n)), duos = chars.filter(([n]) => isDuo(n));
+  const rank = new Map(solo.map(([n], k) => [n, String(k + 1).padStart(3, '0')]));
   const list = persSort === 'alpha' ? [...solo].sort((a, b) => sortKey(a[0]).localeCompare(sortKey(b[0]), 'fr')) : solo;
-  const row = ([name, count]) => `<button class="idx-row" data-char="${esc(name)}"><span class="n">${esc(nameCase(name))}</span><span class="c">${nf(count)}</span>
-      ${count / max >= .005 ? `<span class="bar-c" style="width:calc((100% - 2 * var(--pad)) * ${(count / max).toFixed(3)})"></span>` : ''}</button>`;
+  const MINOR = 5;
+  const minors = persSort === 'count' ? solo.filter(([, c]) => c < MINOR).length : 0;
+  const row = ([name, count], cls = '') => `<button class="idx-row${cls}" data-char="${esc(name)}" data-f="${esc(fold(nameCase(name)))}"><span class="no" aria-hidden="true">${rank.get(name) || '—'}</span><span class="n">${esc(nameCase(name))}</span><span class="c">${nf(count)}</span>
+      ${count / max >= .005 ? `<span class="bar-c" style="width:calc((100% - 2 * var(--pad) - 40px) * ${(count / max).toFixed(3)})"></span>` : ''}</button>`;
   let rows = '', letter = '';
   list.forEach(c => {
     if (persSort === 'alpha') {
       const l = sortKey(c[0]).charAt(0).toUpperCase();
       if (l !== letter) { letter = l; rows += `<div class="idx-l">${l}</div>`; }
     }
-    rows += row(c);
+    if (minors && c[1] < MINOR && !rows.includes('idx-more')) rows += `<button class="idx-more" id="pers-more"><span class="no" aria-hidden="true">…</span><span class="n">Rôles de passage<small>${nf(minors)} personnages, moins de ${MINOR} répliques chacun</small></span><span class="c">Afficher</span></button>`;
+    rows += row(c, minors && c[1] < MINOR ? ' minor' : '');
   });
-  if (duos.length) rows += `<div class="idx-l voix">À plusieurs voix</div>` + duos.map(row).join('');
+  if (duos.length) rows += `<div class="idx-l voix">À plusieurs voix</div>` + duos.map(c => row(c, ' duo')).join('');
   main.innerHTML = `
-    <div class="scroll">
+    <div class="scroll" id="pers-scroll">
       <div class="page-h"><h1>Personnages</h1><p>${nf(solo.length)} personnages · ${nf(allQuotes.length)} répliques</p></div>
+      <div class="pf"><input id="pers-filter" type="search" placeholder="Filtrer les noms" aria-label="Filtrer les noms" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"></div>
       <div class="sort"><button class="${persSort === 'count' ? 'on' : ''}" data-sort="count" aria-pressed="${persSort === 'count'}">Par répliques</button><button class="${persSort === 'alpha' ? 'on' : ''}" data-sort="alpha" aria-pressed="${persSort === 'alpha'}">De A à Z</button></div>
-      <div class="perso-list">${rows}</div>
+      <div class="perso-list${minors && !persAll ? ' collapsed' : ''}" id="pers-list">${rows}</div>
     </div>`;
-  main.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => { persSort = b.dataset.sort; renderPersonnages(); }));
-  main.querySelectorAll('.idx-row').forEach(row => row.addEventListener('click', () => openPersonnage(row.dataset.char)));
+  const sc = document.getElementById('pers-scroll'), listEl = document.getElementById('pers-list'), input = document.getElementById('pers-filter');
+  const applyFilter = () => {
+    const v = fold(input.value.trim());
+    listEl.classList.toggle('filtering', !!v);
+    listEl.querySelectorAll('.idx-row').forEach(r => { r.hidden = !!v && !r.dataset.f.includes(v); });
+    // une lettre sans nom visible disparaît avec ses noms
+    listEl.querySelectorAll('.idx-l').forEach(h => {
+      let n = h.nextElementSibling, any = false;
+      while (n && !n.classList.contains('idx-l')) { if (n.classList.contains('idx-row') && !n.hidden) any = true; n = n.nextElementSibling; }
+      h.hidden = !!v && !any;
+    });
+  };
+  input.value = persFilter;
+  if (persFilter) applyFilter();
+  input.addEventListener('input', () => { persFilter = input.value; applyFilter(); sc.scrollTop = 0; });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
+  sc.addEventListener('touchstart', e => { if (e.target !== input) input.blur(); }, { passive: true });
+  main.querySelectorAll('[data-sort]').forEach(b => b.addEventListener('click', () => { persSort = b.dataset.sort; persTop = 0; renderPersonnages(); }));
+  document.getElementById('pers-more')?.addEventListener('click', () => { persAll = true; listEl.classList.remove('collapsed'); });
+  listEl.addEventListener('click', e => { const r = e.target.closest('.idx-row'); if (r) openPersonnage(r.dataset.char); });
+  sc.scrollTop = persTop;
+  sc.addEventListener('scroll', () => { persTop = sc.scrollTop; }, { passive: true });
 }
 
 // Page superposée (fiche personnage, scène) : l'en-tête reste visible, le reste de l'app est inerte dessous
 let overlayFocus = null;
+let usingKeyboard = false;   // dernière interaction au clavier (sinon toucher / souris)
+document.addEventListener('keydown', e => { if (e.key === 'Tab' || e.key.startsWith('Arrow') || e.key === 'Enter') usingKeyboard = true; }, true);
+['pointerdown', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { usingKeyboard = false; }, { capture: true, passive: true }));
 function openOverlay(html) {
   const overlay = document.getElementById('detail-overlay');
   if (overlay.classList.contains('hidden')) overlayFocus = document.activeElement;
   overlay.querySelectorAll('video').forEach(v => v.pause());
+  overlay._ficheSnap = null; overlay._fromFiche = null;
   overlay.innerHTML = html;
   overlay.classList.remove('hidden');
   document.getElementById('main-content').inert = true;
-  overlay.querySelector('#detail-back')?.focus({ preventScroll: true });
+  // clavier : focus sur « Retour » ; toucher : focus sur la page elle-même (aucun contour visible)
+  if (usingKeyboard) overlay.querySelector('#detail-back')?.focus({ preventScroll: true });
+  else { overlay.setAttribute('tabindex', '-1'); overlay.focus({ preventScroll: true }); }
   return overlay;
 }
 function closeOverlay() {
@@ -1120,43 +1288,90 @@ function closeOverlay() {
   const was = !overlay.classList.contains('hidden');
   overlay.classList.add('hidden');
   overlay.innerHTML = '';
+  overlay._ficheSnap = null; overlay._fromFiche = null;
   document.getElementById('main-content').inert = false;
   if (was) setMast({ citations: verifyMode ? 'Vérification' : 'Répliques', quiz: 'Quiz', personnages: 'Personnages', recherche: 'Chercher', favoris: 'Favoris' }[currentView]);
   if (was && overlayFocus?.isConnected) overlayFocus.focus({ preventScroll: true });
   overlayFocus = null;
 }
-function openPersonnage(name) {
+const livreDe = q => q.film ? 'Film' : q.inedit ? 'Inédits' : q.livre || '';
+const LIVRES = ['I', 'II', 'III', 'IV', 'V', 'VI', 'Film', 'Inédits'];
+function openPersonnage(name, restore) {
   stopAudio();
   detailChar = name;
   setMast('Personnages');
   const quotes = allQuotes.filter(q => q.name === name);
-  let shown = 0;
+  const no = isDuo(name) ? '' : charRank(name);
+  const epKey = q => q.film ? 'film' : q.inedit ? 'x' + q.inedit : `${q.livre}|${q.episode}`;
+  const epCount = new Map();
+  quotes.forEach(q => epCount.set(epKey(q), (epCount.get(epKey(q)) || 0) + 1));
+  const epTitre = q => q.film ? 'Premier volet' : q.inedit ? q.inedit.replace(/^Inédit \d\s*:\s*/, '') : titleCase(q.title || '');
+  // part du corpus, et part des répliques avec son et scène (une seule phrase si les deux sont égales)
+  const pc = n => (n * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1, minimumFractionDigits: n * 100 < 10 ? 1 : 0 });
+  const nA = quotes.filter(q => q.audio).length, nV = quotes.filter(q => q.video).length;
+  const media = nA === nV ? `son et scène pour ${pc(nA / quotes.length)} %` : `son pour ${pc(nA / quotes.length)} %, scène pour ${pc(nV / quotes.length)} %`;
+  const byLivre = new Map();
+  quotes.forEach(q => { const L = livreDe(q); if (L) byLivre.set(L, (byLivre.get(L) || 0) + 1); });
+  const livres = LIVRES.filter(L => byLivre.has(L));
+  const lmax = Math.max(...byLivre.values(), 1);
+  const first = quotes[0];
+  let start = restore?.start || 0, shown = start, lastEp = null;
   const overlay = openOverlay(`
-    <div class="back"><button id="detail-back"><span class="arr" aria-hidden="true">←</span>Personnages</button></div>
+    <div class="back"><button id="detail-back"><span class="arr" aria-hidden="true">←</span>Personnages</button>${no ? `<span class="back-t">N° ${no}</span>` : ''}</div>
     <div class="scroll" id="fiche-scroll">
-      <div class="fiche-h"><h1>${esc(nameCase(name))}</h1>
+      <div class="fiche-h"><h1${name.length > 14 ? ' class="long"' : ''}>${esc(nameCase(name))}</h1>
+        <p class="part"><b>${pc(quotes.length / allQuotes.length)} %</b> des répliques · ${media}</p>
         <div class="stats">
           <div><span>Répliques</span><b>${nf(quotes.length)}</b></div>
-          <div><span>Avec son</span><b>${nf(quotes.filter(q => q.audio).length)}</b></div>
-          <div><span>Avec scène</span><b>${nf(quotes.filter(q => q.video).length)}</b></div>
+          <div><span>Épisodes</span><b>${nf(epCount.size)}</b></div>
+          <div><span>Première</span><b><small>${esc(coteEp(first) || '—')}</small></b></div>
         </div>
+        ${livres.length > 1 ? `<div class="livres${livres.length > 6 ? ' two' : ''}" role="group" aria-label="Aller au Livre">${livres.map(L => `<button data-livre="${L}" aria-label="${/^[IV]+$/.test(L) ? 'Livre ' + L : L}, ${nf(byLivre.get(L))} répliques"><i style="width:calc((100% - 12px) * ${(byLivre.get(L) / lmax).toFixed(3)})"></i><b>${L}</b><em>${nf(byLivre.get(L))}</em></button>`).join('')}</div>` : ''}
       </div>
-      <div id="fiche-list"></div>
+      <div id="fiche-list" class="fiche"></div>
     </div>`);
+  const sc = overlay.querySelector('#fiche-scroll');
   const listEl = overlay.querySelector('#fiche-list');
-  const more = () => {
-    overlay.querySelector('.more')?.remove();
-    const next = quotes.slice(shown, shown + 50);
-    listEl.insertAdjacentHTML('beforeend', next.map((q, j) => entHTML(q, shown + j, { name: false })).join(''));
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver(es => { if (es[0].isIntersecting) more(); }, { root: sc, rootMargin: '600px 0px' }) : null;
+  const more = (n = 50) => {
+    io?.disconnect();
+    listEl.querySelector('.more:not(.top)')?.remove();
+    const next = quotes.slice(shown, shown + n);
+    let html = '';
+    next.forEach((q, j) => {
+      const k = epKey(q);
+      if (k !== lastEp) {
+        lastEp = k;
+        html += `<div class="ep-h"><span class="c">${esc(coteEp(q))}</span><span class="t">${typo(epTitre(q))}</span><span class="n" aria-label="${epCount.get(k)} répliques">${epCount.get(k)}</span></div>`;
+      }
+      html += entHTML(q, shown + j, { fiche: true });
+    });
+    listEl.insertAdjacentHTML('beforeend', html);
     shown += next.length;
     if (shown < quotes.length) {
-      listEl.insertAdjacentHTML('beforeend', `<button class="more">Afficher la suite (${nf(quotes.length - shown)} restantes)</button>`);
-      listEl.querySelector('.more').addEventListener('click', more);
+      listEl.insertAdjacentHTML('beforeend', `<button class="more">Afficher les 50 suivantes · ${nf(quotes.length - shown)} restantes</button>`);
+      const b = listEl.querySelector('.more:not(.top)');
+      b.addEventListener('click', () => more());
+      io?.observe(b);
     }
   };
-  more();
+  const from = s0 => {
+    start = s0; shown = s0; lastEp = null;
+    listEl.innerHTML = s0 > 0 ? `<button class="more top">Revenir au début · ${nf(s0)} répliques avant</button>` : '';
+    listEl.querySelector('.more.top')?.addEventListener('click', () => { from(0); sc.scrollTop = 0; });
+  };
+  from(start);
+  more(restore ? Math.max(50, restore.shown - start) : 50);
+  if (restore) sc.scrollTop = restore.top;
+  overlay.querySelectorAll('[data-livre]').forEach(b => b.addEventListener('click', () => {
+    const s0 = quotes.findIndex(q => livreDe(q) === b.dataset.livre);
+    if (s0 < 0) return;
+    from(s0); more();
+    sc.scrollTop = listEl.offsetTop - sc.offsetTop;
+  }));
   bindEntries(listEl, k => quotes[k]);
-  overlay.querySelector('#detail-back').addEventListener('click', () => { stopAudio(); closeOverlay(); });
+  overlay._ficheSnap = () => ({ name, start, shown, top: sc.scrollTop });
+  overlay.querySelector('#detail-back').addEventListener('click', () => { stopAudio(); ficheState = null; closeOverlay(); });
 }
 
 // ===== RECHERCHE =====
@@ -1222,12 +1437,19 @@ function renderRecherche() {
 function doSearch(query, container, keep) {
   const res = searchHits(query);
   const hits = res ? res.text : [];
+  // la requête désigne un personnage : une ligne de renvoi vers sa fiche, puis les répliques qui contiennent le mot
+  const who = (res?.who || []).map(([n, c]) => `<button class="res-who" data-name="${esc(n)}"><span class="n">${esc(nameCase(n))}</span><span class="c">${nf(c)} réplique${c > 1 ? 's' : ''} <span aria-hidden="true">→</span></span></button>`).join('');
+  const bindWho = () => container.querySelectorAll('.res-who').forEach(b => b.addEventListener('click', () => openPersonnage(b.dataset.name)));
   if (!hits.length) {
-    container.innerHTML = `<div class="empty">Rien pour « ${esc(query)} ».<small>Vérifiez l’orthographe, ou essayez le début d’un mot.</small></div>`;
+    container.innerHTML = who + `<div class="empty">${who ? 'Aucune réplique ne contient ce mot.' : `Rien pour « ${esc(query)} ».`}<small>Vérifiez l’orthographe, ou essayez le début d’un mot.</small></div>`;
+    bindWho();
     return;
   }
   let shown = 0;
-  container.innerHTML = `<div class="res-n" role="status">${nf(hits.length)} réplique${hits.length > 1 ? 's' : ''}</div><div id="res-list"></div>`;
+  container.innerHTML = who
+    ? `${who}<div class="res-h" role="status">Dans le texte<b>${nf(hits.length)}</b></div><div id="res-list"></div>`
+    : `<div class="res-n" role="status">${nf(hits.length)} réplique${hits.length > 1 ? 's' : ''}</div><div id="res-list"></div>`;
+  bindWho();
   const listEl = container.querySelector('#res-list');
   const more = n => {
     listEl.querySelector('.more')?.remove();
@@ -1283,6 +1505,8 @@ function replayVideo(v) {
 // ===== SCÈNE EN GRAND (« Scène ») =====
 function showVideo(q) {
   stopAudio();
+  const ov0 = document.getElementById('detail-overlay');
+  const fromFiche = ov0._ficheSnap ? ov0._ficheSnap() : null;   // scène ouverte depuis une fiche : « Retour » y ramène
   setMast('Scène');
   const overlay = openOverlay(`
     <div class="back"><button id="detail-back"><span class="arr" aria-hidden="true">←</span>Retour</button><span class="back-t">Scène</span></div>
@@ -1318,7 +1542,10 @@ function showVideo(q) {
   document.getElementById('m-share').addEventListener('click', e => shareQuote(q, e.currentTarget));
   document.getElementById('m-goto').addEventListener('click', () => gotoQuote(q));
   document.getElementById('m-who').addEventListener('click', () => openPersonnage(q.name));
-  document.getElementById('detail-back').addEventListener('click', closeOverlay);
+  overlay._fromFiche = fromFiche;
+  document.getElementById('detail-back').addEventListener('click', () => {
+    if (fromFiche) { v.pause(); openPersonnage(fromFiche.name, fromFiche); } else closeOverlay();
+  });
   return overlay;
 }
 
@@ -1326,15 +1553,24 @@ function showVideo(q) {
 function bindNav() {
   document.getElementById('bottom-nav').querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (document.getElementById('bottom-nav').getAttribute('aria-disabled') === 'true' && !btn.classList.contains('keep')) return;
-      if (btn.dataset.view !== currentView || !document.getElementById('detail-overlay').classList.contains('hidden')) setView(btn.dataset.view);
+      if (btn.getAttribute('aria-disabled') === 'true') return;
+      const ovOpen = !document.getElementById('detail-overlay').classList.contains('hidden');
+      if (btn.dataset.view === 'personnages' && (ovOpen || currentView === 'personnages')) ficheState = null;   // convention iOS : retour à l'index
+      if (btn.dataset.view !== currentView || ovOpen) setView(btn.dataset.view);
     });
   });
 }
+// pendant le chargement et sur l'écran d'erreur, les onglets sans objet sont désactivés (Favoris reste ouvert après une erreur)
 function setTabsEnabled(on) {
   const nav = document.getElementById('bottom-nav');
-  if (on) { nav.removeAttribute('aria-disabled'); nav.querySelectorAll('.keep').forEach(b => b.classList.remove('keep')); }
-  else nav.setAttribute('aria-disabled', 'true');
+  nav.classList.toggle('off', !on);
+  nav.querySelectorAll('.nav-btn').forEach(b => {
+    if (on) { b.classList.remove('keep'); b.removeAttribute('aria-disabled'); }
+    else if (!b.classList.contains('keep')) b.setAttribute('aria-disabled', 'true');
+  });
+}
+function keepTabs(views) {
+  document.querySelectorAll('.nav-btn').forEach(b => { if (views.includes(b.dataset.view)) { b.classList.add('keep'); b.removeAttribute('aria-disabled'); } });
 }
 function setView(view) {
   if (!allQuotes.length && view !== 'favoris') {         // répliques pas encore chargées : seuls les favoris s'ouvrent
@@ -1352,7 +1588,7 @@ function setView(view) {
   });
   if      (view === 'citations')   renderCitations();
   else if (view === 'quiz')        renderQuiz();
-  else if (view === 'personnages') renderPersonnages();
+  else if (view === 'personnages') { renderPersonnages(); if (ficheState) { const f = ficheState; ficheState = null; openPersonnage(f.name, f); } }
   else if (view === 'recherche')   renderRecherche();
   else if (view === 'favoris')     renderFavoris();
 }
@@ -1387,7 +1623,10 @@ async function boot() {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === 'citations'));
   const main = document.getElementById('main-content');
   setTabsEnabled(false);
-  main.innerHTML = `<div class="boot"><div class="t">Chargement des répliques…</div></div>`;
+  main.innerHTML = `<div class="boot" role="status"><div class="t">Chargement des répliques…</div><div class="rail indet"><i></i></div><div class="m"></div>
+    <p hidden>Premier lancement : plus de 33 000 répliques sont téléchargées une seule fois, puis l’app s’ouvre sans attendre, même hors ligne.</p></div>`;
+  // l'explication n'apparaît que si l'attente dure (jamais de clignotement quand les répliques sortent du cache)
+  setTimeout(() => { const p = document.querySelector('.boot p'); if (p) p.hidden = false; }, 1500);
   try {
     await loadData();
     quoteIdx = pool() ? rand(pool()) : Math.floor(Math.random() * allQuotes.length);
@@ -1409,7 +1648,7 @@ async function boot() {
         <div class="row2"><button id="btn-retry">Réessayer</button><button id="btn-myfav">Mes favoris</button></div>
       </div>`;
     // les favoris sont gardés sur l'appareil avec leur texte : ils restent consultables
-    document.querySelectorAll('.nav-btn[data-view="favoris"], .nav-btn[data-view="citations"]').forEach(b => b.classList.add('keep'));
+    keepTabs(['favoris', 'citations']);
     document.getElementById('btn-retry').addEventListener('click', boot);
     document.getElementById('btn-myfav').addEventListener('click', () => setView('favoris'));
     if (offline) window.addEventListener('online', boot, { once: true });
