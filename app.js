@@ -444,10 +444,9 @@ function favButton(btn, q, label = 'Favori') {
 }
 
 // ===== UTILS =====
-function esc(s) {
-  if (!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+// Échappement HTML de tout gabarit : accepte aussi les nombres (0 compris), apostrophe comprise
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function esc(s) { return s == null ? '' : String(s).replace(/[&<>"']/g, c => ESC[c]); }
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
 // ===== MISE EN FORME =====
@@ -504,7 +503,7 @@ function typoHTML(h) {
     .replace(/«[   ]*/g, '« ')
     .replace(/\u0001/g, ';');
 }
-function typo(s) { return typoHTML(esc(s)); }
+function typo(s) { return typoHTML(esc(s == null ? '' : String(s).replace(/'/g, '’'))); }   // apostrophe courbe avant l'échappement
 function quoteHTML(s) { return `<span class="g" aria-hidden="true">«</span> ${typo(s)} <span class="g" aria-hidden="true">»</span>`; }
 // Source d'une réplique, prête à insérer en HTML (typographie appliquée)
 function epHTML(q) { return typo(fmtEp(q)); }

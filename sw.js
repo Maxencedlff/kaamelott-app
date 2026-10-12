@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v31';
+const CACHE = 'kaamelott-v32';
 const DATA_CACHE = 'kaamelott-data';   // jamais versionné : le vider forcerait 7 Mo de téléchargement à chaque mise à jour
 const ASSETS = [
   '/',

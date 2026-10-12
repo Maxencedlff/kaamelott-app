@@ -35,21 +35,21 @@ test('index hors bornes refusé', async () => {
   const { lot } = await call({ body: { avis: [avis({ i: -1 }), avis({ i: 1.5 }), avis({ i: '3' }), avis({ i: 7 })] } });
   assert.deepEqual(lot.map(a => a.i), [7]);
 });
-test('index au-delà de data.json refusé (< 40 000)', { todo: 'lot 3' }, async () => {
+test('index au-delà de data.json refusé (< 40 000)', async () => {
   const { lot } = await call({ body: { avis: [avis({ i: 99999 }), avis({ i: 39999 })] } });
   assert.deepEqual(lot.map(a => a.i), [39999]);
 });
-test('horodatage : celui du serveur fait foi', { todo: 'lot 3' }, async () => {
+test('horodatage : celui du serveur fait foi', async () => {
   const t0 = Date.now();
   const { lot } = await call({ body: { avis: [avis({ ts: 9e15 })] } });
   assert.ok(lot[0].ts >= t0 && lot[0].ts <= Date.now());
   assert.equal(lot[0].tc, 9e15);
 });
-test('caractères de contrôle retirés, lot plafonné à 100', { todo: 'lot 3' }, async () => {
+test('caractères de contrôle retirés, lot plafonné à 100', async () => {
   const { lot } = await call({ body: { avis: Array.from({ length: 150 }, () => avis({ note: '\x1b[2Jhi\x07' })) } });
   assert.equal(lot.length, 100);
   assert.equal(lot[0].note, '[2Jhi');
 });
-test('GitHub injoignable : 502 maîtrisé', { todo: 'lot 3' }, async () => {
+test('GitHub injoignable : 502 maîtrisé', async () => {
   assert.equal((await call({ github: 'down', body: { avis: [avis()] } })).res.code, 502);
 });

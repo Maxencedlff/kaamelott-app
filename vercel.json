@@ -20,8 +20,12 @@
           "value": "camera=(), microphone=(), geolocation=(), payment=()"
         },
         {
+          "key": "Cross-Origin-Opener-Policy",
+          "value": "same-origin"
+        },
+        {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob: https:; media-src 'self' blob: https://huggingface.co https://*.hf.co; connect-src 'self' https://huggingface.co https://*.hf.co https://*.wikipedia.org https://*.wikimedia.org; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src 'self' blob: https://huggingface.co https://*.hf.co; connect-src 'self' https://huggingface.co https://*.hf.co; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
         }
       ]
     },
