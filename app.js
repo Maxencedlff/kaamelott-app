@@ -26,6 +26,40 @@ function audioURL(src) {
   return m ? `${AUDIO_BASE}${m[1].slice(0, 2)}/${m[1]}${m[2] || ''}` : src;
 }
 function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4${q.vv ? `?v=${q.vv}` : ''}` : null; }
+// ===== ICÔNES (SVG au trait, à la place des emojis) =====
+const ICONS = {
+  play: '<polygon points="7 4 19 12 7 20 7 4"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
+  prev: '<path d="m15 18-6-6 6-6"/>',
+  next: '<path d="m9 18 6-6-6-6"/>',
+  heart: '<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>',
+  shuffle: '<path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22"/><path d="m18 2 4 4-4 4"/><path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2"/><path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8"/><path d="m18 14 4 4-4 4"/>',
+  order: '<path d="M10 6h11"/><path d="M10 12h11"/><path d="M10 18h11"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/>',
+  share: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" x2="12" y1="2" y2="15"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  film: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/>',
+  autoplay: '<circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/>',
+  check: '<path d="M21.8 10A10 10 0 1 1 17 3.3"/><path d="m9 11 3 3L22 4"/>',
+  volume: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>',
+  mute: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" x2="16" y1="9" y2="15"/><line x1="16" x2="22" y1="9" y2="15"/>',
+};
+function icon(name, cls = '') {
+  return `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+}
+
+// ===== SOURCE : toute la série, ou seulement la série, ou seulement le film =====
+let source = (() => { try { return localStorage.getItem('kaam_source') || 'all'; } catch { return 'all'; } })();
+const poolCache = new Map();
+function bySource(arr) {
+  if (source === 'all') return arr;
+  const key = `${source}|${arr === null ? 'all' : arr === audioIdx ? 'a' : arr === videoIdx ? 'v' : 'x' + arr.length}`;
+  if (arr !== verifyIdx && poolCache.has(key)) return poolCache.get(key);
+  const base = arr || allQuotes.map((_, i) => i);
+  const out = base.filter(i => !!allQuotes[i].film === (source === 'film'));
+  if (arr !== verifyIdx) poolCache.set(key, out);
+  return out;
+}
+
 // ===== PRÉCHARGEMENT =====
 // Hugging Face met ~1 s à servir chaque extrait : on télécharge à l'avance ceux des répliques suivantes
 // (fichiers de 30 à 200 Ko) et on les lit depuis la mémoire, ce qui rend le passage d'une réplique à l'autre immédiat.
@@ -95,10 +129,10 @@ function playCardVideo(q, slot) {
 
 // Répliques parcourues (aléatoire / ordre) selon les filtres actifs
 function pool() {
-  if (verifyMode) return verifyIdx;
-  if (videoOnly && videoIdx.length) return videoIdx;
-  if (audioOnly && audioIdx.length) return audioIdx;
-  return null;
+  if (verifyMode) return bySource(verifyIdx);
+  if (videoOnly && videoIdx.length) return bySource(videoIdx);
+  if (audioOnly && audioIdx.length) return bySource(audioIdx);
+  return source === 'all' ? null : bySource(null);
 }
 // ===== VÉRIFICATION (avis son / vidéo justes ou non, envoyés à /api/avis) =====
 let verifyMode = readPref('kaam_verify');      // ne montrer que les répliques avec son/vidéo pas encore vérifiées
@@ -156,8 +190,8 @@ player.addEventListener('ended', () => setPlayingBtn(null));
 function audioBtnHTML(id, big, approx) {
   // approx : son placé par l'écart entre les répliques voisines (peut déborder un peu sur elles)
   return `<button class="audio-btn${big ? ' audio-btn-big' : ''}" id="${id}" aria-label="Écouter la réplique"${approx ? ' title="Son estimé : peut déborder un peu sur les répliques voisines"' : ''}>
-    <span class="audio-icon-play">▶</span><span class="audio-icon-stop">■</span>
-    <span class="audio-label">${approx ? '≈ Écouter' : 'Écouter'}</span>
+    <span class="audio-icon-play">${icon('play')}</span><span class="audio-icon-stop">${icon('stop')}</span>
+    <span class="audio-label">Écouter</span>${approx ? '<span class="approx-tag">estimé</span>' : ''}
   </button>`;
 }
 
@@ -170,8 +204,8 @@ function parseQuote(item, i) {
   const raw = item.character || '';
   const commaIdx = raw.indexOf(',');
   const name = commaIdx > -1
-    ? raw.slice(0, commaIdx).trim().toUpperCase()
-    : raw.trim().toUpperCase();
+    ? raw.slice(0, commaIdx).trim().replace(/\s+/g, ' ').toUpperCase()
+    : raw.trim().replace(/\s+/g, ' ').toUpperCase();
   const rest = commaIdx > -1 ? raw.slice(commaIdx + 1) : '';
 
   const livreM = rest.match(/livre\s+(I{1,3}V?|VI?)/i);
@@ -181,14 +215,17 @@ function parseQuote(item, i) {
   const episode = epM ? epM[1] : '';
   const title   = epM && epM[2] ? epM[2].trim() : '';
   const film    = /premier volet/i.test(rest) ? 'Kaamelott : Premier Volet' : '';
+  // scénarios inédits jamais tournés (« Inédit 3 : Dolor ») : affichés comme tels, jamais de son
+  const inedM   = rest.match(/Inédit\s+(\d)\s*:\s*(.+)/i);
+  const inedit  = item.inedit ? (inedM ? `Inédit ${inedM[1]} : ${inedM[2].trim()}` : 'Inédit') : '';
 
-  return { i, quote: item.quote, name, livre, episode, title, film, audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx };
+  return { i, quote: item.quote, name, livre, episode, title, film, inedit, hide: !!item.hide, audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx };
 }
 
 async function loadData() {
   const res  = await fetch('data.json');
   const raw  = await res.json();
-  allQuotes  = raw.map(parseQuote).filter(q => q.quote && q.name);
+  allQuotes  = raw.map(parseQuote).filter(q => q.quote && q.name && !q.hide);   // hide : doublon masqué (index i conservé)
   audioIdx   = allQuotes.reduce((acc, q, i) => (q.audio && acc.push(i), acc), []);
   videoIdx   = allQuotes.reduce((acc, q, i) => (q.video && acc.push(i), acc), []);
   rebuildVerify();
@@ -218,6 +255,7 @@ function esc(s) {
 function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function fmtEp(q) {
   if (q.film) return `Film · ${q.film}`;
+  if (q.inedit) return `${q.inedit} · jamais tourné`;
   if (!q.livre && !q.episode) return '';
   let s = '';
   if (q.livre)   s += `Livre ${q.livre}`;
@@ -333,30 +371,38 @@ function renderCitations() {
   const counter = verifyMode
     ? `${verifyIdx.length} ${verifyApprox ? 'sons estimés (≈) à vérifier en premier' : 'à vérifier'} · ${Object.keys(avisFaits).length} vérifiées${avisFile.length ? ` · ${avisFile.length} en attente d'envoi` : ''}`
     : P
-    ? `${P.indexOf(quoteIdx) + 1} / ${P.length} répliques ${P === videoIdx ? 'avec vidéo' : 'avec son'}`
-    : `${quoteIdx + 1} / ${allQuotes.length}`;
+    ? `${(P.indexOf(quoteIdx) + 1).toLocaleString('fr-FR')} / ${P.length.toLocaleString('fr-FR')} répliques${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}${source === 'film' ? ' du film' : source === 'serie' ? ' de la série' : ''}`
+    : `${(quoteIdx + 1).toLocaleString('fr-FR')} / ${allQuotes.length.toLocaleString('fr-FR')}`;
+  const media = videoOnly ? 'video' : audioOnly ? 'audio' : 'text';
   const inlineVideo = (videoOnly || verifyMode) && q.video;
   const reviewable = verifyMode && (q.audio || q.video);
 
   main.innerHTML = `
     <div class="citations-view">
-      <div class="audio-toggles">
-        <button class="audio-chip ${audioOnly ? 'on' : ''}" id="chip-audio-only">🔊 Seulement avec son <span class="chip-count">${audioIdx.length}</span></button>
-        <button class="audio-chip ${autoPlay ? 'on' : ''}" id="chip-autoplay">▶ Lecture auto</button>
-        ${videoIdx.length ? `<button class="audio-chip ${videoOnly ? 'on' : ''}" id="chip-video-only">🎬 Mode vidéo <span class="chip-count">${videoIdx.length}</span></button>` : ''}
-        <button class="audio-chip ${verifyMode ? 'on' : ''}" id="chip-verify">✅ Vérifier <span class="chip-count">${verifyIdx.length}</span></button>
-        <button class="audio-chip ${inOrder ? 'on' : ''}" id="chip-order">${inOrder ? '➡️ Dans l\'ordre' : '🔀 Aléatoire'}</button>
+      <div class="filters">
+        <div class="seg" role="group" aria-label="Source">
+          <button class="${source === 'all' ? 'on' : ''}" data-src="all">Tout</button>
+          <button class="${source === 'serie' ? 'on' : ''}" data-src="serie">Série</button>
+          <button class="${source === 'film' ? 'on' : ''}" data-src="film" id="chip-film">Film</button>
+        </div>
+        <div class="seg" role="group" aria-label="Affichage">
+          <button class="${media === 'text' ? 'on' : ''}" id="chip-text">Texte</button>
+          <button class="${media === 'audio' ? 'on' : ''}" id="chip-audio-only">Son</button>
+          ${videoIdx.length ? `<button class="${media === 'video' ? 'on' : ''}" id="chip-video-only">Vidéo</button>` : ''}
+        </div>
+        <div class="toggles">
+          <button class="tgl" id="chip-order">${icon(inOrder ? 'order' : 'shuffle')}<span>${inOrder ? 'Dans l\'ordre' : 'Aléatoire'}</span></button>
+          <button class="tgl ${autoPlay ? 'on' : ''}" id="chip-autoplay">${icon('autoplay')}<span>Lecture auto</span></button>
+          <button class="tgl ${verifyMode ? 'on' : ''}" id="chip-verify">${icon('check')}<span>Vérifier</span></button>
+        </div>
       </div>
       <div class="quote-counter">${counter}</div>
 
       <div class="quote-card" id="quote-card">
-        <div class="quote-card-line-top"></div>
-        <div class="quote-card-line-bottom"></div>
         ${inlineVideo
-          ? `<div class="video-slot" id="qvideo-slot"><div class="video-spinner"></div><div class="video-muted">🔇 Touche la vidéo pour le son</div></div>
+          ? `<div class="video-slot" id="qvideo-slot"><div class="video-spinner"></div><div class="video-muted">${icon('mute')}Touchez la vidéo pour le son</div></div>
              <div class="quote-text quote-text-small">${esc(q.quote)}</div>`
-          : `<div class="quote-mark">"</div>
-             <div class="quote-text">${esc(q.quote)}</div>`}
+          : `<div class="quote-text">${esc(q.quote)}</div>`}
         <div class="quote-char">
           <div class="char-avatar" data-name="${esc(q.name)}" data-livre="${esc(q.livre)}">${esc(q.name.charAt(0))}</div>
           <div class="quote-char-name">${esc(q.name)}</div>
@@ -365,19 +411,19 @@ function renderCitations() {
         ${verifyMode && inlineVideo && q.audio ? `<div class="quote-audio">${audioBtnHTML('btn-audio', true, q.approx)}</div>` : ''}
         ${!inlineVideo && (q.audio || q.video) ? `<div class="quote-audio">
           ${q.audio ? audioBtnHTML('btn-audio', true, q.approx) : ''}
-          ${q.video ? `<button class="audio-btn audio-btn-big" id="btn-video">🎬 <span class="audio-label">Voir la scène</span></button>` : ''}
+          ${q.video ? `<button class="audio-btn audio-btn-big" id="btn-video">${icon('film')}<span class="audio-label">Voir la scène</span></button>` : ''}
         </div>` : ''}
       </div>
       ${reviewable ? avisHTML(q) : ''}
 
       <div class="quote-actions">
-        <button class="quote-action-btn" id="btn-prev" title="Précédente">◀</button>
-        <button class="quote-action-btn ${favActive ? 'active' : ''}" id="btn-fav" title="Favoris">❤️</button>
-        <button class="quote-action-btn" id="btn-random" title="Aléatoire">🎲</button>
-        <button class="quote-action-btn" id="btn-share" title="Partager">📤</button>
-        <button class="quote-action-btn" id="btn-next" title="Suivante">▶</button>
+        <button class="quote-action-btn" id="btn-prev" title="Précédente" aria-label="Précédente">${icon('prev')}</button>
+        <button class="quote-action-btn ${favActive ? 'active' : ''}" id="btn-fav" title="Favori" aria-label="Favori">${icon('heart')}</button>
+        <button class="quote-action-btn" id="btn-random" title="Au hasard" aria-label="Au hasard">${icon('shuffle')}</button>
+        <button class="quote-action-btn" id="btn-share" title="Partager" aria-label="Partager">${icon('share')}</button>
+        <button class="quote-action-btn" id="btn-next" title="Suivante" aria-label="Suivante">${icon('next')}</button>
       </div>
-      <div class="quote-hint">${inOrder ? 'Swipe ← suivante · Swipe → précédente · Tap suivante' : 'Swipe → retour · Swipe ← aléatoire · Tap aléatoire'}</div>
+      <div class="quote-hint">${inOrder ? 'Glisser ou toucher pour la suivante' : 'Glisser ou toucher pour une autre réplique'}</div>
     </div>`;
 
   loadAvatars();
@@ -394,28 +440,36 @@ function renderCitations() {
     verifyMode = !verifyMode;
     writePref('kaam_verify', verifyMode);
     rebuildVerify();
-    if (verifyMode && !verifyIdx.includes(quoteIdx) && verifyIdx.length) randomQuote(); else renderCitations();
+    const P = pool();
+    if (verifyMode && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
   });
   if (reviewable) bindAvis(q);
 
+  // Texte / Son / Vidéo : un seul à la fois ; retoucher le choix actif revient à « Texte »
+  const setMedia = m => {
+    if ((m === 'audio' && audioOnly) || (m === 'video' && videoOnly)) m = 'text';
+    audioOnly = m === 'audio'; videoOnly = m === 'video';
+    writePref('kaam_audio_only', audioOnly); writePref('kaam_video_only', videoOnly);
+    const P = pool();
+    if (P && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
+  };
+  document.getElementById('chip-text').addEventListener('click', () => setMedia('text'));
   const chipVideo = document.getElementById('chip-video-only');
-  if (chipVideo) chipVideo.addEventListener('click', () => {
-    videoOnly = !videoOnly;
-    writePref('kaam_video_only', videoOnly);
-    if (videoOnly && !q.video) randomQuote(); else renderCitations();
-  });
+  if (chipVideo) chipVideo.addEventListener('click', () => setMedia('video'));
+  document.querySelectorAll('[data-src]').forEach(b => b.addEventListener('click', () => {
+    source = b.dataset.src;
+    try { localStorage.setItem('kaam_source', source); } catch {}
+    nextRand = null;
+    const P = pool();
+    if (P && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
+  }));
   const slot = document.getElementById('qvideo-slot');
   if (slot) playCardVideo(q, slot);
   else cardVideo.pause();
   prefetchAround();
   const btnVideo = document.getElementById('btn-video');
   if (btnVideo) btnVideo.addEventListener('click', e => { e.stopPropagation(); showVideo(q); });
-  document.getElementById('chip-audio-only').addEventListener('click', () => {
-    audioOnly = !audioOnly;
-    writePref('kaam_audio_only', audioOnly);
-    // En passant en « avec son », on saute sur une réplique qui en a un
-    if (audioOnly && !q.audio) randomQuote(); else renderCitations();
-  });
+  document.getElementById('chip-audio-only').addEventListener('click', () => setMedia('audio'));
   document.getElementById('chip-order').addEventListener('click', () => {
     inOrder = !inOrder;
     writePref('kaam_in_order', inOrder);
@@ -632,7 +686,7 @@ function renderQuiz() {
     <div class="quiz-view">
       <div class="quiz-header">
         <div class="quiz-score">Score : <strong>${quizState.correct}/${quizState.total}</strong></div>
-        <div class="quiz-streak">🔥 Série : <strong>${quizState.streak}</strong></div>
+        <div class="quiz-streak">Série : <strong>${quizState.streak}</strong></div>
       </div>
 
       <div class="quiz-question">
@@ -738,9 +792,9 @@ function openPersonnage(name) {
     <div class="perso-quotes-list">
       ${quotes.map((q, i) => `
         <div class="perso-quote-item" data-idx="${i}">
-          <button class="perso-quote-fav ${isFav(q) ? 'active' : ''}" data-idx="${i}">❤️</button>
+          <button class="perso-quote-fav ${isFav(q) ? 'active' : ''}" data-idx="${i}" aria-label="Favori">${icon('heart')}</button>
           <div class="perso-quote-text">"${esc(q.quote)}"</div>
-          ${q.audio ? `<button class="audio-mini" data-idx="${i}" aria-label="Écouter">▶</button>` : ''}
+          ${q.audio ? `<button class="audio-mini" data-idx="${i}" aria-label="Écouter">${icon('play')}</button>` : ''}
           ${fmtEp(q) ? `<div class="perso-quote-ep">${esc(fmtEp(q))}</div>` : ''}
         </div>`).join('')}
     </div>`;
@@ -776,7 +830,7 @@ function renderRecherche() {
         <input type="search" class="search-input" id="search-input"
           placeholder="Chercher une réplique, un personnage…"
           autocomplete="off" autocorrect="off" spellcheck="false">
-        <span class="search-icon">🔍</span>
+        <span class="search-icon">${icon('search')}</span>
       </div>
       <div id="search-results">
         <div class="search-hint">Cherchez parmi les ${allQuotes.length.toLocaleString('fr-FR')} répliques</div>
@@ -815,7 +869,7 @@ function doSearch(query, container) {
     <div class="search-count">${hits.length}${hits.length === 60 ? '+' : ''} résultat${hits.length > 1 ? 's' : ''}</div>
     ${hits.map((x, i) => `
       <div class="search-result" data-idx="${i}">
-        <div class="search-result-char">${esc(x.name)}${x.audio ? ' <span class="has-audio">🔊</span>' : ''}</div>
+        <div class="search-result-char">${esc(x.name)}${x.audio ? ` <span class="has-audio" title="Avec son">${icon('volume')}</span>` : ''}</div>
         <div class="search-result-quote">${highlight(x.quote, query)}</div>
         ${fmtEp(x) ? `<div class="search-result-meta">${esc(fmtEp(x))}</div>` : ''}
       </div>`).join('')}`;
@@ -839,8 +893,8 @@ function renderFavoris() {
           <span class="section-line"></span>
         </div>
         <div class="favoris-empty">
-          <div class="icon">❤️</div>
-          <p>Aucune réplique sauvegardée.<br>Appuyez sur ❤️ dans les citations.</p>
+          <div class="icon">${icon('heart')}</div>
+          <p>Aucune réplique enregistrée.<br>Touchez le cœur sous une citation pour la garder ici.</p>
         </div>
       </div>`;
     return;
@@ -855,7 +909,7 @@ function renderFavoris() {
       ${favorites.map((q, i) => `
         <div class="fav-item" data-idx="${i}">
           <div class="fav-item-body">
-            <div class="fav-item-char">${esc(q.name)}${audioOf(q) ? ' <span class="has-audio">🔊</span>' : ''}</div>
+            <div class="fav-item-char">${esc(q.name)}${audioOf(q) ? ` <span class="has-audio" title="Avec son">${icon('volume')}</span>` : ''}</div>
             <div class="fav-item-quote">"${esc(q.quote)}"</div>
             ${fmtEp(q) ? `<div class="fav-item-meta">${esc(fmtEp(q))}</div>` : ''}
           </div>
@@ -922,7 +976,7 @@ function showQuoteModal(q) {
       <button class="detail-back" id="detail-back">&#8592;</button>
       <div class="perso-avatar detail-avatar" data-name="${esc(q.name)}" data-livre="${esc(q.livre||'')}">${esc(q.name.charAt(0))}</div>
       <span class="detail-header-title">${esc(q.name)}</span>
-      <button class="perso-quote-fav ${isFav(q) ? 'active' : ''}" id="modal-fav" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px;">❤️</button>
+      <button class="perso-quote-fav ${isFav(q) ? 'active' : ''}" id="modal-fav" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px;">${icon('heart')}</button>
     </div>
     <div style="padding:32px 24px;">
       <div style="font-family:Georgia,serif;font-size:22px;line-height:1.7;color:var(--text);font-style:italic;text-align:center;margin-bottom:24px;">
@@ -934,7 +988,7 @@ function showQuoteModal(q) {
       </div>
       ${audio ? `<div class="quote-audio">${audioBtnHTML('modal-audio', true)}</div>` : ''}
       <div style="margin-top:32px;display:flex;gap:12px;justify-content:center;">
-        <button id="modal-share" style="background:var(--bg2);border:1px solid var(--border);color:var(--text2);padding:12px 24px;border-radius:4px;font-size:13px;cursor:pointer;">📤 Partager</button>
+        <button id="modal-share" style="background:var(--bg2);border:1px solid var(--border);color:var(--text2);padding:12px 24px;border-radius:4px;font-size:13px;cursor:pointer;">Partager</button>
         <button id="modal-perso" style="background:var(--bg2);border:1px solid var(--border);color:var(--text2);padding:12px 24px;border-radius:4px;font-size:13px;cursor:pointer;">👑 ${esc(q.name)}</button>
       </div>
     </div>`;
