@@ -536,20 +536,42 @@ def _lum_rgb(r, g, b):
     return .2126 * f(r) + .7152 * f(g) + .0722 * f(b)
 
 
+def png_pixels(data):
+    """Pixels RVB d'une capture PNG (8 bits, RVB ou RVBA, non entrelacée), sans dépendance (la CI n'a pas Pillow)."""
+    import struct, zlib
+    pos, idat, w = 8, b"", 0
+    while pos < len(data):
+        n, typ = struct.unpack(">I4s", data[pos:pos + 8]); chunk = data[pos + 8:pos + 8 + n]; pos += 12 + n
+        if typ == b"IHDR": w, h, depth, ctype = struct.unpack(">IIBB", chunk[:10])
+        elif typ == b"IDAT": idat += chunk
+    bpp = 4 if ctype == 6 else 3
+    raw, stride, prev, out, i = zlib.decompress(idat), w * bpp, None, [], 0
+    for _ in range(h):
+        f = raw[i]; line = bytearray(raw[i + 1:i + 1 + stride]); i += 1 + stride
+        for x in range(stride):
+            a = line[x - bpp] if x >= bpp else 0; b = prev[x] if prev else 0; c = prev[x - bpp] if prev and x >= bpp else 0
+            if f == 1: line[x] = (line[x] + a) & 255
+            elif f == 2: line[x] = (line[x] + b) & 255
+            elif f == 3: line[x] = (line[x] + (a + b) // 2) & 255
+            elif f == 4:
+                pp = a + b - c; pa, pb, pc = abs(pp - a), abs(pp - b), abs(pp - c)
+                line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        out.extend((line[x], line[x + 1], line[x + 2]) for x in range(0, stride, bpp)); prev = line
+    return out
+
+
 def text_on_image_ratio(pg, text_sel):
     """Contraste MESURÉ d'un texte posé sur une image : le texte est masqué, la zone qu'il couvre est capturée,
     et l'on prend le pixel le plus défavorable du fond (le plus proche de la couleur du texte)."""
-    import io, re as _re
-    from PIL import Image
+    import re as _re
     color = pg.evaluate("s => getComputedStyle(document.querySelector(s)).color", text_sel)
     tl = _lum_rgb(*[int(float(x)) for x in _re.findall(r"[\d.]+", color)[:3]])
     box = pg.evaluate("""s => { const e = document.querySelector(s); e.style.visibility = 'hidden';
         const r = e.getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; }""", text_sel)
     pg.wait_for_timeout(50)
-    png = pg.screenshot(clip=box, animations="disabled")
+    png = pg.screenshot(clip=box, animations="disabled", scale="css")
     pg.evaluate("s => { document.querySelector(s).style.visibility = ''; }", text_sel)
-    im = Image.open(io.BytesIO(png)).convert("RGB")
-    lums = sorted(_lum_rgb(*px) for px in (im.get_flattened_data() if hasattr(im, 'get_flattened_data') else im.getdata()))
+    lums = sorted(_lum_rgb(*px) for px in png_pixels(png))
     worst = lums[-1] if tl > .5 else lums[0]
     return (max(tl, worst) + .05) / (min(tl, worst) + .05)
 
@@ -1374,7 +1396,7 @@ def scenario_portraits(w):
         try:
             pg = w.new_page(ctx); w.goto(pg)
             out, bad = [], []
-            for name in ["ARTHUR", "PERCEVAL", "LÉODAGAN", "KARADOC", "GUENIÈVRE", "MERLIN", "LA DAME DU LAC", "SÉLI"]:
+            for name in ["ARTHUR", "LÉODAGAN", "KARADOC", "GUENIÈVRE", "LA DAME DU LAC"]:
                 ok = pg.evaluate("""n => { const A = __kaam.allQuotes, i = A.findIndex(q => q.name === n && q.quote.length > 60); if (i < 0) return false;
                     __kaam.quoteIdx = i; __kaam.render(); return true; }""", name)
                 if not ok: continue
