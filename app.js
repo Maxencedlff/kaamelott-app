@@ -401,7 +401,8 @@ function parseCharacter(raw) {
   const rest = commaIdx > -1 ? raw.slice(commaIdx + 1) : '';
   const livreM = rest.match(/livre\s+(I{1,3}V?|VI?)/i);
   const epM    = rest.match(/épisode\s+(\d+)\s*(?::\s*(.+))?/i);
-  // scénarios inédits jamais tournés (« Inédit 3 : Dolor ») : affichés comme tels, jamais de son
+  // scénarios inédits (« Inédit 3 : Dolor ») : jamais tournés, sauf ceux marqués "tourne":1 dans data.json
+  // (Inédits 1 et 2, tournés : son + scène depuis le 13/10/2026)
   const inedM  = rest.match(/Inédit\s+(\d)\s*:\s*(.+)/i);
   c = {
     name: NAME_FIX[n0] || n0,
@@ -426,7 +427,7 @@ function stripDid(t) {
 function parseQuote(item, i) {
   const c = parseCharacter(item.character || '');
   return { i, quote: stripDid(item.quote), name: c.name, livre: c.livre, episode: c.episode, title: c.title, film: c.film,
-    inedit: item.inedit ? c.inedTxt : '', hide: !!item.hide,
+    inedit: item.inedit ? c.inedTxt : '', tourne: !!item.tourne, hide: !!item.hide,
     audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx };
 }
 
@@ -570,7 +571,7 @@ const plural = (n, w, ws = w + 's') => `${nf(n)} ${n > 1 ? ws : w}`;   // « 1 r
 const SEP = '<span class="sep" aria-hidden="true">·</span>';          // séparateur des lignes de résumé
 function fmtEp(q) {
   if (q.film) return `Film · ${q.film}`;
-  if (q.inedit) return `${q.inedit} · jamais tourné`;
+  if (q.inedit) return q.tourne ? q.inedit : `${q.inedit} · jamais tourné`;
   if (!q.livre && !q.episode) return '';
   let s = '';
   if (q.livre)   s += `Livre ${q.livre}`;

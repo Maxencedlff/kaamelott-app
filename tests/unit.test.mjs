@@ -118,3 +118,9 @@ test('aucun aplat de couleur arbitraire : ni palette, ni couleur par personnage 
   assert.ok(!/var\(--c[,)]/.test(css), 'style.css utilise encore la couleur par personnage');
   assert.ok(!/#[0-9a-f]{6}/i.test(src.replace(/\/\/.*$/gm, '')), 'couleur codée en dur dans app.js');
 });
+test('inédits : « jamais tourné » seulement pour ceux qui n’ont pas été tournés', () => {
+  const tourne = all.find(q => q.inedit && q.tourne), jamais = all.find(q => q.inedit && !q.tourne);
+  if (tourne) assert.equal(t.fmtEp(tourne), tourne.inedit, 'inédit tourné affiché « Inédit N : Titre »');
+  assert.ok(jamais && /· jamais tourné$/.test(t.fmtEp(jamais)), 'inédit jamais tourné sans sa mention');
+  assert.ok(!all.some(q => q.inedit && !q.tourne && (q.audio || q.video)), 'inédit jamais tourné avec média');
+});

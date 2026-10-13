@@ -10,7 +10,7 @@ APP = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path
 OLD = sys.argv[2] if len(sys.argv) > 2 else None
 d = json.load(open(os.path.join(APP, "data.json"), encoding="utf-8"))
 err, warn = [], []
-ALLOWED = {"character": str, "quote": str, "audio": str, "video": str, "v": int, "vv": int, "approx": int, "inedit": int, "hide": (int, bool)}
+ALLOWED = {"character": str, "quote": str, "audio": str, "video": str, "v": int, "vv": int, "approx": int, "inedit": int, "tourne": int, "hide": (int, bool)}
 SRC = re.compile(r"livre\s+(I{1,3}V?|VI?)|épisode\s+\d+|premier volet|inédit", re.I)
 if not isinstance(d, list) or not d:
     print("data.json : pas une liste non vide"); sys.exit(1)
@@ -25,7 +25,8 @@ for i, it in enumerate(d):
     if a and a.startswith("sons/auto/") and not re.fullmatch(r"sons/auto/[0-9a-f]{12}\.m4a", a): err.append(f"{i}: clé son {a!r}")
     if a and not a.startswith("sons/auto/") and not os.path.exists(os.path.join(APP, a)): err.append(f"{i}: son manuel absent {a}")
     if it.get("video") and not re.fullmatch(r"[0-9a-f]{12}", it["video"]): err.append(f"{i}: clé vidéo {it['video']!r}")
-    if it.get("inedit") and (a or it.get("video")): err.append(f"{i}: inédit avec média")
+    if it.get("inedit") and not it.get("tourne") and (a or it.get("video")): err.append(f"{i}: inédit jamais tourné avec média")
+    if it.get("tourne") and not it.get("inedit"): err.append(f"{i}: tourne sans inedit")
     if (it.get("v") and not a) or (it.get("vv") and not it.get("video")) or (it.get("approx") and not a): err.append(f"{i}: v/vv/approx sans média")
 for k in ("audio", "video"):
     dup = [x for x, n in Counter(it.get(k) for it in d if it.get(k)).items() if n > 1]
