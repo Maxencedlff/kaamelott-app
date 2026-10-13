@@ -993,6 +993,120 @@ def scenario_fonctions(w):
     w.step("Appareil trop ancien : message au lieu d'un chargement sans fin", s_compat)
 
 
+def scenario_sombre(w):
+    """Mode sombre (réglage de l'appareil) : teintes iOS, texte lisible, couleurs des personnages lisibles en blanc."""
+    S = {}
+
+    def lum(c):
+        import re as _re
+        r, g, b = [int(x) for x in _re.findall(r"\d+", c)[:3]]
+        f = lambda v: (v / 255 / 12.92) if v / 255 <= .04045 else ((v / 255 + .055) / 1.055) ** 2.4
+        return .2126 * f(r) + .7152 * f(g) + .0722 * f(b)
+    ratio = lambda a, b: (max(lum(a), lum(b)) + .05) / (min(lum(a), lum(b)) + .05)
+
+    def s_main(rec):
+        pg = S["pg"] = w.new_page(w.ctx()); w.goto(pg)
+        r = pg.evaluate("""() => { const cs = e => getComputedStyle(document.querySelector(e));
+          const metas = [...document.querySelectorAll('meta[name=theme-color]')].map(m => [m.media, m.content]);
+          return { dark: matchMedia('(prefers-color-scheme: dark)').matches, body: cs('body').backgroundColor, ink: cs('body').color,
+                   card: cs('#quote-card').backgroundColor, quote: cs('#quote-card .quote').color, who: cs('#btn-who').color,
+                   tabs: cs('.tabs').backgroundColor, metas }; }""")
+        w.shot(pg, rec, "50-sombre-replique")
+        if not r["dark"]: raise RuntimeError("le navigateur n'est pas en mode sombre")
+        if r["body"] != "rgb(0, 0, 0)": raise RuntimeError(f"fond sombre attendu #000 : {r['body']}")
+        if ratio(r["ink"], r["body"]) < 15: raise RuntimeError(f"texte peu lisible sur fond sombre : {r['ink']}")
+        if ratio(r["quote"], r["card"]) < 4.5: raise RuntimeError(f"réplique peu lisible sur la pochette : {r['quote']} / {r['card']}")
+        if ratio(r["who"], r["body"]) < 4.5: raise RuntimeError(f"nom (rouge) peu lisible : {r['who']}")
+        if ["(prefers-color-scheme: dark)", "#000000"] not in r["metas"]: raise RuntimeError(f"theme-color sombre absent : {r['metas']}")
+        return f"fond {r['body']}, texte {r['ink']}, pochette {r['card']} ; theme-color clair et sombre"
+    w.step("Sombre : Répliques, contrastes, theme-color", s_main)
+
+    def s_colors(rec):
+        pg = S["pg"]
+        w.nav(pg, "personnages")
+        bad = pg.evaluate("""() => [...document.querySelectorAll('.av[style]')].map(a => [a.textContent, getComputedStyle(a).backgroundColor, getComputedStyle(a).color])""")
+        w.shot(pg, rec, "51-sombre-personnages")
+        low = [b for b in bad if ratio(b[1], b[2]) < 4.5]
+        if not bad or low: raise RuntimeError(f"ronds de personnages peu lisibles en blanc : {low[:3]}")
+        return f"{len(bad)} ronds de couleur, tous lisibles en blanc (≥ 4,5:1)"
+    w.step("Sombre : couleurs des personnages lisibles", s_colors)
+
+    def s_sheet(rec):
+        pg = S["pg"]
+        w.nav(pg, "citations")
+        pg.click("#btn-settings"); pg.wait_for_selector("#sheet:not([hidden]) #sh-title"); pg.wait_for_timeout(400)
+        r = pg.evaluate("({ sheet: getComputedStyle(document.getElementById('sheet')).backgroundColor, cell: getComputedStyle(document.querySelector('#sheet .g')).backgroundColor })")
+        w.shot(pg, rec, "52-sombre-reglages")
+        if r["sheet"] != "rgb(28, 28, 30)" or r["cell"] != "rgb(44, 44, 46)": raise RuntimeError(f"feuille sombre : {r}")
+        pg.click("#sheet-close")
+        return f"feuille #1c1c1e, cellules #2c2c2e"
+    w.step("Sombre : feuille Réglages", s_sheet)
+
+    def s_quiz(rec):
+        pg = S["pg"]
+        w.nav(pg, "quiz"); pg.locator(".choice").first.click(); pg.wait_for_selector(".choice.right"); pg.wait_for_timeout(500)
+        w.shot(pg, rec, "53-sombre-quiz")
+        w.nav(pg, "personnages"); pg.locator(".idx-row").first.click(); pg.wait_for_selector("#detail-overlay:not(.hidden) .fiche-h h1"); pg.wait_for_timeout(400)
+        w.shot(pg, rec, "54-sombre-fiche")
+        pg.close()
+    w.step("Sombre : quiz et fiche", s_quiz)
+
+
+def scenario_mini(w):
+    """Mini-lecteur : le son continue quand on change d'onglet ; lecture / pause, retour à la réplique, fermeture."""
+    S = {}
+    state = "() => ({ mini: !document.getElementById('mini').hidden, paused: __kaam.player.paused, ended: __kaam.player.ended, idx: __kaam.quoteIdx, txt: document.getElementById('mini').innerText })"
+
+    def s_tab(rec):
+        pg = S["pg"] = w.new_page(w.ctx(), {"kaam_audio_only": "1"}); w.goto(pg)
+        S["idx"] = pg.evaluate("__kaam.quoteIdx")
+        if not pg.evaluate("document.getElementById('mini').hidden"): raise RuntimeError("mini-lecteur visible sur l'écran Répliques")
+        pg.click("#btn-audio"); pg.wait_for_function("() => !__kaam.player.paused && __kaam.player.currentTime > 0", timeout=6000)
+        pg.evaluate("__kaam.player.loop = true")            # le son muet du banc dure 1 s : on le fait durer
+        w.nav(pg, "personnages")
+        r = pg.evaluate(state)
+        w.shot(pg, rec, "55-mini-lecteur")
+        if not r["mini"] or r["paused"]: raise RuntimeError(f"le son ne continue pas dans le mini-lecteur : {r}")
+        name = pg.evaluate("__kaam.allQuotes[__kaam.quoteIdx].name")
+        if name.split()[0].lower() not in r["txt"].lower(): raise RuntimeError(f"mini-lecteur sans le bon nom : {r['txt']!r}")
+        pg.locator(".idx-row").first.click(); pg.wait_for_selector("#detail-overlay:not(.hidden) .fiche-h h1")
+        r2 = pg.evaluate(state)
+        if not r2["mini"] or r2["paused"]: raise RuntimeError(f"fiche ouverte : le son s'est arrêté : {r2}")
+        return "le son continue sur Personnages et dans la fiche ; mini-lecteur visible avec la réplique"
+    w.step("Mini-lecteur : le son continue d'un onglet à l'autre", s_tab)
+
+    def s_ctrl(rec):
+        pg = S["pg"]
+        pg.click("#mini-play"); pg.wait_for_timeout(150)
+        if not pg.evaluate("__kaam.player.paused"): raise RuntimeError("Pause du mini-lecteur sans effet")
+        lab = pg.evaluate("document.getElementById('mini-play').getAttribute('aria-label')")
+        pg.click("#mini-play"); pg.wait_for_function("() => !__kaam.player.paused", timeout=5000)
+        pg.click("#mini-open"); pg.wait_for_function("() => document.querySelector('.nav-btn[data-view=citations]').classList.contains('active')")
+        pg.wait_for_timeout(200)
+        r = pg.evaluate(state)
+        cls = pg.evaluate("document.getElementById('btn-audio').className")
+        w.shot(pg, rec, "56-mini-retour")
+        if r["idx"] != S["idx"] or r["paused"] or r["mini"] or "playing" not in cls:
+            raise RuntimeError(f"retour à la réplique : {r} bouton={cls}")
+        w.nav(pg, "favoris")
+        pg.click("#mini-close"); pg.wait_for_timeout(150)
+        r3 = pg.evaluate(state)
+        pg.close()
+        if r3["mini"] or not r3["paused"]: raise RuntimeError(f"Fermer n'arrête pas le son : {r3}")
+        return f"Pause / Lecture ({lab}), retour à la même réplique sans couper le son, Fermer arrête tout"
+    w.step("Mini-lecteur : pause, retour à la réplique, fermer", s_ctrl)
+
+    def s_text(rec):
+        pg = w.new_page(w.ctx()); w.goto(pg)
+        pg.evaluate("() => { const A = __kaam.allQuotes; __kaam.quoteIdx = A.findIndex(q => !q.audio && !q.video); __kaam.render(); }")
+        r = pg.evaluate("({ audio: !!document.getElementById('btn-audio'), badge: document.querySelector('#scrub .badge').textContent, nil: !!document.querySelector('.transport .tp.nil') })")
+        w.shot(pg, rec, "57-texte-seul")
+        pg.close()
+        if r["audio"] or r["badge"] != "Texte seul" or not r["nil"]: raise RuntimeError(f"réplique sans son : {r}")
+        return "lecteur grisé « Texte seul », même disposition"
+    w.step("Réplique sans son : lecteur grisé « Texte seul »", s_text)
+
+
 def worker_main(kind, base, out):
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
@@ -1019,6 +1133,11 @@ def worker_main(kind, base, out):
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_video_sound(w)
             elif kind == "fonctions":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_fonctions(w)
+            elif kind == "sombre":
+                d = dict(p.devices["iPhone 13"]); d["color_scheme"] = "dark"
+                w.setup(wk, d, ios_policy=True); scenario_sombre(w)
+            elif kind == "mini-lecteur":
+                w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_mini(w)
             elif kind == "combos":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_combos(w)
         except Exception:
@@ -1108,7 +1227,7 @@ def main():
             print("serveur local injoignable"); return 2
         print(f"App : {APP}\nServeur : {base}")
         checks = quick_checks()
-        jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions"]
+        jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions", "sombre", "mini-lecteur"]
         if not quick:
             jobs += ["iphone13", "combos"]
         for kind in jobs:

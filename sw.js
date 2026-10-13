@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v34';
+const CACHE = 'kaamelott-v35';
 const DATA_CACHE = 'kaamelott-data';   // jamais versionné : le vider forcerait 7 Mo de téléchargement à chaque mise à jour
 const ASSETS = [
   '/',
@@ -7,9 +7,10 @@ const ASSETS = [
   '/compat.js',
   '/app.js',
   '/manifest.json',
-  '/fonts/archivo-var.woff2',
-  '/fonts/ebgaramond-400.woff2',
-  '/fonts/plexmono-400.woff2',
+  '/fonts/inter-400.woff2',
+  '/fonts/inter-500.woff2',
+  '/fonts/inter-600.woff2',
+  '/fonts/inter-700.woff2',
   '/icon-180.png',
   '/icon-192.png',
   '/icon-512.png'
