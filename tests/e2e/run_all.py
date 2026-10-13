@@ -469,9 +469,18 @@ def scenario_screens(w):
     def s_fiche_bar(rec):
         pg = state["page"]
         pg.evaluate("document.getElementById('fiche-scroll').scrollTop = 600"); pg.wait_for_timeout(450)
+        try:                                   # machine chargée (CI) : laisser finir la transition d'opacité
+            pg.wait_for_function("() => document.querySelector('#detail-overlay .back').classList.contains('solid')"
+                                 " && +getComputedStyle(document.querySelector('.back .nt')).opacity >= .99", timeout=4000)
+        except Exception:
+            pass
         r = pg.evaluate("() => ({ solid: document.querySelector('#detail-overlay .back').classList.contains('solid'), nt: getComputedStyle(document.querySelector('.back .nt')).opacity })")
         w.shot(pg, rec, "10b-fiche-barre")
         pg.evaluate("document.getElementById('fiche-scroll').scrollTop = 0"); pg.wait_for_timeout(350)
+        try:
+            pg.wait_for_function("() => !document.querySelector('#detail-overlay .back').classList.contains('solid')", timeout=4000)
+        except Exception:
+            pass
         back = pg.evaluate("document.querySelector('#detail-overlay .back').classList.contains('solid')")
         if not r["solid"] or float(r["nt"]) < .99 or back: raise RuntimeError(f"barre de la fiche : {r}, revenue en haut solid={back}")
         pg.click("#detail-back"); pg.wait_for_selector("#detail-overlay.hidden", state="attached")
