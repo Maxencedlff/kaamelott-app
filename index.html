@@ -1,11 +1,12 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" class="launching" style="background:#000">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
-  <meta name="color-scheme" content="light dark">
+  <!-- noir dès le premier rendu (écran de lancement) ; app.js repasse à « light dark » quand il s'efface -->
+  <meta name="color-scheme" content="dark" id="meta-cs">
   <meta name="description" content="Répliques, quiz et personnages de Kaamelott">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -13,7 +14,46 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-180.png">
+  <!-- écrans de lancement iOS : K blanc sur noir, le même dans les deux modes (iOS fige l'image à l'ajout sur l'écran d'accueil).
+       Générés par tests/outils/generer_ecrans_lancement.py ; un futur iPhone = une ligne de plus dans ce script. -->
+  <!-- iPhone SE 2e/3e gén., 8, 7, 6s -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <!-- iPhone 8 Plus, 7 Plus -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-1242x2208.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <!-- iPhone X, XS, 11 Pro, 12 mini, 13 mini -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-1125x2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <!-- iPhone XR, 11 -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-828x1792.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+  <!-- iPhone XS Max, 11 Pro Max -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-1242x2688.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <!-- iPhone 12, 12 Pro, 13, 13 Pro, 14, 16e -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-1170x2532.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <!-- iPhone 12 Pro Max, 13 Pro Max, 14 Plus -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-1284x2778.png" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <!-- iPhone 14 Pro, 15, 15 Pro, 16 -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-1179x2556.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <!-- iPhone 14 Pro Max, 15 Plus, 15 Pro Max, 16 Plus -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <!-- iPhone 16 Pro, 17, 17 Pro -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-1206x2622.png" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <!-- iPhone Air -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-1260x2736.png" media="(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+  <!-- iPhone 16 Pro Max, 17 Pro Max -->
+  <link rel="apple-touch-startup-image" href="/splash/launch-1320x2868.png" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
   <title>Kaamelott</title>
+  <!-- premier écran identique à l'image de lancement : noir dès le premier octet, sans attendre style.css -->
+  <style>
+    html.launching, html.launching body { background: #000; }
+    .launch { position: fixed; inset: 0; z-index: 100; background: #000; transition: opacity .25s cubic-bezier(.25,.1,.25,1); }
+    .launch.out { opacity: 0; pointer-events: none; }
+    .launch-k { position: absolute; left: 50%; top: var(--kc, 50%); height: 64px; width: auto; transform: translate(-50%, -50%); }
+    .launch-slow { position: absolute; left: 0; right: 0; top: calc(var(--kc, 50%) + 64px); display: flex; flex-direction: column; align-items: center; gap: 10px; opacity: 0; transition: opacity .3s; }
+    .launch-slow.on { opacity: 1; }
+    .launch-slow .rail { width: 120px; height: 3px; border-radius: 1.5px; background: #2c2c2e; }
+    .launch-slow .rail i { background: #8e8e93; }
+    .launch-slow .m { font-size: 13px; color: #8e8e93; font-variant-numeric: tabular-nums; }
+    @media (prefers-reduced-motion: reduce) { .launch { transition-duration: .12s; } }
+  </style>
   <!-- Inter : repli des appareils sans SF Pro (sur iPhone, -apple-system passe avant et ces fichiers ne servent pas) -->
   <link rel="preload" href="fonts/inter-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/inter-600.woff2" as="font" type="font/woff2" crossorigin>
@@ -21,16 +61,23 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div class="launch" id="launch" role="status" aria-label="Kaamelott, chargement des répliques">
+    <svg class="launch-k" viewBox="175 152 175 208" aria-hidden="true"><path d="M175 152H219V245.5L296.6 152H348L271.4 244.4L350 360H297L240.5 273L219 299V360H175Z" fill="#fff"/></svg>
+    <div class="launch-slow"><div class="rail indet"><i></i></div><div class="m"></div></div>
+  </div>
+  <!-- tout de suite après l'écran de lancement (CSP : aucun script en ligne) : recentre le K, et dit « appareil trop ancien » si app.js ne tourne pas -->
+  <script src="compat.js"></script>
   <div id="app">
     <header class="mast" id="main-header">
       <span class="mast-sub" id="mast-sub"><span class="mt">Répliques</span></span>
       <span class="mast-ct" id="mast-ct" aria-hidden="true">Répliques</span>
+      <button class="scope" id="mast-scope" aria-haspopup="dialog" hidden><span class="sl"></span><svg viewBox="0 0 28 28" aria-hidden="true"><use href="#i-down"/></svg></button>
       <button class="round" id="mast-set" aria-label="Réglages" hidden><svg viewBox="0 0 28 28" aria-hidden="true"><use href="#i-sliders"/></svg></button>
     </header>
 
     <main id="main-content">
-      <!-- même texte que l'écran de chargement d'app.js : visible avant l'exécution du script (compat.js le remplace si l'appareil est trop ancien) -->
-      <div class="boot"><div class="t">Chargement des répliques…</div></div>
+      <!-- vide : l'écran de lancement le couvre (compat.js y écrit si l'appareil est trop ancien) -->
+      <div class="boot"></div>
     </main>
 
     <div id="detail-overlay" class="hidden"></div>
@@ -75,6 +122,7 @@
       <symbol id="i-film" viewBox="0 0 28 28"><rect x="3" y="6" width="22" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M12 10.6v6.8l5.6-3.4z" fill="currentColor"/></symbol>
       <symbol id="i-share" viewBox="0 0 28 28"><path d="M14 3.5v14M9.5 8 14 3.5 18.5 8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11.5H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
       <symbol id="i-sliders" viewBox="0 0 28 28"><path d="M4.5 8h11M20.5 8h3M4.5 14h3M12.5 14h11M4.5 20h9M18.5 20h5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="18" cy="8" r="2.5" fill="none" stroke="currentColor" stroke-width="1.9"/><circle cx="10" cy="14" r="2.5" fill="none" stroke="currentColor" stroke-width="1.9"/><circle cx="16" cy="20" r="2.5" fill="none" stroke="currentColor" stroke-width="1.9"/></symbol>
+      <symbol id="i-down" viewBox="0 0 28 28"><path d="M6.5 10.5 14 18l7.5-7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-chev" viewBox="0 0 28 28"><path d="M11 6.5 18.5 14 11 21.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-back" viewBox="0 0 28 28"><path d="M17 5.5 8.5 14l8.5 8.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-check" viewBox="0 0 28 28"><path d="M6 14.5l5 5L22.5 8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -85,7 +133,6 @@
     </defs>
   </svg>
 
-  <script src="compat.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

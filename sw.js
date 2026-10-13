@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v45';
+const CACHE = 'kaamelott-v46';
 const DATA_CACHE = 'kaamelott-data';
 // Portraits des personnages (img/perso/, ~200 × 3 petits JPEG) : noms à empreinte, donc immuables. Cache à part, jamais
 // vidé par une mise à jour ; servis depuis le cache dès la première vue, plafonné à IMG_MAX fichiers (les plus anciens sortent).
@@ -20,6 +20,7 @@ const ASSETS = [
   '/icon-192.png',
   '/icon-512.png'
 ];
+const SHELL = new Set(ASSETS.filter(u => !u.startsWith('/fonts/') && u !== '/perso.json'));
 // Au-delà de ce délai, la copie en cache est servie ; le réseau continue et met le cache à jour pour la fois suivante
 const SHELL_WAIT = 2500;
 // Après un dépassement, le réseau est jugé lent pendant 15 s : les fichiers suivants (app.js, style.css…) sortent aussitôt
@@ -152,6 +153,15 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // HTML, JS, CSS, icônes : réseau d'abord, limité dans le temps
+  // Coquille de l'app (page, app.js, style.css, compat.js, manifeste, icônes) : servie TOUT DE SUITE depuis le cache de
+  // cette version (jamais d'attente réseau : la page noire au K s'affiche aussitôt). Le jeu de fichiers est cohérent, car
+  // rangé d'un bloc à l'installation ; une nouvelle version arrive par un nouveau sw.js (message SW_UPDATED, rechargement
+  // à un moment neutre). Fichier absent du cache : réseau d'abord, limité dans le temps.
+  if (e.request.mode === 'navigate' || SHELL.has(url.pathname)) {
+    e.respondWith(caches.open(CACHE).then(c => c.match(e.request, { ignoreSearch: e.request.mode === 'navigate' })
+      .then(hit => hit || (e.request.mode === 'navigate' ? c.match('/index.html') : undefined)))
+      .then(hit => hit || networkFirst(e), () => networkFirst(e)));
+    return;
+  }
   e.respondWith(networkFirst(e));
 });

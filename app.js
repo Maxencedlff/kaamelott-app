@@ -9,10 +9,16 @@ let allQuotes = [];       // répliques lues (parseQuote), sans les doublons mas
 let audioIdx = [];        // positions des répliques avec son
 let videoIdx = [];        // positions des répliques avec scène
 let favorites = [];       // favoris enregistrés (kaam_fav), tels qu'enregistrés
-// Préférences (clés localStorage inchangées)
-let source = readStr('kaam_source', 'all');     // toute la série (all), seulement la série (serie) ou le film (film)
-let audioOnly = readPref('kaam_audio_only');   // n'afficher que les répliques avec son
-let videoOnly = readPref('kaam_video_only');   // mode vidéo : seulement ces répliques, scène jouée dans la carte
+// Préférences
+// Sélection : parties cochées (kaam_sel), dans l'ordre canonique ; [] possible (écran « Aucune sélection »).
+// Affichage (kaam_media) : video (défaut de qui n'a jamais choisi), audio ou text.
+// Les anciennes clés (kaam_source, kaam_video_only, kaam_audio_only) sont lues pour la migration, jamais réécrites ni effacées.
+const PART_IDS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'film', 'in1', 'in2', 'in3'];
+const ROM = ['I', 'II', 'III', 'IV', 'V', 'VI'];
+let sel = loadSel();
+let media = loadMedia();
+let videoOnly = media === 'video';   // mode vidéo : seulement les répliques avec scène, scène jouée dans la carte
+let audioOnly = media === 'audio';   // n'afficher que les répliques avec son
 let autoPlay  = readPref('kaam_autoplay');     // jouer le son dès qu'on tombe sur la réplique
 let inOrder   = readPref('kaam_in_order');     // toucher / glisser : réplique suivante dans l'ordre au lieu d'aléatoire
 let verifyMode = readPref('kaam_verify');      // ne montrer que les répliques avec son/vidéo pas encore vérifiées
@@ -24,7 +30,7 @@ let randPos = -1;         // position courante dans randHistory
 let nextRand = null;      // prochaine réplique aléatoire, tirée à l'avance pour être préchargée
 let quizState = null;     // score du quiz libre (session)
 // Vérification (avis son / vidéo envoyés à /api/avis)
-let verifyIdx = [];                                 // positions encore à vérifier dans la source choisie
+let verifyIdx = [];                                 // positions encore à vérifier dans la sélection
 let verifyApprox = false;                           // vrai si ce sont les sons les moins sûrs (passent en premier)
 let verifyTodo = { approx: 0, others: 0 };
 let avisFaits = readJSON('kaam_avis_faits', {});   // q.i → 1 validée, 2 signalée (sur cet appareil)
@@ -45,14 +51,70 @@ function audioURL(src) {
 }
 function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4${q.vv ? `?v=${q.vv}` : ''}` : null; }
 
-// ===== SOURCE : toute la série, ou seulement la série, ou seulement le film =====
+// ===== SÉLECTION : Livres I à VI, film, inédits 1 à 3 (cases de la feuille « Sélection ») =====
+function loadSel() {
+  try {
+    const raw = localStorage.getItem('kaam_sel');
+    if (raw != null) { const v = JSON.parse(raw); if (Array.isArray(v)) return PART_IDS.filter(id => v.includes(id)); }
+  } catch {}
+  const old = readStr('kaam_source', 'all');            // migration : « Série » = tout sauf le film (inédits compris)
+  return old === 'film' ? ['film'] : old === 'serie' ? PART_IDS.filter(id => id !== 'film') : PART_IDS.slice();
+}
+function loadMedia() {
+  const m = readStr('kaam_media', '');
+  if (m === 'video' || m === 'audio' || m === 'text') return m;
+  let v = null, a = null;
+  try { v = localStorage.getItem('kaam_video_only'); a = localStorage.getItem('kaam_audio_only'); } catch {}
+  if (v === '1') return 'video';
+  if (a === '1') return 'audio';
+  if (v === '0' || a === '0') return 'text';            // Texte choisi explicitement : respecté
+  return 'video';                                       // jamais choisi : Vidéo par défaut
+}
+// rien n'est écrit au chargement : la nouvelle clé ne l'est qu'au premier changement fait par l'utilisateur
+function saveSel() { writeJSON('kaam_sel', sel); }
+function setMediaPref(m) { media = m; videoOnly = m === 'video'; audioOnly = m === 'audio'; writeStr('kaam_media', m); poolCache.clear(); }
+// Partie d'une réplique (calculée une fois, dans parseQuote)
+function partOf(c, inedit) {
+  if (c.film) return 'film';
+  if (inedit) { const m = /Inédit (\d)/.exec(c.inedTxt); return m ? 'in' + m[1] : null; }
+  const k = ROM.indexOf(c.livre); return k >= 0 ? 'L' + (k + 1) : null;
+}
+const selAll = () => sel.length === PART_IDS.length;
+const inSel = q => selAll() || sel.includes(q.part);
+// Nombre de répliques par partie : t toutes, a avec son, v avec scène (calculé une fois par chargement des données)
+let countsMemo = null;
+function partCounts() {
+  if (countsMemo && countsMemo.src === allQuotes) return countsMemo.c;
+  const c = Object.fromEntries(PART_IDS.map(id => [id, { t: 0, a: 0, v: 0 }]));
+  allQuotes.forEach(q => { const x = c[q.part]; if (x) { x.t++; if (q.audio) x.a++; if (q.video) x.v++; } });
+  countsMemo = { src: allQuotes, c };
+  return c;
+}
+const unitKey = () => videoOnly ? 'v' : audioOnly ? 'a' : 't';
+function selCount(s = sel) { const c = partCounts(), k = unitKey(); return s.reduce((n, id) => n + c[id][k], 0); }
+// Résumé de la sélection, en toutes lettres (« Livres I et II · Film », « Livres I à III », « Tout Kaamelott »)
+function scopeLabel(s = sel) {
+  const has = id => s.includes(id);
+  if (PART_IDS.every(has)) return 'Tout Kaamelott';
+  if (!s.length) return 'Aucune sélection';
+  const books = [1, 2, 3, 4, 5, 6].filter(n => has('L' + n)), ined = [1, 2, 3].filter(n => has('in' + n)), out = [];
+  if (books.length === 6) out.push('Toute la série');
+  else if (books.length) {
+    const runs = []; books.forEach(n => { const r = runs[runs.length - 1]; if (r && r[1] === n - 1) r[1] = n; else runs.push([n, n]); });
+    const bits = runs.flatMap(([a, b]) => b - a >= 2 ? [`${ROM[a - 1]} à ${ROM[b - 1]}`] : b > a ? [ROM[a - 1], ROM[b - 1]] : [ROM[a - 1]]);
+    out.push((books.length > 1 ? 'Livres ' : 'Livre ') + (bits.length > 1 ? bits.slice(0, -1).join(', ') + ' et ' + bits[bits.length - 1] : bits[0]));
+  }
+  if (has('film')) out.push('Film');
+  if (ined.length === 3) out.push('Inédits');
+  else if (ined.length) out.push((ined.length > 1 ? 'Inédits ' : 'Inédit ') + ined.join(' et '));
+  return out.join(' · ');
+}
 const poolCache = new Map();
-function bySource(arr) {
-  if (source === 'all') return arr;
-  const key = `${source}|${arr === null ? 'all' : arr === audioIdx ? 'a' : arr === videoIdx ? 'v' : 'x' + arr.length}`;
+function bySel(arr) {
+  if (selAll()) return arr;
+  const key = `${sel.join()}|${arr === null ? 'all' : arr === audioIdx ? 'a' : arr === videoIdx ? 'v' : 'x'}`;
   if (arr !== verifyIdx && poolCache.has(key)) return poolCache.get(key);
-  const base = arr || allQuotes.map((_, i) => i);
-  const out = base.filter(i => inSrc(allQuotes[i], source));
+  const out = (arr || allQuotes.map((_, i) => i)).filter(i => inSel(allQuotes[i]));
   if (arr !== verifyIdx) poolCache.set(key, out);
   return out;
 }
@@ -101,7 +163,9 @@ function mediaSrc(url) {
 }
 // Répliques probables après celle-ci : on précharge leur vidéo (modes vidéo / vérification) et leur son
 function prefetchAround() {
+  if (navigator.connection?.saveData) return;      // économie de données (Android) : seule la carte affichée se télécharge
   const P = pool();
+  if (P && !P.length) return;
   const next = [];
   // dans l'ordre : les deux suivantes ; en aléatoire : la prochaine tirée à l'avance (la seule qui sera montrée)
   if (inOrder) {
@@ -116,7 +180,8 @@ function prefetchAround() {
     if (q.audio && (autoPlay || verifyMode || audioOnly)) cachedMedia(audioURL(q.audio));
   });
 }
-function pickRandom() { return pool() ? rand(pool()) : Math.floor(Math.random() * allQuotes.length); }
+// pool vide (sélection sans réplique) : une réplique quelconque, pour que quoteIdx reste valide ; l'écran vide prend le relais
+function pickRandom() { const P = pool(); return P && P.length ? rand(P) : Math.floor(Math.random() * allQuotes.length); }
 
 // Un seul lecteur vidéo pour toutes les cartes : une fois le son autorisé par un toucher (iOS), il le reste
 const cardVideo = document.createElement('video');
@@ -219,17 +284,17 @@ function playCardVideo(q, fig) {
   });
 }
 
-// Répliques parcourues (aléatoire / ordre) selon les filtres actifs
+// Répliques parcourues (aléatoire / ordre) selon la sélection et l'affichage : null = toutes, [] = aucune (écran vide)
 function pool() {
-  let P;
-  if (verifyMode) P = verifyIdx;
-  else if (videoOnly && videoIdx.length) P = bySource(videoIdx);
-  else if (audioOnly && audioIdx.length) P = bySource(audioIdx);
-  else P = source === 'all' ? null : bySource(null);
-  // filtres sans aucune réplique (ex. tout vérifié) : on retombe sur la source seule, jamais sur une liste vide
-  if (P && !P.length) P = source === 'all' ? null : bySource(null);
-  return P && P.length ? P : null;
+  if (verifyMode) {                         // jamais vide : l'écran « tout vérifié » prend le relais
+    if (verifyIdx.length) return verifyIdx;
+    const P = bySel(null); return P && P.length ? P : null;
+  }
+  if (videoOnly && videoIdx.length) return bySel(videoIdx);
+  if (audioOnly && audioIdx.length) return bySel(audioIdx);
+  return bySel(null);
 }
+const poolEmpty = () => { const P = pool(); return !!P && P.length === 0; };
 // ===== VÉRIFICATION (avis son / vidéo justes ou non, envoyés à /api/avis) =====
 // lecture validée : une valeur abîmée (autre type que la valeur par défaut) est ignorée en mémoire, jamais réécrite
 function readJSON(k, def) {
@@ -240,9 +305,9 @@ function readJSON(k, def) {
 function writeJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } }
 // Les sons estimés (≈), les moins sûrs, passent en premier ; les autres ensuite
 function rebuildVerify() {
-  // dans la source choisie (Tout / Série / Film)
+  // dans la sélection (Livres, film, inédits cochés)
   const todo = allQuotes.reduce((acc, q, i) => ((q.audio || q.video) && !avisFaits[q.i]
-    && inSrc(q, source) && acc.push(i), acc), []);
+    && inSel(q) && acc.push(i), acc), []);
   const approx = todo.filter(i => allQuotes[i].approx);
   verifyApprox = approx.length > 0;
   verifyIdx = verifyApprox ? approx : todo;
@@ -410,7 +475,7 @@ function parseCharacter(raw) {
     episode: epM ? epM[1] : '',
     title: epM && epM[2] ? epM[2].trim() : '',
     film: /premier volet/i.test(rest) ? 'Kaamelott : Premier Volet' : '',
-    inedTxt: inedM ? `Inédit ${inedM[1]} : ${inedM[2].trim()}` : 'Inédit',
+    inedTxt: inedM ? `Inédit ${inedM[1]} : ${titleCase(inedM[2].trim())}` : 'Inédit',   // « Le Spectre D'Uther » → « d'Uther »
   };
   charMemo.set(raw, c);
   return c;
@@ -427,19 +492,23 @@ function stripDid(t) {
 function parseQuote(item, i) {
   const c = parseCharacter(item.character || '');
   return { i, quote: stripDid(item.quote), name: c.name, livre: c.livre, episode: c.episode, title: c.title, film: c.film,
-    inedit: item.inedit ? c.inedTxt : '', tourne: !!item.tourne, hide: !!item.hide,
+    inedit: item.inedit ? c.inedTxt : '', tourne: !!item.tourne, hide: !!item.hide, part: partOf(c, item.inedit),
     audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx };
 }
 
 const DATA_BYTES = 7000000;   // taille approximative de data.json (le serveur l'envoie compressé, sans longueur)
 function bootProgress(got, total) {
-  const rail = document.querySelector('.boot .rail');
+  const box = document.getElementById('launch') ? '#launch' : '.boot';   // écran de lancement tant qu'il est là
+  const rail = document.querySelector(`${box} .rail`);
   if (!rail) return;
   const pc = Math.min(99, Math.round(got / total * 100));
   rail.classList.remove('indet');
   rail.style.setProperty('--p', pc + '%');
-  const m = document.querySelector('.boot .m');
-  if (m) m.innerHTML = `<span>${(got / 1e6).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Mo sur ${(Math.max(got, total) / 1e6).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Mo</span><span>${pc} %</span>`;
+  const m = document.querySelector(`${box} .m`);
+  const mo = x => (x / 1e6).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (m) m.innerHTML = box === '#launch'
+    ? `Premier lancement · ${mo(got)} Mo sur ${mo(Math.max(got, total))} Mo`
+    : `<span>${mo(got)} Mo sur ${mo(Math.max(got, total))} Mo</span><span>${pc} %</span>`;
 }
 async function loadData() {
   const perso = loadPerso();   // en parallèle des répliques ; jamais bloquant (sans liste : les initiales)
@@ -484,9 +553,10 @@ async function loadData() {
   allQuotes  = raw.map(parseQuote).filter(q => q.quote && q.name && !q.hide);   // hide : doublon masqué (index i conservé)
   audioIdx   = allQuotes.reduce((acc, q, i) => (q.audio && acc.push(i), acc), []);
   videoIdx   = allQuotes.reduce((acc, q, i) => (q.video && acc.push(i), acc), []);
+  poolCache.clear();
   rebuildVerify();
   if (!audioIdx.length) audioOnly = false;
-  if (!videoIdx.length) videoOnly = false;
+  if (!videoIdx.length) { videoOnly = false; if (media === 'video') media = audioOnly ? 'audio' : 'text'; }   // en mémoire seulement
 }
 
 // ===== STORAGE =====
@@ -745,7 +815,24 @@ const MAST = { quiz: 'Quiz', personnages: 'Personnages', recherche: 'Rechercher'
 function mastFor(view) { return view === 'citations' ? (verifyMode ? 'Vérification' : 'Répliques') : MAST[view]; }
 function refreshMast() { const el = document.getElementById('mast-sub'); if (el) setMast(el.dataset.t || el.textContent); }
 // bouton rond Réglages de l'en-tête : sur l'écran Répliques seulement
-function showMastSet() { const b = document.getElementById('mast-set'); if (b) b.hidden = !(currentView === 'citations' && allQuotes.length && document.getElementById('detail-overlay').classList.contains('hidden')); refreshSetBtn(); }
+function showMastSet() { const b = document.getElementById('mast-set'); if (b) b.hidden = !(currentView === 'citations' && allQuotes.length && document.getElementById('detail-overlay').classList.contains('hidden')); refreshSetBtn(); refreshScope(); }
+// Sélecteur de la sélection sous le grand titre (Répliques hors vérification, Quiz libre) ; #app.has-scope lui fait sa place.
+// Une page superposée (fiche, scène) le cache sans changer la mise en page dessous.
+let quizDaily = false;
+function refreshScope() {
+  const b = document.getElementById('mast-scope');
+  if (!b) return;
+  const on = !!allQuotes.length && ((currentView === 'citations' && !verifyMode) || (currentView === 'quiz' && !quizDaily));
+  const ov = !document.getElementById('detail-overlay').classList.contains('hidden');
+  document.getElementById('app').classList.toggle('has-scope', on);
+  b.hidden = !on || ov;
+  if (on) {
+    const l = scopeLabel();
+    const sl = b.querySelector('.sl');
+    if (sl.textContent !== l) sl.textContent = l;
+    b.setAttribute('aria-label', `Sélection : ${l}. Modifier`);
+  }
+}
 // Clavier (iPad, ordinateur) : flèches gauche / droite pour changer de réplique
 function onArrowKeys(e) {
   if (currentView !== 'citations' || sheetOpen() || !document.getElementById('detail-overlay').classList.contains('hidden')) return;
@@ -759,6 +846,7 @@ let sheetFocus = null;
 function openSheet(html) {
   const sheet = document.getElementById('sheet'), back = document.getElementById('sheet-back');
   if (sheet.hidden) sheetFocus = document.activeElement;
+  sheet.className = 'sheet';
   sheet.innerHTML = html;
   sheet.hidden = false; back.hidden = false;
   back.onclick = closeSheet;
@@ -800,9 +888,9 @@ function fitSheetToKeyboard() {
 }
 
 // ===== RÉGLAGES =====
-const SRC_LABEL = { all: 'Tout', serie: 'Série', film: 'Film' };
-function inSrc(q, s) { return s === 'all' || !!q.film === (s === 'film'); }   // la réplique appartient-elle à la source s
 function mediaMode() { return videoOnly ? 'video' : audioOnly ? 'audio' : 'text'; }
+// unité des nombres selon l'affichage : scènes (Vidéo), répliques avec son (Son), répliques (Texte)
+function unitPlural(n) { return videoOnly ? plural(n, 'scène') : audioOnly ? plural(n, 'réplique avec son', 'répliques avec son') : plural(n, 'réplique'); }
 function settingsHTML() {
   const m = mediaMode();
   // contrôle segmenté d'iOS : un bouton par valeur, coché ou non
@@ -810,7 +898,7 @@ function settingsHTML() {
     `<button role="radio" class="${on ? 'on' : ''}" aria-checked="${on}" ${attrs}${off ? ' disabled' : ''}>${label}</button>`).join('')}</div>`;
   const { approx, others } = verifyTodo;
   const todoTxt = approx + others === 0
-    ? 'Tout est vérifié sur ce téléphone pour cette source.'
+    ? 'Tout est vérifié sur ce téléphone pour cette sélection.'
     : approx
     ? `On commence par ${plural(approx, 'son')} ${approx > 1 ? 'les' : 'le'} moins sûr${approx > 1 ? 's' : ''}.`
     : `Il en reste ${nf(others)}.`;
@@ -819,16 +907,17 @@ function settingsHTML() {
   return `
     <div class="grab" aria-hidden="true"></div>
     <div class="sh-nav"><span></span><h2 id="sh-title">Réglages</h2><button class="r" id="sheet-close">OK</button></div>
-    <p class="gh">Source</p>
-    <div class="g"><div class="gr">${seg('Source', ['all', 'serie', 'film'].map(s => [source === s, `data-src="${s}"`, SRC_LABEL[s]]))}</div></div>
+    <p class="gh">Sélection</p>
+    <div class="g"><button class="gr" id="row-sel" aria-haspopup="dialog"><span class="k">Épisodes</span><span class="v">${esc(scopeLabel())}</span>${icon('chev', 'chev')}</button></div>
     <p class="gh">Affichage</p>
     <div class="g"><div class="gr${verifyMode ? ' dis' : ''}">${seg('Affichage', [[m === 'text', 'id="chip-text"', 'Texte'], [m === 'audio', 'id="chip-audio-only"', 'Son']]
       .concat(videoIdx.length ? [[m === 'video', 'id="chip-video-only"', 'Vidéo']] : []), verifyMode)}</div></div>
-    <p class="gf">Son et Vidéo ne gardent que les répliques qui en ont.</p>
+    <p class="gf">Vidéo montre la scène et ne garde que les répliques qui en ont. Chaque scène se télécharge à l’affichage (30 à 650 Ko).</p>
     <p class="gh">Ordre</p>
     <div class="g"><div class="gr${verifyMode ? ' dis' : ''}">${seg('Ordre', [[!inOrder, 'data-order="random"', 'Aléatoire'], [inOrder, 'data-order="seq"', 'Dans l’ordre']], verifyMode)}</div>
       <button class="gr${verifyMode ? ' dis' : ''}" id="sw-auto" role="switch" aria-checked="${autoPlay}" data-auto="${autoPlay ? 0 : 1}"${verifyMode ? ' disabled' : ''}><span class="k">Lecture auto<small>Le son part dès qu’une réplique s’affiche</small></span><span class="sw" aria-hidden="true"></span></button></div>
-    <p class="gf" role="status">${verifyMode ? 'Affichage, ordre et lecture auto sont suspendus pendant la vérification.' : `<b>${plural(n, 'réplique')}</b> ${n > 1 ? 'correspondent' : 'correspond'}.`}</p>
+    <p class="gf" role="status">${verifyMode ? 'Affichage, ordre et lecture auto sont suspendus pendant la vérification.'
+      : n ? `<b>${unitPlural(n)}</b> ${n > 1 ? 'correspondent' : 'correspond'}.` : 'Aucune réplique ne correspond.'}</p>
     <p class="gh">Contribuer</p>
     <div class="g"><button class="gr act${verifyMode ? ' on' : ''}" id="chip-verify"><span class="k">${verifyMode ? 'Quitter la vérification' : 'Vérifier les sons et les scènes'}</span>${icon('chev', 'chev')}</button></div>
     <p class="gf">Écouter, regarder, signaler ce qui cloche. ${todoTxt}</p>`;
@@ -837,9 +926,15 @@ function openSettings() {
   const sheet = openSheet(settingsHTML());
   bindSettings(sheet);
 }
-function refreshAfterSetting(focusSel) {
+// l'écran derrière la feuille suit tout de suite : nouvelle réplique si la courante sort du pool, écran vide si plus rien
+function refreshBehind() {
+  if (currentView === 'quiz') { refreshScope(); return; }          // le quiz change à la question suivante
+  if (currentView !== 'citations') return;
   const P = pool();
   if (P && P.length && !P.includes(quoteIdx)) randomQuote(); else renderCitations();
+}
+function refreshAfterSetting(focusSel) {
+  refreshBehind();
   const sheet = document.getElementById('sheet');
   const y = sheet.scrollTop;
   sheet.innerHTML = settingsHTML();
@@ -849,16 +944,11 @@ function refreshAfterSetting(focusSel) {
   (f || sheet.querySelector('h2'))?.focus({ preventScroll: true });
 }
 function bindSettings(sheet) {
+  sheet.className = 'sheet';
   sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
-  sheet.querySelectorAll('[data-src]').forEach(b => b.addEventListener('click', () => {
-    source = b.dataset.src;
-    writeStr('kaam_source', source);
-    rebuildVerify(); nextRand = null;
-    refreshAfterSetting(`[data-src="${source}"]`);
-  }));
+  sheet.querySelector('#row-sel').addEventListener('click', () => showSelection('settings'));
   const setMedia = m => {
-    audioOnly = m === 'audio'; videoOnly = m === 'video';
-    writePref('kaam_audio_only', audioOnly); writePref('kaam_video_only', videoOnly);
+    setMediaPref(m);
     nextRand = null;
     refreshAfterSetting({ text: '#chip-text', audio: '#chip-audio-only', video: '#chip-video-only' }[m]);
   };
@@ -877,7 +967,79 @@ function bindSettings(sheet) {
     verifyMode = !verifyMode; writePref('kaam_verify', verifyMode);
     rebuildVerify(); nextRand = null;
     refreshAfterSetting('#chip-verify');
+    refreshScope();
   });
+}
+
+// ===== FEUILLE « SÉLECTION » : cases rondes, nombres selon l'affichage, total en direct =====
+// Ouverte depuis le sélecteur sous le titre (from = 'scope') ou depuis Réglages › Épisodes (from = 'settings' : « ‹ Réglages »).
+const PART_GROUPS = [['Série', ['L1', 'L2', 'L3', 'L4', 'L5', 'L6']], ['Film', ['film']], ['Inédits', ['in1', 'in2', 'in3']]];
+function partLabel(id) {
+  if (id[0] === 'L') return `Livre ${ROM[+id[1] - 1]}`;
+  if (id === 'film') return 'Kaamelott : Premier Volet';
+  const q = allQuotes.find(x => x.part === id);
+  return q ? q.inedit : `Inédit ${id[2]}`;
+}
+function selectionHTML(from) {
+  const c = partCounts(), k = unitKey(), unitLab = { v: 'scènes', a: 'répliques avec son', t: 'répliques' }[k];
+  const ck = on => `<span class="ck${on ? ' on' : ''}" aria-hidden="true">${on ? icon('check') : ''}</span>`;
+  const row = id => {
+    const on = sel.includes(id), n = c[id][k], none = !n;
+    const lab = partLabel(id);
+    return `<button class="gr${none ? ' off' : ''}" role="checkbox" aria-checked="${on}" data-part="${id}" aria-label="${esc(typoPlain(lab))}, ${none ? 'aucune ' + (k === 'v' ? 'scène' : k === 'a' ? 'réplique avec son' : 'réplique') : unitPlural(n)}">${ck(on)}`
+      + `<span class="k">${typo(lab)}${none && c[id].t ? '<small>Jamais tourné · texte seul</small>' : ''}</span>${none ? '' : `<span class="n">${nf(n)}</span>`}</button>`;
+  };
+  const all = selAll(), total = selCount(), books = PART_GROUPS[0][1], allBooks = books.every(id => sel.includes(id));
+  const grand = PART_IDS.reduce((n, id) => n + c[id][k], 0);
+  const zero = sel.filter(id => !c[id][k]).map(partLabel).map(l => l.replace(/ :.*/, ''));
+  const what = k === 'v' ? 'Vidéo' : 'Son';
+  const foot = !sel.length ? ['Aucune sélection', 'Cochez au moins un élément.', true]
+    : !total ? [k === 'v' ? 'Aucune scène' : 'Aucun son', `Rien à montrer en ${what}. Ajoutez un Livre, ou passez en Texte.`, true]
+    : zero.length && k !== 't' ? [unitPlural(total), `${zero.join(', ')} se ${zero.length > 1 ? 'lisent' : 'lit'} en Texte seulement.`, true]
+    : [unitPlural(total), scopeLabel(), false];
+  return `
+    <div class="grab" aria-hidden="true"></div>
+    <div class="sh-nav">${from === 'settings' ? `<button class="l" id="sel-back">${icon('chev-l', 'bk')}Réglages</button>` : '<span></span>'}<h2 id="sh-title">Sélection</h2><button class="r" id="sheet-close">OK</button></div>
+    <div class="g ckl first"><button class="gr" role="checkbox" aria-checked="${all}" data-part="all" aria-label="Tout Kaamelott, ${unitPlural(grand)}">${ck(all)}<span class="k">Tout Kaamelott</span><span class="n">${nf(grand)}</span></button></div>
+    ${PART_GROUPS.map(([g, ids], j) => `<p class="gh">${g}${j === 0 ? `<button id="sel-books">${allBooks ? 'Aucun Livre' : 'Tous les Livres'}</button>` : ''}</p>
+    <div class="g ckl">${ids.map(row).join('')}</div>`).join('')}
+    <p class="gf">Les nombres comptent ${{ v: 'les répliques avec scène (affichage Vidéo)', a: 'les répliques avec son (affichage Son)', t: 'toutes les répliques (affichage Texte)' }[k]}.</p>
+    <div class="foot" role="status" id="sel-foot"><b>${esc(foot[0])}</b><span${foot[2] ? ' class="warn"' : ''}>${typo(foot[1])}</span></div>`;
+}
+// apostrophes droites → courbes, sans HTML (libellés VoiceOver)
+function typoPlain(s) { return String(s).replace(/'/g, '’'); }
+function showSelection(from) {
+  const sheet = document.getElementById('sheet');
+  const render = focus => {
+    const y = sheet.hidden ? 0 : sheet.scrollTop;
+    if (sheet.hidden) openSheet(selectionHTML(from)); else { sheet.innerHTML = selectionHTML(from); sheet.querySelector('h2')?.setAttribute('tabindex', '-1'); }
+    sheet.className = 'sheet selsheet';
+    sheet.scrollTop = y;
+    const f = focus && sheet.querySelector(focus);
+    (f || sheet.querySelector('h2'))?.focus({ preventScroll: true });
+    sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
+    sheet.querySelector('#sel-back')?.addEventListener('click', () => {
+      sheet.innerHTML = settingsHTML(); sheet.scrollTop = 0; bindSettings(sheet);
+      sheet.querySelector('#row-sel')?.focus({ preventScroll: true });
+    });
+    sheet.querySelector('#sel-books').addEventListener('click', () => {
+      const books = PART_GROUPS[0][1], on = books.every(id => sel.includes(id));
+      change(on ? sel.filter(id => !books.includes(id)) : sel.concat(books), '#sel-books');
+    });
+    sheet.querySelectorAll('[data-part]').forEach(b => b.addEventListener('click', () => {
+      const id = b.dataset.part;
+      const next = id === 'all' ? (selAll() ? [] : PART_IDS.slice()) : sel.includes(id) ? sel.filter(x => x !== id) : sel.concat(id);
+      change(next, `[data-part="${id}"]`);
+    }));
+  };
+  const change = (next, focus) => {
+    sel = PART_IDS.filter(id => next.includes(id));
+    saveSel(); poolCache.clear(); rebuildVerify(); nextRand = null;
+    render(focus);
+    refreshBehind();
+    refreshScope();
+  };
+  render();
 }
 
 // ===== RÉPLIQUES =====
@@ -922,8 +1084,8 @@ function citationsModel(q) {
     ? (P ? `${nf(P.indexOf(quoteIdx) + 1)} sur ${nf(P.length)}${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}` : `${nf(quoteIdx + 1)} sur ${nf(allQuotes.length)}`)
     : '';
   const summary = verifyMode
-    ? [verifyApprox ? 'Sons les moins sûrs' : 'Tout vérifier', plural(verifyIdx.length, 'restante'), source === 'all' ? '' : SRC_LABEL[source]].filter(Boolean).join(SEP)
-    : [SRC_LABEL[source], { text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : 'Aléatoire', autoPlay ? 'Lecture auto' : '']
+    ? [verifyApprox ? 'Sons les moins sûrs' : 'Tout vérifier', plural(verifyIdx.length, 'restante'), selAll() ? '' : esc(scopeLabel())].filter(Boolean).join(SEP)
+    : [{ text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : 'Aléatoire', autoPlay ? 'Lecture auto' : '']
         .filter(Boolean).join(SEP);
   const inlineVideo = !!((videoOnly || verifyMode) && q.video);
   // l'aide n'est jamais dans la carte : une ligne discrète dessous, sur les 3 premières répliques
@@ -947,9 +1109,10 @@ function listenHTML(q, cls = 'tp') {
     ? `<button class="${cls}" id="btn-audio">${icon('play', 'i-pl')}${icon('pause', 'i-pa')}<span class="lp">Écouter</span><span class="ls">Arrêter</span></button>`
     : '';
 }
-// Réglages autres que ceux par défaut : un point sur le bouton Réglages (et dans son libellé pour VoiceOver)
+// Réglages autres que ceux par défaut et invisibles à l'écran : un point sur le bouton Réglages (et dans son libellé pour VoiceOver).
+// La sélection n'en fait pas partie : elle est écrite sous le titre.
 function activeFilters() {
-  return [source !== 'all' ? SRC_LABEL[source] : '', { text: '', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : '', autoPlay ? 'Lecture auto' : ''].filter(Boolean);
+  return [{ text: 'Texte', audio: 'Son', video: '' }[mediaMode()], inOrder ? 'Dans l’ordre' : '', autoPlay ? 'Lecture auto' : ''].filter(Boolean);
 }
 function refreshSetBtn() {
   const b = document.getElementById('mast-set');
@@ -1110,10 +1273,14 @@ function bindCardGestures(card) {
     if ((Math.abs(dx) > 50 || fast) && Math.abs(dx) > dy) { if (dx > 0) swipeForward(); else swipeBack(); }
   }, { passive: true });
 }
+let showAnyway = false;   // réplique ouverte exprès (recherche, favoris, fiche) : montrée même hors de la sélection
 function renderCitations(dir = 0) {
   const main = document.getElementById('main-content');
   if (!allQuotes.length) return;
+  refreshScope();                                                      // avant le rendu : la carte se mesure à sa vraie place
+  const forced = showAnyway; showAnyway = false;
   if (verifyMode && !verifyIdx.length) { renderVerifyDone(); return; }   // tout est vérifié : on s'arrête
+  if (!verifyMode && !forced && poolEmpty()) { renderEmptySel(); return; }
   const fid = main.contains(document.activeElement) ? document.activeElement.id : '';
   if (!allQuotes[quoteIdx]) quoteIdx = pickRandom();          // index périmé (filtres, données changées)
   const q = allQuotes[quoteIdx];
@@ -1135,6 +1302,26 @@ function renderCitations(dir = 0) {
   showDoneLine();
   const f = fid && document.getElementById(fid);
   if (f && !f.disabled) f.focus({ preventScroll: true });
+}
+
+// Sélection sans rien à montrer : un écran vide qui dit pourquoi et propose la sortie (jamais une réplique hors sélection)
+function renderEmptySel() {
+  stopAudio();
+  setMast('Répliques');
+  const main = document.getElementById('main-content');
+  const onlyIn3 = sel.length === 1 && sel[0] === 'in3';
+  const modify = `<button class="pill gray" id="empty-sel">Modifier la sélection</button>`;
+  const asText = `<button class="pill" id="empty-text">Lire en Texte</button>`;
+  const [ic, title, txt, btns] = !sel.length
+    ? ['quote', 'Aucune sélection', 'Choisissez au moins un Livre, le film ou un inédit.', '<button class="pill" id="empty-sel">Choisir</button>']
+    : videoOnly
+    ? ['film', 'Aucune scène', onlyIn3 ? `${typo(partLabel('in3'))} n’a jamais été tourné. Ses ${plural(partCounts().in3.t, 'réplique')} se lisent en Texte.` : 'Aucune réplique de cette sélection n’a de scène.', asText + modify]
+    : ['play', 'Aucun son', 'Aucune réplique de cette sélection n’a de son.', asText + modify];
+  main.innerHTML = `<div class="empty sel0"><span class="ei">${icon(ic)}</span><b role="status">${title}</b>${txt}<div class="col2">${btns}</div></div>`;
+  document.getElementById('empty-sel').addEventListener('click', () => showSelection('scope'));
+  document.getElementById('empty-text')?.addEventListener('click', () => { setMediaPref('text'); nextRand = null; randomQuote(); refreshSetBtn(); });
+  refreshSetBtn();
+  renderMini();
 }
 
 // ===== AVIS DE VÉRIFICATION =====
@@ -1218,11 +1405,11 @@ function undoAvis() {
   showQuote(last.idx, -1);
   document.getElementById('sr-live').textContent = 'Avis annulé.';
 }
-// Écran de fin : plus rien à vérifier dans cette source
+// Écran de fin : plus rien à vérifier dans cette sélection
 function renderVerifyDone() {
   stopAudio();                                   // met aussi la scène de la carte en pause
   setMast('Vérification');
-  const total = allQuotes.reduce((n, q) => n + ((q.audio || q.video) && inSrc(q, source) ? 1 : 0), 0);
+  const total = allQuotes.reduce((n, q) => n + ((q.audio || q.video) && inSel(q) ? 1 : 0), 0);
   const vals = Object.values(avisFaits);
   document.getElementById('main-content').innerHTML = `
     <button class="bar verify" id="btn-settings"><span class="bar-sum">Terminé</span>${icon('chev', 'chev')}</button>
@@ -1277,6 +1464,7 @@ function pushHistory(idx) {
   randPos = randHistory.length - 1;
 }
 function stepQuote(dir) {
+  if (!verifyMode && poolEmpty()) { renderCitations(); return; }
   const P = pool();
   let idx;
   if (P) {
@@ -1290,6 +1478,7 @@ function stepQuote(dir) {
   showQuote(idx, dir);
 }
 function randomQuote() {
+  if (!verifyMode && poolEmpty()) { renderCitations(); return; }
   const P = pool();
   const idx = nextRand !== null && (!P || P.includes(nextRand)) && nextRand !== quoteIdx ? nextRand : pickRandom();
   nextRand = null;
@@ -1315,7 +1504,9 @@ function gotoQuote(q) {
   closeOverlay();
   quoteIdx = idx;
   pushHistory(idx);
+  showAnyway = true;
   setView('citations');
+  showAnyway = false;
 }
 // Partage : feuille système si elle existe, sinon copie ; la confirmation s'écrit dans le bouton (jamais de fenêtre d'alerte)
 const shareTimers = new WeakMap();   // bouton → { libellé d'origine, minuteur } pendant « Copié » / « Envoyé »
@@ -1373,17 +1564,37 @@ function buildQuizPool() {
     if (quizAccepts(q)) (quizByChar.m[q.name] = quizByChar.m[q.name] || []).push(i);   // pas de « ||= » : iOS 13.4 et plus
   });
 }
+// Le quiz libre suit la sélection : chaque personnage garde ses répliques de la sélection (cache par sélection).
+// Moins de 4 personnages ou de 20 questions : repli sur tout Kaamelott, annoncé sous le titre.
+const QUIZ_MIN_CHARS = 4, QUIZ_MIN_Q = 20;
+let quizSel = null;
+function quizSelPool() {
+  buildQuizPool();
+  const key = sel.join();
+  if (quizSel && quizSel.key === key && quizSel.src === quizByChar) return quizSel;
+  let m = quizByChar.m, fallback = false;
+  if (!selAll()) {
+    const f = {}; let n = 0;
+    for (const name in quizByChar.m) {
+      const l = quizByChar.m[name].filter(i => inSel(allQuotes[i]));
+      if (l.length) { f[name] = l; n += l.length; }
+    }
+    if (Object.keys(f).length >= QUIZ_MIN_CHARS && n >= QUIZ_MIN_Q) m = f; else fallback = true;
+  }
+  quizSel = { key, src: quizByChar, m, fallback };
+  return quizSel;
+}
 // Quiz libre : de préférence une réplique qui tient en entier à l'écran avec ses 4 réponses (240 signes au plus)
 const QUIZ_LEN = 240;
 function quizPick() {
-  buildQuizPool();
-  const names = Object.keys(quizByChar.m);
+  const { m } = quizSelPool();
+  const names = Object.keys(m);
   for (let t = 0; t < 40; t++) {
-    const i = rand(quizByChar.m[rand(names)]);
+    const i = rand(m[rand(names)]);
     if (allQuotes[i].quote.length > QUIZ_LEN && t < 30) continue;
     if (!QUIZ_RECENT.includes(i)) { QUIZ_RECENT.push(i); if (QUIZ_RECENT.length > 80) QUIZ_RECENT.shift(); return allQuotes[i]; }
   }
-  return allQuotes[rand(quizByChar.m[rand(names)])];
+  return allQuotes[rand(m[rand(names)])];
 }
 function shuffle(a, rnd = Math.random) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 // ===== QUESTION DU JOUR : la même pour tout le monde ce jour-là (graine = date), une seule tentative =====
@@ -1391,7 +1602,7 @@ function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = 
 function todayKey() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function dailyState() { const st = readJSON('kaam_qdj', {}); return st.d === todayKey() ? st : null; }
 function dailyQuestion() {
-  quizPick();                                       // construit le pool
+  buildQuizPool();                                  // tout Kaamelott : la même question pour tout le monde, quelle que soit la sélection
   const rnd = mulberry32(+todayKey().replace(/-/g, ''));
   const names = Object.keys(quizByChar.m).sort();
   const list = quizByChar.m[names[Math.floor(rnd() * names.length)]];
@@ -1439,6 +1650,7 @@ function quizStatText(daily, hist) {
     return `${nf(n)} ${n > 1 ? 'jours justes' : 'jour juste'}`;
   }
   const { correct, total, streak, best } = quizState;
+  if (!quizState.answered && quizSelPool().fallback) return 'Pas assez de scènes dans cette sélection : questions sur tout Kaamelott.';
   if (!total) return '';
   return `${nf(correct)} sur ${nf(total)}${streak > 1 ? ` · série de ${nf(streak)}` : ''}${best > 1 ? ` · record ${nf(best)}` : ''}`;
 }
@@ -1526,6 +1738,8 @@ function renderQuiz(daily = false) {
   stopVideos();
   document.getElementById('main-content').classList.remove('qpage');
   setMast(daily ? 'Question du jour' : 'Quiz');
+  quizDaily = daily;
+  refreshScope();                            // question du jour : pas de sélecteur (la même pour tout le monde)
   const main = document.getElementById('main-content');
   let q, choices;
   if (daily) ({ q, choices } = dailyQuestion());
@@ -1766,6 +1980,7 @@ function openOverlay(html) {
   overlay.innerHTML = html;
   overlay.classList.remove('hidden');
   document.getElementById('mast-set').hidden = true;
+  document.getElementById('mast-scope').hidden = true;
   // barre de navigation : transparente sur l'aplat, opaque (avec le titre) une fois l'aplat passé
   // (témoin au bas de l'aplat, suivi par IntersectionObserver sous la barre : aucun écouteur de défilement)
   const sc = overlay.querySelector('.scroll'), nb = overlay.querySelector('.back'), hero = overlay.querySelector('.fiche-h');
@@ -1940,8 +2155,9 @@ function searchHits(query) {
   const who = getCharList().filter(([n]) => !isDuo(n) && foldIx(n).startsWith(phrase)).slice(0, 3);
   return { text: text.concat(loose), who };
 }
-// Ce qu'on cherchait reste là quand on revient sur l'onglet (texte, nombre d'entrées affichées, défilement)
-const searchState = { q: '', top: 0, shown: 40 };
+// Ce qu'on cherchait reste là quand on revient sur l'onglet (texte, nombre d'entrées affichées, défilement).
+// Portée : Partout par défaut ; « sel » = la sélection (segment visible si elle n'est pas Tout Kaamelott), pour la session.
+const searchState = { q: '', top: 0, shown: 40, scope: 'all' };
 let searchTimeout = null;
 function renderRecherche() {
   stopVideos();
@@ -1951,16 +2167,35 @@ function renderRecherche() {
     <div class="search"><label class="field">${icon('search')}
       <input type="search" id="search-input" placeholder="Un mot, une réplique, un nom" aria-label="Rechercher une réplique" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
       <button class="clr" id="search-clear" aria-label="Effacer">${icon('x')}</button></label>
+      <div class="scopebar" id="search-scope" hidden></div>
     </div>
     <div class="scroll" id="search-results"></div>`;
   const input = document.getElementById('search-input');
   const results = document.getElementById('search-results');
   const clr = document.getElementById('search-clear');
+  const scopeBar = document.getElementById('search-scope');
+  // contrôle segmenté « Partout | <sélection> », comme le champ de recherche de Mail
+  const drawScope = v => {
+    const show = !selAll() && v.length >= 2;
+    scopeBar.hidden = !show;
+    if (!show) return;
+    const lab = scopeLabel(), on = searchState.scope === 'sel';
+    scopeBar.innerHTML = `<div class="seg" role="radiogroup" aria-label="Chercher dans"><button role="radio" class="${on ? '' : 'on'}" aria-checked="${!on}" data-scope="all">Partout</button>`
+      + `<button role="radio" class="${on ? 'on' : ''}" aria-checked="${on}" data-scope="sel"><span class="sl">${esc(lab)}</span></button></div>`;
+  };
+  scopeBar.addEventListener('click', e => {
+    const b = e.target.closest('[data-scope]');
+    if (!b || b.dataset.scope === searchState.scope) return;
+    searchState.scope = b.dataset.scope; searchState.top = 0; searchState.shown = 40;
+    run(input.value.trim(), false);
+    scopeBar.querySelector(`[data-scope="${searchState.scope}"]`)?.focus({ preventScroll: true });
+  });
   const idle = () => {
     results.innerHTML = `<div class="res-n" role="status">${nf(allQuotes.length)} répliques. Les accents et la ponctuation sont facultatifs.</div>`;
   };
   const run = (v, keep) => {
     clr.hidden = !input.value;
+    drawScope(v);
     if (!v) { idle(); return; }
     if (v.length < 2) { results.innerHTML = `<div class="res-n" role="status">Encore une lettre.</div>`; return; }
     doSearch(v, results, keep);
@@ -1983,19 +2218,24 @@ function renderRecherche() {
 }
 function doSearch(query, container, keep) {
   const res = searchHits(query);
-  const hits = res ? res.text : [];
+  const every = res ? res.text : [];
+  const scoped = searchState.scope === 'sel' && !selAll();
+  const hits = scoped ? every.filter(inSel) : every;
+  const partout = scoped ? ` · ${nf(every.length)} partout` : '';
   // la requête désigne un personnage : une ligne de renvoi vers sa fiche, puis les répliques qui contiennent le mot
   const who = (res?.who || []).map(([n, c]) => `<button class="res-who idx-like" data-name="${esc(n)}">${faceHTML(n)}<span class="t"><span class="n">${esc(nameCase(n))}</span><span class="c">${plural(c, 'réplique')}</span></span>${icon('chev', 'chev')}</button>`).join('');
   const bindWho = () => container.querySelectorAll('.res-who').forEach(b => b.addEventListener('click', () => openPersonnage(b.dataset.name)));
   if (!hits.length) {
-    container.innerHTML = (who ? `<h2 class="res-h">Personnages</h2>${who}` : '') + `<div class="empty">${who ? '' : `<span class="ei">${icon('search')}</span>`}<b>${who ? 'Aucune réplique ne contient ce mot.' : `Rien pour « ${esc(query)} ».`}</b><small>Vérifiez l’orthographe, ou essayez le début d’un mot.</small></div>`;
+    container.innerHTML = (who ? `<h2 class="res-h">Personnages</h2>${who}` : '') + (scoped && every.length
+      ? `<div class="empty"><span class="ei">${icon('search')}</span><b>Rien dans cette sélection.</b><small>${plural(every.length, 'réplique')} partout : touchez « Partout ».</small></div>`
+      : `<div class="empty">${who ? '' : `<span class="ei">${icon('search')}</span>`}<b>${who ? 'Aucune réplique ne contient ce mot.' : `Rien pour « ${esc(query)} ».`}</b><small>Vérifiez l’orthographe, ou essayez le début d’un mot.</small></div>`);
     bindWho();
     return;
   }
   let shown = 0;
   container.innerHTML = who
-    ? `<h2 class="res-h">Personnages</h2>${who}<div class="res-h" role="status">Répliques<b>${nf(hits.length)}</b></div><div id="res-list"></div>`
-    : `<div class="res-n" role="status">${nf(hits.length)} réplique${hits.length > 1 ? 's' : ''}</div><div id="res-list"></div>`;
+    ? `<h2 class="res-h">Personnages</h2>${who}<div class="res-h" role="status">Répliques<b>${nf(hits.length)}${partout}</b></div><div id="res-list"></div>`
+    : `<div class="res-n" role="status">${nf(hits.length)} réplique${hits.length > 1 ? 's' : ''}${partout}</div><div id="res-list"></div>`;
   bindWho();
   const listEl = container.querySelector('#res-list');
   const more = n => {
@@ -2132,6 +2372,8 @@ function setView(view) {
   closeSheet();
   closeOverlay();
   currentView = view;
+  if (view !== 'quiz') quizDaily = false;
+  refreshScope();
   document.querySelectorAll('.nav-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.view === view);
     if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -2191,14 +2433,23 @@ async function boot() {
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === 'citations'));
   const main = document.getElementById('main-content');
   setTabsEnabled(false);
-  main.innerHTML = `<div class="boot" role="status"><div class="spin" aria-hidden="true"></div><div class="t">Chargement des répliques…</div><div class="rail indet"><i></i></div><div class="m"></div>
-    <p hidden>Premier lancement : plus de 33 000 répliques sont téléchargées une seule fois, puis l’app s’ouvre sans attendre, même hors ligne.</p></div>`;
-  // l'explication n'apparaît que si l'attente dure (jamais de clignotement quand les répliques sortent du cache)
-  setTimeout(() => { const p = document.querySelector('.boot p'); if (p) p.hidden = false; }, 1500);
+  const launch = document.getElementById('launch');
+  if (launch) {
+    // premier démarrage : l'écran de lancement (K blanc sur noir) couvre tout ; la barre ne vient qu'après 1 s d'attente.
+    // Le <div class="boot"> vide d'index.html reste dessous (compat.js y écrit si l'appareil est trop ancien).
+    launchSlowT = setTimeout(() => launch.querySelector('.launch-slow')?.classList.add('on'), 1000);
+  } else {
+    // « Réessayer », retour du réseau : chargement dans la page
+    main.innerHTML = `<div class="boot" role="status"><div class="spin" aria-hidden="true"></div><div class="t">Chargement des répliques…</div><div class="rail indet"><i></i></div><div class="m"></div>
+      <p hidden>Premier lancement : plus de 33 000 répliques sont téléchargées une seule fois, puis l’app s’ouvre sans attendre, même hors ligne.</p></div>`;
+    // l'explication n'apparaît que si l'attente dure (jamais de clignotement quand les répliques sortent du cache)
+    setTimeout(() => { const p = document.querySelector('.boot p'); if (p) p.hidden = false; }, 1500);
+  }
   try {
     await loadData();
   } catch (e) {
     booting = false;
+    endLaunch();                           // l'écran d'erreur doit se voir
     console.error('Chargement des répliques :', e);
     const offline = navigator.onLine === false;
     setMast('Répliques');
@@ -2233,10 +2484,27 @@ async function boot() {
     console.error('Affichage :', e);
     showRenderError();
   }
+  endLaunch();
   sendAvis();
   buildIndexSoon();
 }
 const VIEWS = { citations: 1, quiz: 1, personnages: 1, recherche: 1, favoris: 1 };
+// Fin de l'écran de lancement : aucune durée minimale ; fondu de 250 ms une fois la première vue peinte dessous
+let launchSlowT = null;
+function endLaunch() {
+  const l = document.getElementById('launch');
+  if (!l) return;
+  clearTimeout(launchSlowT);
+  // deux images : la vue est peinte sous le noir avant que le fondu commence, donc jamais d'écran vide
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.documentElement.classList.remove('launching');
+    document.documentElement.style.removeProperty('background');           // sinon noir sous le rebond du défilement en clair
+    document.getElementById('meta-cs')?.setAttribute('content', 'light dark');
+    l.classList.add('out');
+    l.addEventListener('transitionend', () => l.remove(), { once: true });
+    setTimeout(() => l.remove(), 400);      // filet si transitionend ne vient pas
+  }));
+}
 function showRenderError() {
   const main = document.getElementById('main-content');
   setMast('Répliques');
@@ -2260,6 +2528,11 @@ window.__kaam = {
   get favorites() { return favorites; },
   get player() { return player; },
   get perso() { return PERSO; }, set perso(v) { PERSO = v; },
+  get sel() { return sel; },
+  get media() { return media; },
+  get counts() { return partCounts(); },
+  scopeLabel: s => scopeLabel(s),
+  poolEmpty: () => poolEmpty(),
   pool: () => pool(),
   render: dir => renderCitations(dir),
   random: () => randomQuote(),
@@ -2292,5 +2565,6 @@ document.addEventListener('DOMContentLoaded', () => {
   bindMini();
   watchMast();
   document.getElementById('mast-set').addEventListener('click', openSettings);
+  document.getElementById('mast-scope').addEventListener('click', () => showSelection('scope'));
   boot();
 });

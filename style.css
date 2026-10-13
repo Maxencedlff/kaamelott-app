@@ -43,6 +43,7 @@
   --sb: env(safe-area-inset-bottom, 0px);
   --mh: calc(var(--st) + 56px);   /* hauteur de l'en-tête au grand titre */
   --ch: 44px;                     /* barre repliée (sous la zone sûre), comme la barre de navigation d'iOS */
+  --scope-h: 32px;                /* sélecteur de la sélection sous le grand titre */
 }
 /* ---------- Jetons : sombre (teintes d'iOS) ---------- */
 @media (prefers-color-scheme: dark) {
@@ -111,7 +112,13 @@ mark { background: none; color: inherit; font-weight: 700; }
 /* réglages autres que ceux par défaut : un point rouge sur le bouton */
 .round.dot::after { content: ""; position: absolute; top: 8px; right: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
 
+/* sélecteur de la sélection sous le grand titre (« Livres I et II · Film ⌄ », comme « Saison 1 ⌄ » de l'app TV) */
+.mast > .scope { position: absolute; left: var(--pad); top: var(--mh); display: inline-flex; align-items: center; gap: 4px; max-width: calc(100% - 2 * var(--pad)); height: var(--scope-h); padding: 0 0 2px; font-size: 17px; line-height: 22px; font-weight: 600; letter-spacing: -.41px; color: var(--accent-t); transition: opacity .2s; }
+.scope .sl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scope svg { flex: none; width: 13px; height: 13px; margin-top: 2px; }
+.mast.compact .scope { opacity: 0; pointer-events: none; }
 #main-content { grid-row: 2; min-height: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; padding-top: var(--mh); }
+#app.has-scope #main-content { padding-top: calc(var(--mh) + var(--scope-h)); }
 /* une liste qui commence la page passe sous l'en-tête (et sous la barre repliée) */
 #main-content > .scroll:first-child { margin-top: calc(-1 * var(--mh)); padding-top: var(--mh); }
 .scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding-bottom: 28px; }
@@ -539,8 +546,40 @@ mark { background: none; color: inherit; font-weight: 700; }
 .grp > div { display: flex; justify-content: space-between; padding: 12px 16px; position: relative; }
 .grp > div + div::before { content: ""; position: absolute; left: 16px; right: 0; top: 0; border-top: .5px solid var(--line); }
 .grp dd { color: var(--ink2); font-variant-numeric: tabular-nums; }
+/* sélection sans rien à montrer : centré dans l'écran, deux boutons empilés */
+.empty.sel0 { flex: 1; justify-content: center; margin: 0 auto; padding-bottom: 32px; }
+.empty .col2 { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 22px; }
+.empty .col2 .pill { margin-top: 0; min-width: 0; min-height: 44px; padding: 0 22px; }
+
+/* ---------- Feuille « Sélection » (cases rondes, nombres, total en direct) ---------- */
+.gr .v { flex: 0 1 auto; max-width: 62%; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh-nav .l { display: inline-flex; align-items: center; }
+.sh-nav .l .bk { width: 22px; height: 22px; margin-left: -6px; }
+.sheet.selsheet { padding-bottom: 0; }
+.selsheet .g.first { margin-top: 4px; }
+.selsheet .gh { display: flex; justify-content: space-between; align-items: baseline; }
+.selsheet .gh button { color: var(--accent-t); font-size: 15px; letter-spacing: -.24px; }
+.selsheet .ckl .gr + .gr::before { left: 52px; }
+.selsheet .gr .ck { flex: none; visibility: visible; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--chev); display: grid; place-items: center; color: #fff; }
+.selsheet .gr .ck.on { background: var(--accent); border-color: var(--accent); }
+.selsheet .gr .ck svg { width: 17px; height: 17px; }
+.selsheet .gr .n { flex: none; color: var(--ink2); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.selsheet .gr.off .k { color: var(--ink3); }
+.selsheet .gf { margin-bottom: 20px; }
+.foot { position: sticky; bottom: 0; z-index: 2; background: var(--sheet); border-top: .5px solid var(--line); padding: 10px 20px calc(10px + var(--sb)); text-align: center; font-size: 13px; line-height: 18px; color: var(--ink2); letter-spacing: -.08px; }
+.foot b { display: block; font-size: 15px; line-height: 20px; font-weight: 600; color: var(--ink); letter-spacing: -.24px; font-variant-numeric: tabular-nums; }
+.foot .warn { color: var(--accent-t); }
+/* recherche : « Partout | sélection » sous le champ */
+.scopebar { margin-top: 10px; }
+.scopebar .seg button { padding: 0 8px; }
+.scopebar .sl { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- Écrans courts (iPhone SE, 568 px) ---------- */
+@media (max-height: 700px) {
+  :root { --scope-h: 26px; }
+  .mast > .scope { font-size: 15px; line-height: 20px; }
+  .selsheet .gr { min-height: 44px; padding-top: 5px; padding-bottom: 5px; }
+}
 @media (max-height: 720px) {
   #qvideo-slot .frame { aspect-ratio: 2 / 1; }
   .choice { min-height: 50px; }

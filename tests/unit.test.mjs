@@ -47,26 +47,94 @@ test('highlight : ligatures', () => {
   assert.equal(t.highlight('Mon cœur bat', 'cœur'), 'Mon <mark>cœur</mark> bat');
   assert.equal(t.highlight('Ma sœur, mon cœur !', 'soeur'), `Ma <mark>sœur</mark>, mon cœur${NNBSP}!`);
 });
-test('pool : chaque filtre est respecté', () => {
-  const cases = [['film', 'videoOnly', q => q.film && q.video], ['serie', 'audioOnly', q => !q.film && q.audio], ['all', 'videoOnly', q => q.video]];
-  for (const [src, flag, ok] of cases) {
-    t.set('source', src); t.set('videoOnly', flag === 'videoOnly'); t.set('audioOnly', flag === 'audioOnly'); t.set('verifyMode', false);
-    const P = t.pool();
-    assert.ok(P && P.length > 0, `${src}/${flag} : pool vide`);
-    assert.ok(P.every(i => ok(all[i])), `${src}/${flag} : réplique hors filtre`);
-  }
-  t.set('source', 'all'); t.set('videoOnly', false); t.set('audioOnly', false);
-  assert.equal(t.pool(), null);
-  t.set('verifyMode', true); t.set('verifyIdx', []);
-  assert.equal(t.pool(), null, 'jamais de liste vide');
+const PARTS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'film', 'in1', 'in2', 'in3'];
+const setSel = v => { t.set('sel', v); t.get('poolCache').clear(); t.set('quizSel', null); };
+const setMedia = m => { t.set('media', m); t.set('videoOnly', m === 'video'); t.set('audioOnly', m === 'audio'); t.get('poolCache').clear(); };
+test('pool : sélection et affichage respectés, [] si rien', () => {
   t.set('verifyMode', false);
+  const cases = [[['film'], 'video'], [PARTS.filter(p => p !== 'film'), 'audio'], [['L4'], 'text'], [PARTS, 'video']];
+  for (const [s, m] of cases) {
+    setSel(s); setMedia(m);
+    const P = t.pool();
+    assert.ok(P && P.length > 0, `${s}/${m} : pool vide`);
+    assert.ok(P.every(i => s.includes(all[i].part) && (m !== 'video' || all[i].video) && (m !== 'audio' || all[i].audio)), `${s}/${m} : réplique hors filtre`);
+  }
+  setSel(PARTS); setMedia('text'); assert.equal(t.pool(), null);
+  setSel([]); assert.deepEqual([...t.pool()], []);
+  setSel(['in3']); setMedia('video'); assert.deepEqual([...t.pool()], []); assert.ok(t.get('poolEmpty')());
+  t.set('verifyMode', true); t.set('verifyIdx', []); setSel([]);
+  assert.notDeepEqual(t.pool(), [], 'vérification : jamais de liste vide');
+  t.set('verifyMode', false); setSel(PARTS); setMedia('text');
 });
-test('stepQuote : filtre et bouclage', () => {
-  t.set('source', 'film');
+test('stepQuote : sélection et bouclage', () => {
+  setSel(['film']);
   t.set('quoteIdx', 0); t.stepQuote(1); assert.ok(all[t.get('quoteIdx')].film);
   const Q = t.pool(); t.set('quoteIdx', Q.at(-1)); t.stepQuote(1); assert.equal(t.get('quoteIdx'), Q[0]);
   t.stepQuote(-1); assert.equal(t.get('quoteIdx'), Q.at(-1));
-  t.set('source', 'all');
+  setSel(PARTS);
+});
+test('scopeLabel : résumé de la sélection', () => {
+  const L = s => t.get('scopeLabel')(s);
+  assert.equal(L(PARTS), 'Tout Kaamelott');
+  assert.equal(L(['L1', 'L2', 'film']), 'Livres I et II · Film');
+  assert.equal(L(['L1', 'L2', 'L3']), 'Livres I à III');
+  assert.equal(L(['L1', 'L3', 'L5']), 'Livres I, III et V');
+  assert.equal(L(['L1', 'L2', 'L4', 'L5', 'L6']), 'Livres I, II et IV à VI');
+  assert.equal(L(['L1', 'L2', 'L3', 'L4', 'L5', 'L6']), 'Toute la série');
+  assert.equal(L(PARTS.filter(p => p !== 'film')), 'Toute la série · Inédits');
+  assert.equal(L(['in1', 'in2']), 'Inédits 1 et 2');
+  assert.equal(L(['L6', 'film', 'in3']), 'Livre VI · Film · Inédit 3');
+  assert.equal(L([]), 'Aucune sélection');
+});
+test('parties : chaque réplique en a une, compteurs cohérents', () => {
+  assert.ok(all.every(q => PARTS.includes(q.part)), 'réplique sans partie');
+  const c = t.get('partCounts')();
+  const sum = k => PARTS.reduce((n, id) => n + c[id][k], 0);
+  assert.equal(sum('t'), all.length);
+  assert.equal(sum('v'), all.filter(q => q.video).length);
+  assert.equal(c.in3.v, 0);
+});
+test('migration kaam_source / kaam_video_only / kaam_audio_only → kaam_sel / kaam_media, sans écriture', () => {
+  const cases = [
+    [{}, PARTS, 'video'],
+    [{ kaam_source: 'film' }, ['film'], 'video'],
+    [{ kaam_source: 'serie' }, PARTS.filter(p => p !== 'film'), 'video'],
+    [{ kaam_video_only: '0', kaam_audio_only: '0' }, PARTS, 'text'],
+    [{ kaam_audio_only: '1' }, PARTS, 'audio'],
+    [{ kaam_media: 'text', kaam_video_only: '1' }, PARTS, 'text'],
+    [{ kaam_sel: '["L9","L2"]' }, ['L2'], 'video'],
+    [{ kaam_sel: 'pas du json', kaam_source: 'film' }, ['film'], 'video'],
+  ];
+  for (const [ls, s, m] of cases) {
+    t.store.clear(); for (const k in ls) t.store.set(k, ls[k]);
+    const before = JSON.stringify([...t.store]);
+    assert.deepEqual([...t.get('loadSel')()], s, JSON.stringify(ls));
+    assert.equal(t.get('loadMedia')(), m, JSON.stringify(ls));
+    assert.equal(JSON.stringify([...t.store]), before, 'écriture pendant la lecture');
+  }
+  t.store.clear();
+});
+test('quiz : suit la sélection, repli annoncé, question du jour inchangée', () => {
+  setSel(['L4']);
+  for (let k = 0; k < 30; k++) assert.equal(t.get('quizPick')().part, 'L4');
+  assert.equal(t.get('quizSelPool')().fallback, false);
+  setSel(['in3']);
+  assert.equal(t.get('quizSelPool')().fallback, true);
+  assert.ok(t.get('quizPick')());
+  setSel(['L1']); const a = t.dailyQuestion(); setSel(PARTS); const b = t.dailyQuestion();
+  assert.equal(a.q.i, b.q.i);
+});
+test('recherche : portée de la sélection', () => {
+  const hits = t.searchHits('compote').text;
+  setSel(['L2']);
+  const inS = hits.filter(q => t.get('inSel')(q));
+  assert.ok(inS.length > 0 && inS.length < hits.length, `${inS.length} / ${hits.length}`);
+  assert.ok(inS.every(q => q.part === 'L2'));
+  setSel(PARTS);
+});
+test('titre d’inédit en casse de titre : « Le Spectre d’Uther »', () => {
+  const q = all.find(x => x.part === 'in2');
+  assert.ok(q && /Le Spectre d['’]Uther$/.test(q.inedit), q && q.inedit);
 });
 test('URL des médias', () => {
   assert.equal(t.audioURL('sons/auto/ab12.m4a?v=3'), 'https://huggingface.co/datasets/Maxencedlf/kaamelott-videos/resolve/main/s/ab/ab12.m4a?v=3');

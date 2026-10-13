@@ -107,15 +107,19 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 """
 
-PREF_KEYS = ["kaam_source", "kaam_verify", "kaam_video_only", "kaam_audio_only", "kaam_in_order", "kaam_autoplay"]
+PREF_KEYS = ["kaam_sel", "kaam_verify", "kaam_video_only", "kaam_audio_only", "kaam_in_order", "kaam_autoplay"]
 # Couverture par paires (toutes les combinaisons deux à deux des 6 réglages), vérifiée par pairwise_ok() au lancement ;
 # les 2 dernières lignes ajoutent le mode Son seul hors vérification.
-COMBOS = [
+# kaam_sel : film seul, « série » migrée (tout sauf le film), toutes les parties ; le couple kaam_video_only / kaam_audio_only
+# teste la migration vers kaam_media (aucun des deux à 1 = Texte choisi).
+SEL_FILM, SEL_SERIE = '["film"]', '["L1","L2","L3","L4","L5","L6","in1","in2","in3"]'
+SEL_ALL = '["L1","L2","L3","L4","L5","L6","film","in1","in2","in3"]'
+COMBOS = [[{"film": SEL_FILM, "all": SEL_ALL, "serie": SEL_SERIE}[r[0]]] + r[1:] for r in [
     ["film", "0", "1", "0", "0", "1"], ["all", "1", "0", "1", "1", "1"], ["serie", "0", "1", "1", "1", "0"],
     ["serie", "1", "0", "0", "0", "0"], ["all", "0", "1", "0", "0", "0"], ["film", "1", "0", "1", "1", "0"],
     ["serie", "0", "0", "0", "1", "1"], ["film", "1", "1", "1", "0", "1"],
     ["all", "0", "0", "1", "0", "1"], ["film", "0", "0", "1", "1", "0"],
-]
+]]
 
 NAV = {"citations": "Répliques", "quiz": "Quiz", "personnages": "Personnages", "recherche": "Rechercher", "favoris": "Favoris"}
 MAIN_SEL = "#quote-card"
@@ -123,7 +127,7 @@ MAIN_SEL = "#quote-card"
 
 def pairwise_ok(rows):
     import itertools
-    lv = [["all", "serie", "film"]] + [["0", "1"]] * 5
+    lv = [[SEL_ALL, SEL_SERIE, SEL_FILM]] + [["0", "1"]] * 5
     need = {(i, a, j, b) for i, j in itertools.combinations(range(6), 2) for a in lv[i] for b in lv[j]}
     have = {(i, r[i], j, r[j]) for r in rows for i, j in itertools.combinations(range(6), 2)}
     return need - have
@@ -269,10 +273,14 @@ class Worker:
         page.on("console", on_console)
         page.on("pageerror", lambda e: None if self.expect_errors else self._err("pageerror", e))
 
-    def new_page(self, ctx, prefs=None, extra_ls=None, clear=True):
+    def new_page(self, ctx, prefs=None, extra_ls=None, clear=True, media_default=True):
         page = ctx.new_page()
         self.attach(page)
         sets = dict(prefs or {}); sets.update(extra_ls or {})
+        # Vidéo est l'affichage par défaut : les étapes écrites pour l'affichage Texte le demandent explicitement,
+        # sauf si l'étape fixe elle-même l'affichage (kaam_media ou les anciennes clés, migration testée) ou veut le vrai défaut
+        if media_default and clear and not ({"kaam_media", "kaam_video_only", "kaam_audio_only"} & set(sets)):
+            sets["kaam_media"] = "text"
         if clear or sets:
             # une seule fois par page (pas à chaque rechargement : la mémorisation des réglages est testée)
             js = ("try{if(!sessionStorage.getItem('__qa')){sessionStorage.setItem('__qa','1');" + ("localStorage.clear();" if clear else "")
@@ -659,7 +667,7 @@ def check_compact(w, pg, rec, fname):
 
 # Invariant après chaque navigation : la réplique affichée respecte TOUS les filtres, et le pool aussi
 INV = """p => { const K = __kaam, A = K.allQuotes, q = A[K.quoteIdx], P = K.pool();
-  const ok = x => (p.kaam_source === 'all' || !!x.film === (p.kaam_source === 'film'))
+  const ok = x => (!p.kaam_sel || JSON.parse(p.kaam_sel).includes(x.part))
     && (p.kaam_verify === '1' || p.kaam_video_only !== '1' || !!x.video)
     && (p.kaam_verify === '1' || p.kaam_video_only === '1' || p.kaam_audio_only !== '1' || !!x.audio)
     && (p.kaam_verify !== '1' || !!(x.audio || x.video));
@@ -976,9 +984,16 @@ def scenario_fonctions(w):
         pg.click(f"#sheet {sel}"); pg.wait_for_timeout(80)
         pg.click("#sheet-close"); pg.wait_for_selector("#sheet", state="hidden")
 
+    def s_nodot(rec):
+        pg = w.new_page(w.ctx(), media_default=False); w.goto(pg)   # vrais réglages par défaut (Vidéo)
+        bad = pg.evaluate("document.getElementById('mast-set').classList.contains('dot') || !!document.querySelector('.bar')")
+        pg.close()
+        if bad: raise RuntimeError("réglages par défaut : point ou résumé affiché")
+        return "réglages par défaut : ni point ni résumé"
+    w.step("Réglages par défaut : aucun point", s_nodot)
+
     def s_order(rec):
         pg = w.new_page(w.ctx()); w.goto(pg)
-        if pg.evaluate("document.getElementById('mast-set').classList.contains('dot') || !!document.querySelector('.bar')"): raise RuntimeError("réglages par défaut : point ou résumé affiché")
         setting(pg, '[data-order="seq"]')
         idx = lambda: pg.evaluate("__kaam.quoteIdx")
         pos = lambda: pg.evaluate("(() => { const P = __kaam.pool(); return P ? P.indexOf(__kaam.quoteIdx) : __kaam.quoteIdx; })()")
@@ -1257,6 +1272,224 @@ def scenario_sombre(w):
         finally: pg.close()
     w.step("Sombre : grand titre replié au défilement", s_compact)
 
+def scenario_selection(w, se=False):
+    """Sélection des épisodes (feuille à cases), Vidéo par défaut, migration des anciennes clés, écrans vides, quiz, recherche."""
+    S = {}
+    def page(prefs=None, raw=False):
+        pg = w.new_page(w.ctx(), prefs, media_default=not raw); w.goto(pg); return pg
+    def foot(pg): return pg.evaluate("document.getElementById('sel-foot').innerText.replace(/\\s+/g, ' ')")
+    def nbsp(x): return re.sub(r"[  ]", " ", x)
+    sfx = "-se" if se else ""
+
+    if not se:
+        def s_default(rec):
+            pg = page(raw=True)
+            pg.wait_for_selector("#qvideo")
+            r = pg.evaluate("""() => ({ media: __kaam.media, all: __kaam.pool().every(i => __kaam.allQuotes[i].video),
+                ls: localStorage.getItem('kaam_media'), lsSel: localStorage.getItem('kaam_sel'), scope: document.querySelector('#mast-scope .sl').textContent,
+                vis: !document.getElementById('mast-scope').hidden })""")
+            try: pg.wait_for_function("() => document.querySelector('#qvideo-slot').dataset.s === 'muted' || window.__qaRefused > 0", timeout=6000)
+            except Exception: pass
+            w.shot(pg, rec, "30-defaut-video")
+            pg.close()
+            if r["media"] != "video" or not r["all"] or r["ls"] is not None or r["lsSel"] is not None or not r["vis"] or r["scope"] != "Tout Kaamelott":
+                raise RuntimeError(f"premier lancement : {r}")
+            return f"Vidéo par défaut, rien d'écrit au chargement, sélecteur « {r['scope']} »"
+        w.step("Premier lancement : Vidéo par défaut", s_default)
+
+        def s_migr_m(rec):
+            out = []
+            for prefs, want in [({"kaam_video_only": "0", "kaam_audio_only": "0"}, "text"), ({"kaam_audio_only": "1"}, "audio")]:
+                pg = page(prefs, raw=True)
+                r = pg.evaluate("({ m: __kaam.media, v: !!document.getElementById('qvideo') })"); pg.close()
+                if r["m"] != want or r["v"]: raise RuntimeError(f"{prefs} : {r}")
+                out.append(want)
+            return "Texte et Son choisis avant : respectés"
+        w.step("Migration : affichage choisi respecté", s_migr_m)
+
+        def s_migr(rec):
+            pg = page({"kaam_source": "film"})
+            lab = pg.inner_text("#mast-scope")
+            for _ in range(5):
+                pg.click("#btn-next"); pg.wait_for_timeout(60)
+                if not pg.evaluate("!!__kaam.allQuotes[__kaam.quoteIdx].film"): raise RuntimeError("réplique hors film")
+            pg.close()
+            pg = page({"kaam_source": "serie"}); lab2 = pg.inner_text("#mast-scope"); pg.close()
+            if lab.strip() != "Film" or lab2.strip() != "Toute la série · Inédits": raise RuntimeError(f"libellés {lab!r} {lab2!r}")
+            return f"film → « {lab.strip()} », série → « {lab2.strip()} »"
+        w.step("Migration : ancienne source", s_migr)
+
+    def s_sheet(rec):
+        pg = S["pg"] = page(raw=True)
+        pg.click("#mast-scope"); pg.wait_for_selector("#sheet:not([hidden]) #sel-foot")
+        f0 = nbsp(foot(pg))
+        pg.click('[data-part="all"]'); f1 = foot(pg)
+        pg.click('[data-part="L1"]'); pg.click('[data-part="film"]'); f2 = nbsp(foot(pg))
+        c = pg.evaluate("(() => { const c = __kaam.counts; return c.L1.v + c.film.v; })()")
+        aria = pg.evaluate("[...document.querySelectorAll('#sheet [data-part]')].map(b => [b.dataset.part, b.getAttribute('role'), b.getAttribute('aria-checked')])")
+        pg.wait_for_timeout(300)
+        w.shot(pg, rec, "31-selection" + sfx)
+        if se:   # le pied ne recouvre pas la dernière ligne une fois la liste défilée en bas
+            pg.evaluate("document.getElementById('sheet').scrollTop = 1e5"); pg.wait_for_timeout(200)
+            ov = pg.evaluate("() => { const r = document.querySelector('[data-part=in3]').getBoundingClientRect(), f = document.getElementById('sel-foot').getBoundingClientRect(); return r.bottom - f.top; }")
+            w.shot(pg, rec, "31b-selection-bas" + sfx)
+            if ov > 0.5: raise RuntimeError(f"le pied recouvre la dernière ligne ({ov} px)")
+        pg.click("#sheet-close"); pg.wait_for_selector("#sheet", state="hidden")
+        lab = pg.inner_text("#mast-scope").strip(); ls = pg.evaluate("localStorage.getItem('kaam_sel')")
+        errs = []
+        tot = sum(1 for _ in [0])
+        if not f0.startswith(pg.evaluate("__kaam.allQuotes.filter(q => q.video).length.toLocaleString('fr-FR')").replace(" ", " ") + " scènes"): errs.append(f"pied initial {f0!r}")
+        if "Aucune sélection" not in f1: errs.append(f"pied vide {f1!r}")
+        if not f2.startswith(nbsp(f"{c:,}".replace(",", " ")) + " scènes"): errs.append(f"pied {f2!r} ({c})")
+        if lab != "Livre I · Film" or ls != '["L1","film"]': errs.append(f"libellé {lab!r} / {ls}")
+        if any(r != "checkbox" for _, r, _ in aria) or dict((p, a) for p, _, a in aria).get("L1") != "true": errs.append(f"aria {aria}")
+        for k in range(8):
+            pg.click("#btn-next"); pg.wait_for_timeout(60)
+            inv = pg.evaluate("() => { const q = __kaam.allQuotes[__kaam.quoteIdx]; return ['L1', 'film'].includes(q.part) && !!q.video; }")
+            if not inv: errs.append(f"réplique hors sélection à la navigation {k}"); break
+        pg.reload(); w.wait_ready(pg)
+        lab2 = pg.inner_text("#mast-scope").strip()
+        if lab2 != lab: errs.append(f"sélection oubliée au rechargement : {lab2!r}")
+        pg.close()
+        if errs: raise RuntimeError(" ; ".join(errs))
+        return f"pied « {f0} » → « {f1} » → « {f2} » ; « {lab} » mémorisé ; navigation dans la sélection"
+    w.step("Feuille Sélection : cases, total en direct, mémorisation", s_sheet)
+
+    def s_empty(rec):
+        pg = page({"kaam_sel": "[]"}, raw=True)
+        r = pg.evaluate("({ t: document.querySelector('.empty.sel0 b')?.textContent, card: !!document.getElementById('quote-card') })")
+        w.shot(pg, rec, "32-vide" + sfx)
+        pg.click("#empty-sel"); pg.wait_for_selector("#sheet:not([hidden]) #sel-foot")
+        pg.close()
+        if r["t"] != "Aucune sélection" or r["card"]: raise RuntimeError(f"écran vide : {r}")
+        pg = page({"kaam_sel": '["in3"]'}, raw=True)
+        r = pg.evaluate("({ t: document.querySelector('.empty.sel0 b')?.textContent, txt: document.querySelector('.empty.sel0').innerText })")
+        w.shot(pg, rec, "33-inedit3" + sfx)
+        pg.click("#empty-text"); pg.wait_for_selector("#quote-card")
+        r2 = pg.evaluate("({ m: __kaam.media, ls: localStorage.getItem('kaam_media'), part: __kaam.allQuotes[__kaam.quoteIdx].part })")
+        pg.close()
+        if r["t"] != "Aucune scène" or "Dolor" not in r["txt"] or r2 != {"m": "text", "ls": "text", "part": "in3"}: raise RuntimeError(f"Inédit 3 : {r} {r2}")
+        pg = page({"kaam_sel": '["in2","in3"]'}, raw=True)
+        pg.click("#mast-scope"); pg.wait_for_selector("#sel-foot")
+        f = nbsp(foot(pg)); pg.close()
+        if not f.startswith("79 scènes") or "Inédit 3 se lit en Texte seulement." not in f: raise RuntimeError(f"pied in2+in3 : {f!r}")
+        return f"« Aucune sélection » → Choisir ; Inédit 3 seul : « Aucune scène » → Lire en Texte ; pied « {f} »"
+    w.step("Écrans vides et Inédit 3", s_empty)
+
+    def s_quiz(rec):
+        pg = page({"kaam_sel": '["L4"]'})
+        w.nav(pg, "quiz")
+        parts = []
+        for k in range(6):
+            parts.append(pg.evaluate("__kaam.quizState.current.part"))
+            if k < 5: pg.click("#quiz-next"); pg.wait_for_timeout(60)
+        vis = pg.evaluate("!document.getElementById('mast-scope').hidden")
+        w.shot(pg, rec, "34-quiz-portee" + sfx)
+        pg.click("#quiz-daily"); pg.wait_for_selector("#quiz-free")
+        dvis = pg.evaluate("!document.getElementById('mast-scope').hidden")
+        pg.close()
+        pg = page({"kaam_sel": '["in3"]'}); w.nav(pg, "quiz")
+        st = pg.inner_text("#quiz-stat"); pg.close()
+        if set(parts) != {"L4"} or not vis or dvis or "Pas assez de scènes" not in st: raise RuntimeError(f"quiz : {parts} vis={vis} jour={dvis} {st!r}")
+        return f"6 questions du Livre IV ; repli annoncé « {st} » ; pas de sélecteur sur la question du jour"
+    w.step("Quiz : suit la sélection", s_quiz)
+
+    def s_search(rec):
+        pg = page({"kaam_sel": '["L2"]'})
+        w.nav(pg, "recherche")
+        pg.fill("#search-input", "compote")
+        pg.wait_for_function("() => document.querySelectorAll('#search-results .ent').length > 0")
+        a = nbsp(pg.inner_text("#search-results .res-n"))
+        pg.click('#search-scope [data-scope="sel"]'); pg.wait_for_timeout(150)
+        b = nbsp(pg.inner_text("#search-results .res-n"))
+        w.shot(pg, rec, "35-recherche-portee" + sfx)
+        pg.close()
+        pg = page(); w.nav(pg, "recherche"); pg.fill("#search-input", "compote"); pg.wait_for_timeout(200)
+        hid = pg.evaluate("document.getElementById('search-scope').hidden"); pg.close()
+        m = re.match(r"(\d+) répliques?$", a); m2 = re.match(r"(\d+) répliques? · (\d+) partout$", b)
+        if not m or not m2 or m2.group(2) != m.group(1) or int(m2.group(1)) >= int(m.group(1)) or not hid: raise RuntimeError(f"{a!r} / {b!r} / segment caché sans sélection : {hid}")
+        return f"« {a} » puis « {b} »"
+    w.step("Recherche : Partout puis la sélection", s_search)
+
+    def s_pers(rec):
+        out = []
+        for sel in ['["film"]', None]:
+            pg = page({"kaam_sel": sel} if sel else None); w.nav(pg, "personnages")
+            out.append(pg.evaluate("[...document.querySelectorAll('.idx-row')].find(r => r.dataset.char === 'ARTHUR')?.querySelector('.c').textContent"))
+            pg.close()
+        if out[0] != out[1] or not out[0]: raise RuntimeError(f"Personnages filtrés : {out}")
+        return f"Arthur : « {out[0]} » dans les deux cas"
+    if not se: w.step("Personnages non filtrés", s_pers)
+
+    if se:
+        def s_se(rec):
+            pg = page({"kaam_sel": '["L1","L3","L5","film","in1","in2"]'}, raw=True)
+            r = pg.evaluate("""() => { const b = document.getElementById('mast-scope').getBoundingClientRect(), n = document.getElementById('btn-next').getBoundingClientRect(),
+                t = document.querySelector('.tabs').getBoundingClientRect(), sl = document.querySelector('#mast-scope .sl');
+                return { h: b.height, right: b.right, vw: innerWidth, ell: sl.scrollWidth > sl.clientWidth, next: n.bottom, tabs: t.top,
+                         ov: document.documentElement.scrollWidth - innerWidth }; }""")
+            w.shot(pg, rec, "36-se-portee")
+            pg.close()
+            if r["h"] > 26.5 or r["right"] > r["vw"] or r["next"] > r["tabs"] + .5 or r["ov"] > 1: raise RuntimeError(f"SE : {r}")
+            return f"sélecteur {r['h']:.0f} px de haut (ellipse : {r['ell']}), « Autre » au-dessus des onglets"
+        w.step("SE : rien de coupé", s_se)
+
+
+def scenario_lancement(w):
+    """Écran de lancement : noir au K dès le premier rendu, sans CSS ni JS ; fondu une fois la réplique affichée."""
+    def s_first(rec):
+        out = []
+        for scheme in ("light", "dark"):
+            opts, kw = (w.ctx(), w._ctx_kw)[1]
+            ctx = w.make_context(w.browser, {**opts, "color_scheme": scheme}, **kw)
+            try:
+                pg = ctx.new_page(); w.attach(pg)
+                # ni style.css ni app.js : le premier rendu ne doit dépendre que d'index.html
+                pg.route("**/style.css", lambda r: r.fulfill(status=200, body="", headers={"content-type": "text/css"}))
+                pg.route("**/app.js", lambda r: r.fulfill(status=200, body="", headers={"content-type": "text/javascript"}))
+                pg.goto(w.base, wait_until="domcontentloaded")
+                pg.wait_for_timeout(300)
+                r = pg.evaluate("""() => { const k = document.querySelector('#launch .launch-k').getBoundingClientRect();
+                    return { bg: getComputedStyle(document.documentElement).backgroundColor, launch: getComputedStyle(document.getElementById('launch')).backgroundColor,
+                             kh: k.height, kc: k.top + k.height / 2, vh: innerHeight }; }""")
+                w.shot(pg, rec, f"70-lancement-sans-css-{scheme}")
+                if r["bg"] != "rgb(0, 0, 0)" or r["launch"] != "rgb(0, 0, 0)" or abs(r["kh"] - 64) > .5 or abs(r["kc"] - r["vh"] / 2) > 1: raise RuntimeError(f"{scheme} : {r}")
+                out.append(scheme)
+                pg.unroute_all(behavior="ignoreErrors"); pg.close()
+            finally:
+                ctx.close()
+        return "noir et K de 64 px centré sans style.css ni app.js, en clair et en sombre"
+    w.step("Lancement : premier rendu noir au K (sans CSS ni JS)", s_first)
+
+    def s_fade(rec):
+        pg = w.new_page(w.ctx()); w.goto(pg)
+        pg.wait_for_function("() => !document.getElementById('launch')", timeout=3000)
+        r = pg.evaluate("({ cls: document.documentElement.className, style: document.documentElement.getAttribute('style') || '', cs: document.getElementById('meta-cs').content, body: getComputedStyle(document.body).backgroundColor })")
+        w.shot(pg, rec, "71-apres-lancement")
+        pg.close()
+        if "launching" in r["cls"] or "background" in r["style"] or r["cs"] != "light dark" or r["body"] != "rgb(255, 255, 255)": raise RuntimeError(f"après le lancement : {r}")
+        return "écran de lancement retiré après la première réplique, fond rendu au mode clair"
+    w.step("Lancement : fondu puis retrait", s_fade)
+
+    def s_slow(rec):
+        pg = w.new_page(w.ctx())
+        hold = {}
+        def slow(route):
+            hold["r"] = route
+        pg.route("**/data.json*", slow)
+        pg.goto(w.base, wait_until="domcontentloaded")
+        pg.wait_for_timeout(1500)
+        r = pg.evaluate("({ on: document.querySelector('#launch .launch-slow').classList.contains('on'), op: getComputedStyle(document.querySelector('#launch .launch-slow')).opacity })")
+        w.shot(pg, rec, "72-lancement-lent")
+        pg.unroute_all(behavior="ignoreErrors")
+        if hold.get("r"):
+            try: hold["r"].continue_()
+            except Exception: pass
+        w.wait_ready(pg); pg.close()
+        if not r["on"]: raise RuntimeError(f"barre absente après 1 s : {r}")
+        return "réseau lent : la barre apparaît sous le K après 1 s"
+    w.step("Lancement lent : barre après 1 s", s_slow)
+
 
 def scenario_mini(w):
     """Mini-lecteur : le son continue quand on change d'onglet ; lecture / pause, retour à la réplique, fermeture."""
@@ -1497,6 +1730,13 @@ def worker_main(kind, base, out):
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_mini(w)
             elif kind == "portraits":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_portraits(w)
+            elif kind == "selection":
+                w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_selection(w); scenario_lancement(w)
+            elif kind == "selection-se":
+                w.setup(wk, dict(p.devices["iPhone SE"]), ios_policy=True); scenario_selection(w, se=True)
+            elif kind == "selection-sombre":
+                d = dict(p.devices["iPhone 13"]); d["color_scheme"] = "dark"
+                w.setup(wk, d, ios_policy=True); scenario_selection(w)
             elif kind == "combos":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_combos(w)
         except Exception:
@@ -1586,9 +1826,9 @@ def main():
             print("serveur local injoignable"); return 2
         print(f"App : {APP}\nServeur : {base}")
         checks = quick_checks()
-        jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions", "sombre", "mini-lecteur", "portraits"]
+        jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions", "sombre", "mini-lecteur", "portraits", "selection"]
         if not quick:
-            jobs += ["iphone13", "combos"]
+            jobs += ["iphone13", "combos", "selection-se", "selection-sombre"]
         for kind in jobs:
             out = RES / f"{kind}.json"
             args = [sys.executable, str(Path(__file__).resolve()), "--worker", kind, base, str(out)]
