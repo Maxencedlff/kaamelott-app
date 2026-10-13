@@ -538,7 +538,10 @@ def check_compact(w, pg, rec, fname):
     r0 = pg.evaluate("""() => ({ compact: document.getElementById('main-header').classList.contains('compact'),
         y: document.querySelector('#pers-list').getBoundingClientRect().top })""")
     if r0["compact"]: raise RuntimeError("barre repliée alors que rien n'a défilé")
-    pg.evaluate("document.getElementById('pers-scroll').scrollTop = 300"); pg.wait_for_timeout(450)
+    pg.evaluate("document.getElementById('pers-scroll').scrollTop = 300")
+    try: pg.wait_for_function("() => document.getElementById('main-header').classList.contains('compact')", timeout=3000)
+    except Exception: pass
+    pg.wait_for_timeout(450)    # fin du fondu (0,2 s)
     r = pg.evaluate("""() => { const m = document.getElementById('main-header'), ct = document.getElementById('mast-ct'), cs = getComputedStyle(ct),
         bf = getComputedStyle(m, '::before'), big = getComputedStyle(document.querySelector('#mast-sub'));
         const st = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--st')) || 0;
@@ -686,7 +689,9 @@ def scenario_vague2(w):
         pg = page(); w.nav(pg, "quiz")
         pg.locator(".choice").first.click(); pg.wait_for_selector(".choice.right"); pg.wait_for_timeout(600)
         # état « sans le son » forcé : la pastille doit rester petite, en bas à gauche
-        pg.evaluate("() => { const f = document.getElementById('quiz-fig'), v = f.querySelector('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } f.dataset.s = 'muted'; const st = f.querySelector('.st'); st.className = 'st red'; st.innerHTML = '<i></i>Touchez l’image pour le son'; }")
+        pg.evaluate("() => { const f = document.getElementById('quiz-fig'), v = f.querySelector('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } }")
+        pg.wait_for_timeout(300)   # le « loadstart » du lecteur vidé arrive après coup (machine chargée) : l'état forcé vient ensuite
+        pg.evaluate("() => { const f = document.getElementById('quiz-fig'); f.dataset.s = 'muted'; const st = f.querySelector('.st'); st.className = 'st red'; st.innerHTML = '<i></i>Touchez l’image pour le son'; }")
         pg.wait_for_timeout(100)
         G = """() => { const R = e => e.getBoundingClientRect(), m = document.getElementById('main-content');
           const top = R(document.getElementById('main-header')).top + parseFloat(getComputedStyle(m).paddingTop);
