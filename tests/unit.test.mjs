@@ -101,3 +101,12 @@ test('didascalies : jamais affichées, favoris anciens toujours reconnus', () =>
   const avec = all.find(q => t.raw[q.i].quote.includes('('));
   assert.ok(t.sameQuote({ quote: t.raw[avec.i].quote, name: avec.name }, avec), 'favori enregistré avec didascalie non reconnu');
 });
+test('portraits : image si listée dans perso.json, sinon initiale sur la couleur', () => {
+  t.set('PERSO', { ARTHUR: 'arthur.0123abcd' });
+  assert.equal(t.get('persoURL')('ARTHUR', 'p'), 'img/perso/arthur.0123abcd-p.jpg');
+  assert.equal(t.get('persoURL')('PERCEVAL', 's'), null);
+  const a = t.get('faceHTML')('ARTHUR', 's', 'av sq'), p = t.get('faceHTML')('LA DAME DU LAC');
+  assert.ok(a.includes('class="av sq img"') && a.includes('src="img/perso/arthur.0123abcd-s.jpg"') && a.includes('>A<'));
+  assert.ok(!p.includes('<img') && p.includes('>D<') && p.includes('--c:#'));
+  t.set('PERSO', {});
+});

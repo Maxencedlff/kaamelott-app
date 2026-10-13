@@ -366,7 +366,7 @@ function renderMini() {
   if (el.dataset.k === k) return;
   el.dataset.k = k;
   const sub = [nameCase(q.name), epLabel(q)].filter(Boolean).join(' · ');
-  el.innerHTML = `<button class="mini-open" id="mini-open" aria-label="Ouvrir la réplique : ${esc(nameCase(q.name))}"><span class="tile" style="--c:${colorOf(q.name)}" aria-hidden="true">${initial(q.name)}</span>
+  el.innerHTML = `<button class="mini-open" id="mini-open" aria-label="Ouvrir la réplique : ${esc(nameCase(q.name))}">${faceHTML(q.name, 's', 'tile')}
       <span class="tx"><b>${typo(q.quote)}</b><span>${esc(sub)}</span></span></button>
     <button class="mb" id="mini-play" aria-label="${on ? 'Pause' : 'Lecture'}">${icon(on ? 'pause' : 'play')}</button>
     <button class="mb mx" id="mini-close" aria-label="Fermer le lecteur">${icon('x')}</button>`;
@@ -444,6 +444,7 @@ function bootProgress(got, total) {
   if (m) m.innerHTML = `<span>${(got / 1e6).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Mo sur ${(Math.max(got, total) / 1e6).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} Mo</span><span>${pc} %</span>`;
 }
 async function loadData() {
+  const perso = loadPerso();   // en parallèle des répliques ; jamais bloquant (sans liste : les initiales)
   // jusqu'à 3 essais : le premier peut tomber sur la page de contrôle anti-robot de Vercel (403), qui se lève seule
   let raw = null, detail = '';
   for (let essai = 0; essai < 3 && !raw; essai++) {
@@ -481,6 +482,7 @@ async function loadData() {
     } catch (e) { detail += ` · ${e.name}: ${e.message}`; }
   }
   if (!raw) throw new Error(`data.json : ${detail}`);
+  await Promise.race([perso, new Promise(r => setTimeout(r, 1500))]);
   allQuotes  = raw.map(parseQuote).filter(q => q.quote && q.name && !q.hide);   // hide : doublon masqué (index i conservé)
   audioIdx   = allQuotes.reduce((acc, q, i) => (q.audio && acc.push(i), acc), []);
   videoIdx   = allQuotes.reduce((acc, q, i) => (q.video && acc.push(i), acc), []);
@@ -548,6 +550,27 @@ function colorOf(name) {
 }
 // Initiale du rond d'un personnage, sans l'article (« La Dame du Lac » → D)
 function initial(n) { const s = nameCase(n || '').replace(/^(Le|La|Les)\s+|^L[’']\s*/, ''); return (s.match(/\p{L}/u) || ['?'])[0].toUpperCase(); }
+// ===== PORTRAITS : une image par personnage, tirée de ses propres scènes (img/perso/, liste dans perso.json) =====
+// p = 3:4 (grandes cartes), s = carré (vignettes, ronds), w = 4:3 (en-tête de fiche). Noms de fichier à empreinte : immuables.
+// Sans image (ou image introuvable) : l'initiale sur la couleur du personnage, qui sert aussi de fond pendant le chargement.
+let PERSO = {};
+function persoURL(name, kind) { const f = PERSO[name]; return f ? `img/perso/${f}-${kind}.jpg` : null; }
+function faceHTML(name, kind = 's', cls = 'av') {
+  const u = persoURL(name, kind);
+  return `<span class="${cls}${u ? ' img' : ''}" style="--c:${colorOf(name)}" aria-hidden="true">${initial(name)}${u ? `<img src="${u}" alt="" loading="lazy" decoding="async">` : ''}</span>`;
+}
+// image absente ou refusée : retirée, l'initiale reste (écouteur unique, en capture : l'erreur d'une image ne remonte pas)
+function onImgError(e) {
+  const im = e.target;
+  if (im && im.tagName === 'IMG' && im.parentElement?.classList.contains('img')) { im.parentElement.classList.remove('img'); im.closest('.fiche-h')?.classList.remove('photo'); im.remove(); }
+}
+async function loadPerso() {
+  try {
+    const r = await fetch('perso.json');
+    const j = r.ok && /json/.test(r.headers.get('content-type') || '') ? await r.json() : null;
+    if (j && typeof j === 'object' && !Array.isArray(j)) PERSO = j;
+  } catch {}
+}
 const LCOL = { I: '#3b5b92', II: '#2f7a6b', III: '#b4532a', IV: '#6a4c9c', V: '#a8325e', VI: '#4a4a4f', Film: '#8c6a2f', Inédits: '#5b5f97' };
 const livreNom = L => /^[IV]+$/.test(L) ? `Livre ${L}` : L === 'Film' ? 'Premier Volet' : L;
 
@@ -679,6 +702,17 @@ function getCharList() {                       // calculée une fois par chargem
   allQuotes.forEach(q => { map[q.name] = (map[q.name] || 0) + 1; });
   charCache = { src: allQuotes, list: Object.entries(map).sort((a, b) => b[1] - a[1]) };
   return charCache.list;
+}
+// Nombre d'épisodes où parle chaque personnage (film et inédits comptés comme un épisode chacun), calculé une fois
+let epCache = null;
+function charEpisodes() {
+  if (epCache && epCache.src === allQuotes) return epCache.m;
+  const sets = {};
+  allQuotes.forEach(q => { (sets[q.name] = sets[q.name] || new Set()).add(q.film ? 'film' : q.inedit ? 'x' + q.inedit : `${q.livre}|${q.episode}`); });
+  const m = {};
+  for (const n in sets) m[n] = sets[n].size;
+  epCache = { src: allQuotes, m };
+  return m;
 }
 // Sous-titre de l'en-tête ; hors ligne, il le dit (sans bandeau ni fenêtre)
 function setMast(t) {
@@ -940,7 +974,7 @@ function citationsHTML(q, m, dir) {
         <blockquote class="quote" lang="fr"${m.inlineVideo ? ` style="font-size:${size}px"` : ''}>${quoteHTML(q.quote)}</blockquote>
         ${m.hint ? `<p class="quote-hint" aria-hidden="true">${m.hint}</p>` : ''}
       </div>
-      ${m.inlineVideo ? '' : `<div class="cote" aria-hidden="true"><span class="ini">${initial(q.name)}</span><span class="cl"><b>Kaamelott</b>${L ? ' · ' + esc(livreNom(L)) : ''}</span></div>`}
+      ${m.inlineVideo ? '' : `<div class="cote" aria-hidden="true">${faceHTML(q.name, 's', 'ini')}<span class="cl"><b>Kaamelott</b>${L ? ' · ' + esc(livreNom(L)) : ''}</span></div>`}
     </div>
     <div class="meta">
       <div class="who-b"><button class="who" id="btn-who" aria-label="${esc(nameCase(q.name))}, voir la fiche du personnage">${esc(nameCase(q.name))}</button>
@@ -1509,7 +1543,7 @@ function renderQuiz(daily = false) {
       </div>
     </div>
     <div class="choices" role="group" aria-label="Qui a dit ça ?">
-      ${choices.map((c, k) => `<button class="choice" data-choice="${esc(c)}"><span class="l" style="--c:${qcol[k]}" aria-hidden="true">${initial(c)}</span><span class="n">${esc(nameCase(c))}</span><span class="v"></span></button>`).join('')}
+      ${choices.map((c, k) => `<button class="choice" data-choice="${esc(c)}">${faceHTML(c, 's', 'l').replace(/--c:#[0-9a-f]+/, `--c:${qcol[k]}`)}<span class="n">${esc(nameCase(c))}</span><span class="v"></span></button>`).join('')}
     </div>
     ${daily
       ? `<div class="nav one" id="quiz-nav"><button class="pill gray" id="quiz-free">Revenir au quiz libre</button></div>`
@@ -1621,26 +1655,28 @@ function renderPersonnages() {
   const list = persSort === 'alpha' ? [...solo].sort((a, b) => sortKey(a[0]).localeCompare(sortKey(b[0]), 'fr')) : solo;
   const MINOR = 5;
   const minors = persSort === 'count' ? solo.filter(([, c]) => c < MINOR).length : 0;
-  // une ligne façon « artiste » : rond de couleur avec l'initiale, nom, nombre de répliques
-  const row = ([name, count], cls = '') => `<button class="idx-row${cls}" data-char="${esc(name)}" data-f="${esc(fold(nameCase(name)))}"><span class="av" style="--c:${colorOf(name)}" aria-hidden="true">${initial(name)}</span><span class="t"><span class="n">${esc(nameCase(name))}</span><span class="c">${plural(count, 'réplique')}</span></span>${icon('chev', 'chev')}</button>`;
+  const eps = charEpisodes();
+  // une ligne façon Apple TV : vignette photo (ou initiale sur la couleur), nom, « N répliques · N épisodes », chevron
+  const row = ([name, count], cls = '') => `<button class="idx-row${cls}" data-char="${esc(name)}" data-f="${esc(fold(nameCase(name)))}">${faceHTML(name, 's', 'av sq')}<span class="t"><span class="n">${esc(nameCase(name))}</span><span class="c">${plural(count, 'réplique')}${eps[name] ? ` · ${plural(eps[name], 'épisode')}` : ''}</span></span>${icon('chev', 'chev')}</button>`;
   let rows = '', letter = '';
   list.forEach(c => {
     if (persSort === 'alpha') {
       const l = sortKey(c[0]).charAt(0).toUpperCase();
       if (l !== letter) { letter = l; rows += `<div class="idx-l">${l}</div>`; }
     }
-    if (minors && c[1] < MINOR && !rows.includes('idx-more')) rows += `<button class="idx-more" id="pers-more"><span class="av more-av" aria-hidden="true">${icon('people')}</span><span class="t"><span class="n">Rôles de passage</span><span class="c">${nf(minors)} personnages, moins de ${MINOR} répliques chacun</span></span>${icon('chev', 'chev')}</button>`;
+    if (minors && c[1] < MINOR && !rows.includes('idx-more')) rows += `<button class="idx-more" id="pers-more"><span class="av sq more-av" aria-hidden="true">${icon('people')}</span><span class="t"><span class="n">Rôles de passage</span><span class="c">${nf(minors)} personnages, moins de ${MINOR} répliques chacun</span></span>${icon('chev', 'chev')}</button>`;
     rows += row(c, minors && c[1] < MINOR ? ' minor' : '');
   });
   if (duos.length) rows += `<div class="idx-l voix">À plusieurs voix</div>` + duos.map(c => row(c, ' duo')).join('');
-  const top = az ? [] : solo.slice(0, 8);
+  // « Les plus présents » : grandes cartes photo qui défilent à l'horizontale (tri par répliques seulement)
+  const top = az ? [] : solo.slice(0, 10);
   main.innerHTML = `
     <div class="scroll" id="pers-scroll">
       <div class="page-h"><h1 class="sr">Personnages</h1><p>${nf(solo.length)} personnages · ${nf(allQuotes.length)} répliques</p></div>
       <label class="pf field">${icon('search')}<input id="pers-filter" type="search" placeholder="Filtrer les noms" aria-label="Filtrer les noms" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"></label>
-      <div class="sort seg"><button class="${persSort === 'count' ? 'on' : ''}" data-sort="count" aria-pressed="${persSort === 'count'}">Par répliques</button><button class="${persSort === 'alpha' ? 'on' : ''}" data-sort="alpha" aria-pressed="${persSort === 'alpha'}">De A à Z</button></div>
-      ${top.length ? `<div id="pers-top"><h2 class="h2">Les plus cités</h2><div class="shelf">${top.map(([n]) => `<button class="art-c" data-char="${esc(n)}"><span class="av lg" style="--c:${colorOf(n)}" aria-hidden="true">${initial(n)}</span><b>${esc(nameCase(n))}</b></button>`).join('')}</div></div>` : ''}
-      <h2 class="h2" id="pers-h">${az ? 'De A à Z' : 'Tous les personnages'}</h2>
+      ${top.length ? `<div id="pers-top"><h2 class="h2">Les plus présents</h2><div class="shelf posters">${top.map(([n, c]) => `<button class="poster" data-char="${esc(n)}">${faceHTML(n, 'p', 'pc')}<b>${esc(nameCase(n))}</b><span>${plural(c, 'réplique')}</span></button>`).join('')}</div></div>` : ''}
+      <div class="sec-h"><h2 class="h2" id="pers-h">${az ? 'De A à Z' : 'Tous'}<span class="hc"> · ${nf(solo.length)}</span></h2>
+        <button class="sortb" data-sort="${az ? 'count' : 'alpha'}" aria-label="${az ? 'Trier par nombre de répliques' : 'Trier de A à Z'}">${az ? 'Trier par répliques' : 'Trier de A à Z'}</button></div>
       <div class="perso-list${minors && !persAll ? ' collapsed' : ''}${az ? ' az' : ''}" id="pers-list">${rows}</div>
     </div>`;
   const sc = document.getElementById('pers-scroll'), listEl = document.getElementById('pers-list'), input = document.getElementById('pers-filter');
@@ -1648,6 +1684,7 @@ function renderPersonnages() {
     const v = fold(input.value.trim());
     listEl.classList.toggle('filtering', !!v);
     const tp = document.getElementById('pers-top'); if (tp) tp.hidden = !!v;
+    const sh = main.querySelector('.sec-h'); if (sh) sh.classList.toggle('filtering', !!v);
     listEl.querySelectorAll('.idx-row').forEach(r => { r.hidden = !!v && !r.dataset.f.includes(v); });
     // une lettre sans nom visible disparaît avec ses noms
     listEl.querySelectorAll('.idx-l').forEach(h => {
@@ -1754,13 +1791,14 @@ function openPersonnage(name, restore) {
   const livres = LIVRES.filter(L => byLivre.has(L));
   const first = quotes[0];
   const nm = nameCase(name);
+  const hero = persoURL(name, 'w');   // grande image en tête (sinon l'aplat de couleur et l'initiale)
   let start = restore?.start || 0, shown = start, lastEp = null;
   const overlay = openOverlay(`
     <div class="back"><button id="detail-back" aria-label="Retour aux personnages">${icon('back')}</button><span class="nt" aria-hidden="true">${esc(nm)}</span></div>
     <div class="scroll" id="fiche-scroll">
-      <header class="fiche-h" style="--c:${colorOf(name)}"><span class="big" aria-hidden="true">${initial(name)}</span>
-        <h1${nm.length > 13 ? ' class="long"' : ''}>${esc(nm)}</h1>
-        <p class="part">Première réplique : ${esc(epLabel(first) || '—')}</p>
+      <header class="fiche-h${hero ? ' photo' : ''}" style="--c:${colorOf(name)}">${hero ? `<span class="hero img" aria-hidden="true"><img src="${hero}" alt="" decoding="async"></span>` : ''}<span class="big" aria-hidden="true">${initial(name)}</span>
+        <div class="tx"><h1${nm.length > 13 ? ' class="long"' : ''}>${esc(nm)}</h1>
+        <p class="part">Première réplique : ${esc(epLabel(first) || '—')}</p></div>
         <button class="play" id="f-rand" aria-label="Une réplique au hasard">${icon('shuffle')}</button>
       </header>
       <div class="stats">
@@ -1900,7 +1938,7 @@ function doSearch(query, container, keep) {
   const res = searchHits(query);
   const hits = res ? res.text : [];
   // la requête désigne un personnage : une ligne de renvoi vers sa fiche, puis les répliques qui contiennent le mot
-  const who = (res?.who || []).map(([n, c]) => `<button class="res-who idx-like" data-name="${esc(n)}"><span class="av" style="--c:${colorOf(n)}" aria-hidden="true">${initial(n)}</span><span class="t"><span class="n">${esc(nameCase(n))}</span><span class="c">Personnage · ${plural(c, 'réplique')}</span></span>${icon('chev', 'chev')}</button>`).join('');
+  const who = (res?.who || []).map(([n, c]) => `<button class="res-who idx-like" data-name="${esc(n)}">${faceHTML(n)}<span class="t"><span class="n">${esc(nameCase(n))}</span><span class="c">Personnage · ${plural(c, 'réplique')}</span></span>${icon('chev', 'chev')}</button>`).join('');
   const bindWho = () => container.querySelectorAll('.res-who').forEach(b => b.addEventListener('click', () => openPersonnage(b.dataset.name)));
   if (!hits.length) {
     container.innerHTML = (who ? `<h2 class="res-h">Personnages</h2>${who}` : '') + `<div class="empty">${who ? '' : `<span class="ei">${icon('search')}</span>`}<b>${who ? 'Aucune réplique ne contient ce mot.' : `Rien pour « ${esc(query)} ».`}</b><small>Vérifiez l’orthographe, ou essayez le début d’un mot.</small></div>`;
@@ -2058,6 +2096,8 @@ function setView(view) {
   else if (view === 'favoris')     renderFavoris();
   showMastSet();
   renderMini();
+  // le mini-lecteur vient d'apparaître sous le quiz : la question est réajustée à la place qui reste (jamais coupée)
+  if (view === 'quiz') fitQuiz(document.getElementById('quiz-stage'));
 }
 
 // ===== SERVICE WORKER ET MISES À JOUR =====
@@ -2172,6 +2212,7 @@ window.__kaam = {
   get quizState() { return quizState; },
   get favorites() { return favorites; },
   get player() { return player; },
+  get perso() { return PERSO; }, set perso(v) { PERSO = v; },
   pool: () => pool(),
   render: dir => renderCitations(dir),
   random: () => randomQuote(),
@@ -2186,6 +2227,7 @@ function bindGlobalEvents() {
   document.addEventListener('keydown', e => { if (e.key === 'Tab' || e.key.startsWith('Arrow') || e.key === 'Enter') usingKeyboard = true; }, true);
   ['pointerdown', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { usingKeyboard = false; }, { capture: true, passive: true }));
   document.addEventListener('touchstart', () => {}, { passive: true });   // iOS n'applique :active qu'avec un écouteur tactile
+  document.addEventListener('error', onImgError, true);                       // portrait introuvable : l'initiale reste
   document.addEventListener('keydown', onArrowKeys);                         // flèches : réplique suivante / précédente
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheetOpen()) closeSheet(); });
   // réseau : « Hors ligne » dans l'en-tête ; au retour du réseau, envoi des avis en attente

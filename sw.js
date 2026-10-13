@@ -1,5 +1,9 @@
-const CACHE = 'kaamelott-v38';
-const DATA_CACHE = 'kaamelott-data';   // jamais versionné : le vider forcerait 7 Mo de téléchargement à chaque mise à jour
+const CACHE = 'kaamelott-v39';
+const DATA_CACHE = 'kaamelott-data';
+// Portraits des personnages (img/perso/, ~200 × 3 petits JPEG) : noms à empreinte, donc immuables. Cache à part, jamais
+// vidé par une mise à jour ; servis depuis le cache dès la première vue, plafonné à IMG_MAX fichiers (les plus anciens sortent).
+const IMG_CACHE = 'kaamelott-img';
+const IMG_MAX = 700;   // jamais versionné : le vider forcerait 7 Mo de téléchargement à chaque mise à jour
 const ASSETS = [
   '/',
   '/index.html',
@@ -7,6 +11,7 @@ const ASSETS = [
   '/compat.js',
   '/app.js',
   '/manifest.json',
+  '/perso.json',
   '/fonts/inter-400.woff2',
   '/fonts/inter-500.woff2',
   '/fonts/inter-600.woff2',
@@ -38,7 +43,7 @@ self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
       .then(keys => {
-        const old = keys.filter(k => k !== CACHE && k !== DATA_CACHE);
+        const old = keys.filter(k => k !== CACHE && k !== DATA_CACHE && k !== IMG_CACHE);
         self.__wasUpdate = old.length > 0;
         return Promise.all(old.map(k => caches.delete(k)));
       })
@@ -52,6 +57,9 @@ self.addEventListener('activate', e => {
   );
 });
 
+// GIF transparent de 1 px (portrait indisponible hors ligne) : ni erreur, ni image cassée
+const BLANK = Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0));
+const blankImage = () => new Response(BLANK, { headers: { 'content-type': 'image/gif', 'cache-control': 'no-store' } });
 const isJSON = r => /json/.test(r.headers.get('content-type') || '');
 
 // Copie en cache d'une requête ; une navigation (/, /?utm_source=…, /index.html) retombe toujours sur la page de l'app
@@ -102,6 +110,28 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.match(e.request).then(hit => hit || fetch(e.request).then(r => {
       if (r.ok) { const c = r.clone(); e.waitUntil(caches.open(CACHE).then(k => k.put(e.request, c))); }
       return r;
+    })));
+    return;
+  }
+
+  // Portraits : cache d'abord (immuables) ; sinon le réseau, rangé pour la fois suivante
+  if (url.pathname.startsWith('/img/perso/')) {
+    e.respondWith(caches.open(IMG_CACHE).then(c => c.match(e.request).then(hit => hit || fetch(e.request).then(r => {
+      if (r.ok) {
+        const copy = r.clone();
+        e.waitUntil(c.put(e.request, copy).then(() => c.keys()).then(keys => Promise.all(keys.slice(0, Math.max(0, keys.length - IMG_MAX)).map(k => c.delete(k)))).catch(() => {}));
+      }
+      return r;
+    }, () => blankImage()))));   // hors ligne et pas encore en cache : image vide, l'initiale du personnage reste visible dessous
+    return;
+  }
+
+  // Liste des portraits : la copie en cache tout de suite (jamais d'attente au lancement), mise à jour en arrière-plan
+  if (url.pathname === '/perso.json') {
+    e.respondWith(caches.open(CACHE).then(c => c.match('/perso.json').then(hit => {
+      const net = fetch(e.request).then(r => { if (r.ok && isJSON(r)) return c.put('/perso.json', r.clone()).then(() => r, () => r); return r; });
+      if (hit) { e.waitUntil(net.catch(() => {})); return hit; }
+      return net.catch(() => new Response('{}', { headers: { 'content-type': 'application/json' } }));
     })));
     return;
   }

@@ -149,7 +149,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .stage.plain .more-h { color: var(--accent-t); }
 .more-h.done { visibility: hidden; }
 .cote { flex: none; display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; line-height: 16px; color: rgba(255, 255, 255, .8); letter-spacing: -.08px; white-space: nowrap; }
-.cote .ini { width: 26px; height: 26px; border-radius: 50%; background: rgba(255, 255, 255, .22); display: grid; place-items: center; font-size: 13px; font-weight: 600; color: #fff; flex: none; }
+.cote .ini { position: relative; overflow: hidden; width: 26px; height: 26px; border-radius: 50%; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .35); background: rgba(255, 255, 255, .22); display: grid; place-items: center; font-size: 13px; font-weight: 600; color: #fff; flex: none; }
 .cote .cl { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cote b { font-weight: 600; color: #fff; }
 .cote .no { margin-left: auto; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, .6); }
@@ -258,7 +258,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 /* ---------- Barre du bas : mini-lecteur + onglets, opaques ---------- */
 .mini { grid-row: 3; display: flex; align-items: center; gap: 4px; height: 64px; padding: 0 8px 0 var(--pad); background: var(--bar); border-top: .5px solid var(--line); }
 .mini-open { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 12px; }
-.mini .tile { width: 44px; height: 44px; border-radius: 8px; flex: none; display: grid; place-items: center; background: var(--c); color: #fff; font-size: 18px; font-weight: 600; }
+.mini .tile { position: relative; overflow: hidden; width: 44px; height: 44px; border-radius: 8px; flex: none; display: grid; place-items: center; background: var(--c); color: #fff; font-size: 18px; font-weight: 600; }
 .mini .tx { min-width: 0; }
 .mini .tx b { display: block; font-size: 15px; line-height: 20px; font-weight: 500; letter-spacing: -.24px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mini .tx span { display: block; font-size: 13px; line-height: 17px; color: var(--ink2); letter-spacing: -.08px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -356,7 +356,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .choices { flex: none; margin-top: 4px; }
 .choice { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 56px; padding: 0 var(--pad); position: relative; }
 .choice + .choice::before { content: ""; position: absolute; left: 74px; right: 0; top: 0; border-top: .5px solid var(--line); }
-.choice .l { width: 40px; height: 40px; border-radius: 50%; background: var(--c); color: #fff; display: grid; place-items: center; font-size: 17px; font-weight: 600; flex: none; letter-spacing: 0; }
+.choice .l { position: relative; overflow: hidden; width: 40px; height: 40px; border-radius: 50%; background: var(--c); color: #fff; display: grid; place-items: center; font-size: 17px; font-weight: 600; flex: none; letter-spacing: 0; }
 .choice .n { flex: 1; min-width: 0; font-size: 17px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .choice .v { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; flex: none; }
 .choice .v svg { width: 16px; height: 16px; }
@@ -371,6 +371,10 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .nav.two #quiz-daily { flex: 1.35; }
 #quiz-daily span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* ---------- Portraits : image tirée des scènes du personnage, posée sur l'initiale et sa couleur (repli) ---------- */
+.img > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.choice.dim .l img { opacity: .55; }
+
 /* ---------- Personnages ---------- */
 .page-h { margin: 0 var(--pad); }
 .page-h p { font-size: 15px; line-height: 20px; color: var(--ink2); letter-spacing: -.24px; }
@@ -379,12 +383,30 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .shelf { display: flex; gap: 14px; overflow-x: auto; padding: 0 var(--pad) 4px; scroll-snap-type: x mandatory; scroll-padding: 0 var(--pad); scrollbar-width: none; }
 .shelf::-webkit-scrollbar { display: none; }
 .shelf > button { flex: none; scroll-snap-align: start; }
-.art-c { width: 104px; text-align: center; }
-.av { width: 44px; height: 44px; border-radius: 50%; background: var(--c, #3b5b92); color: #fff; display: grid; place-items: center; font-size: 18px; font-weight: 600; flex: none; letter-spacing: 0; }
+/* « Les plus présents » : grandes cartes photo arrondies (Apple TV), nom et nombre de répliques dessous */
+.posters { gap: 12px; padding-bottom: 6px; }
+.poster { width: clamp(118px, 34vw, 160px); text-align: left; }
+.poster .pc { position: relative; overflow: hidden; display: grid; place-items: center; width: 100%; aspect-ratio: 3 / 4; border-radius: 14px; background: var(--c); color: #fff; font-size: 56px; font-weight: 700; margin-bottom: 8px; }
+.poster .pc.img { box-shadow: 0 0 0 .5px var(--line); }
+.poster b { display: block; font-size: 15px; line-height: 20px; font-weight: 600; letter-spacing: -.24px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.poster > span:last-child { display: block; font-size: 13px; line-height: 18px; color: var(--ink2); letter-spacing: -.08px; }
+.poster:active .pc { opacity: .8; }
+.sec-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 28px var(--pad) 6px; }
+.sec-h .h2 { margin: 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sec-h .hc { font-weight: 400; color: var(--ink2); }
+.sec-h.filtering .hc { display: none; }
+.sortb { flex: none; height: 32px; padding: 0 14px; border-radius: 980px; background: var(--fill); color: var(--accent-t); font-size: 15px; font-weight: 600; letter-spacing: -.24px; }
+.sortb:active { opacity: .6; }
+/* vignette carrée arrondie des listes (Apple TV) ; l'initiale reste dessous en repli */
+.av.sq { width: 56px; height: 56px; border-radius: 10px; font-size: 22px; }
+.av.sq.img { box-shadow: 0 0 0 .5px var(--line); }
+.av { position: relative; overflow: hidden; width: 44px; height: 44px; border-radius: 50%; background: var(--c, #3b5b92); color: #fff; display: grid; place-items: center; font-size: 18px; font-weight: 600; flex: none; letter-spacing: 0; }
 .av.lg { width: 104px; height: 104px; font-size: 40px; margin: 0 auto 8px; }
 .art-c b { display: block; font-size: 13px; line-height: 17px; font-weight: 500; letter-spacing: -.08px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.idx-row, .idx-more, .res-who { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 64px; padding: 0 var(--pad); position: relative; text-align: left; }
-.idx-row::after, .idx-more::after, .res-who::after { content: ""; position: absolute; left: 78px; right: 0; bottom: 0; border-bottom: .5px solid var(--line); }
+.idx-row, .idx-more, .res-who { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 72px; padding: 0 var(--pad); position: relative; text-align: left; }
+.idx-row::after, .idx-more::after { content: ""; position: absolute; left: calc(var(--pad) + 70px); right: 0; bottom: 0; border-bottom: .5px solid var(--line); }
+.res-who { min-height: 64px; }
+.res-who::after { content: ""; position: absolute; left: 78px; right: 0; bottom: 0; border-bottom: .5px solid var(--line); }
 .idx-row:active, .idx-more:active, .res-who:active { background: var(--fill); }
 .idx-row .t, .idx-more .t, .res-who .t { flex: 1; min-width: 0; }
 .idx-row .n, .idx-more .n, .res-who .n { display: block; font-size: 17px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -397,7 +419,6 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .idx-l.voix { margin-top: 28px; font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink); letter-spacing: .35px; }
 .perso-list.collapsed:not(.filtering) .minor, .perso-list:not(.collapsed) .idx-more, .perso-list.filtering .idx-more { display: none; }
 .perso-list.filtering .idx-l.voix { display: none; }
-.perso-list.az #pers-h { display: none; }
 
 /* ---------- Page poussée (fiche, scène en grand) ---------- */
 #detail-overlay { grid-row: 1 / 3; grid-column: 1; z-index: 5; position: relative; background: var(--bg); display: flex; flex-direction: column; min-height: 0; overflow: hidden; animation: push .34s cubic-bezier(.2, .8, .2, 1); }
@@ -420,6 +441,17 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .fiche-h h1 { position: relative; font-size: 40px; line-height: 44px; font-weight: 700; letter-spacing: -.02em; padding-right: 72px; overflow-wrap: break-word; }
 .fiche-h h1.long { font-size: 30px; line-height: 35px; }
 .fiche-h .part { position: relative; margin-top: 6px; font-size: 15px; line-height: 20px; color: rgba(255, 255, 255, .85); letter-spacing: -.24px; padding-right: 72px; }
+.fiche-h .tx { position: relative; }
+.fiche-h:not(.photo) .hero { display: none; }
+/* avec image : la scène en tête, bord à bord ; un dégradé discret vers le fond, seulement sous le titre */
+.fiche-h.photo { display: block; min-height: 0; padding: 0 0 4px; background: var(--bg); color: var(--ink); }
+.fiche-h.photo .big { display: none; }
+.fiche-h .hero { position: relative; display: block; overflow: hidden; aspect-ratio: 4 / 3; max-height: 58vh; background: var(--c); }
+.fiche-h .hero img { object-position: 50% 30%; }
+.fiche-h .hero::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 42%; background: linear-gradient(to bottom, transparent, var(--bg) 78%); pointer-events: none; }
+.fiche-h.photo .tx { margin-top: -60px; padding: 0 var(--pad); }
+.fiche-h.photo .part { color: var(--ink2); }
+.fiche-h.photo .play { bottom: 8px; }
 .fiche-h .play { position: absolute; right: var(--pad); bottom: 20px; width: 56px; height: 56px; border-radius: 50%; background: var(--accent-bg); color: #fff; display: grid; place-items: center; }
 .fiche-h .play svg { width: 24px; height: 24px; }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px var(--pad) 0; }
@@ -561,7 +593,8 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
   .choice { min-height: 46px; }
   .nav { margin: 6px var(--pad) 8px; }
   .nav .pill { min-height: 44px; }
-  .fiche-h { min-height: calc(var(--st) + 200px); }
+  .fiche-h:not(.photo) { min-height: calc(var(--st) + 200px); }
+  .fiche-h .hero { max-height: 50vh; }
 }
 /* Safari avec la barre d'adresse agrandie, SE dans Safari : la scène s'élargit encore, la place va à la réplique */
 @media (max-height: 560px) {

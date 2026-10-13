@@ -1214,6 +1214,98 @@ def scenario_mini(w):
         return "contrastes ≥ 4,5:1 : " + ", ".join(f"{n} {v}" for n, v in low)
     w.step("Contrastes (clair) : boutons rouges, rouge du texte, gris", s_contrast)
 
+IMGS = """() => { const ok = im => im.complete && im.naturalWidth > 0;
+  const q = s => [...document.querySelectorAll(s)];
+  const vis = el => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight && r.width > 0; };
+  return { posters: q('.poster').length, pimg: q('.poster .pc.img img').filter(ok).length, pnoimg: q('.poster .pc:not(.img)').length,
+           rows: q('.idx-row').filter(vis).length, rimg: q('.idx-row .av.img img').filter(vis).filter(ok).length,
+           ini: q('.idx-row .av:not(.img)').filter(vis).map(a => a.textContent.trim()),
+           broken: q('img').filter(im => im.complete && !im.naturalWidth).length }; }"""
+
+
+def scenario_portraits(w):
+    """Portraits des personnages (img/perso/, perso.json) : chargés, en clair et en sombre ; repli sur l'initiale sans image."""
+    import re as _re
+    def lum(c):
+        v = [int(x) / 255 for x in _re.findall(r"\d+", c)[:3]]
+        f = lambda x: x / 12.92 if x <= .04045 else ((x + .055) / 1.055) ** 2.4
+        return .2126 * f(v[0]) + .7152 * f(v[1]) + .0722 * f(v[2])
+    ratio = lambda a, b: (max(lum(a), lum(b)) + .05) / (min(lum(a), lum(b)) + .05)
+
+    def check_loaded(rec, scheme):
+        ctx = w.new_ctx() if scheme == "light" else None
+        if scheme == "dark":
+            w.ctx(); opts, kw = w._ctx_kw
+            ctx = w.make_context(w.browser, {**opts, "color_scheme": "dark"}, **kw)
+        try:
+            pg = w.new_page(ctx, {"kaam_audio_only": "1"}); w.goto(pg)
+            n = pg.evaluate("Object.keys(__kaam.perso).length")
+            if n < 120: raise RuntimeError(f"perso.json : {n} portraits seulement")
+            # pochette : rond du personnage en photo
+            pg.evaluate("() => { const A = __kaam.allQuotes; __kaam.quoteIdx = A.findIndex(q => q.name === 'ARTHUR' && q.audio); __kaam.render(); }")
+            pg.wait_for_function("() => { const i = document.querySelector('.cote .ini img'); return i && i.complete && i.naturalWidth > 0; }", timeout=6000)
+            pg.click("#btn-audio"); pg.wait_for_timeout(200); pg.evaluate("__kaam.player.loop = true")
+            w.nav(pg, "personnages")
+            # cartes visibles (les suivantes, hors écran à droite, se chargent au défilement : loading="lazy")
+            pg.wait_for_function("() => [...document.querySelectorAll('.poster img')].filter(i => i.getBoundingClientRect().left < innerWidth).every(i => i.complete && i.naturalWidth > 0)", timeout=8000)
+            r = pg.evaluate(IMGS)
+            mini = pg.evaluate("() => { const i = document.querySelector('#mini .tile img'); return !!i && i.complete && i.naturalWidth > 0; }")
+            w.shot(pg, rec, f"60-portraits-{scheme}")
+            if r["posters"] < 8 or r["pimg"] < 2 or r["pnoimg"]: raise RuntimeError(f"cartes « Les plus présents » sans photo : {r}")
+            if r["broken"]: raise RuntimeError(f"{r['broken']} image(s) cassée(s)")
+            if not mini: raise RuntimeError("mini-lecteur sans portrait")
+            pg.evaluate("document.getElementById('pers-scroll').scrollTop = 600"); pg.wait_for_timeout(700)
+            r2 = pg.evaluate(IMGS)
+            if r2["rows"] < 4 or r2["rimg"] < r2["rows"] - 1: raise RuntimeError(f"vignettes de la liste non chargées : {r2}")
+            pg.locator(".poster").first.click()
+            pg.wait_for_function("() => { const i = document.querySelector('.fiche-h.photo .hero img'); return i && i.complete && i.naturalWidth > 0; }", timeout=8000)
+            pg.wait_for_timeout(300)
+            f = pg.evaluate("""() => { const cs = e => getComputedStyle(document.querySelector(e));
+              return { h1: cs('.fiche-h h1').color, bg: cs('body').backgroundColor, grad: getComputedStyle(document.querySelector('.fiche-h .hero'), '::after').backgroundImage }; }""")
+            w.shot(pg, rec, f"61-fiche-photo-{scheme}")
+            if ratio(f["h1"], f["bg"]) < 7: raise RuntimeError(f"titre de la fiche peu lisible : {f}")
+            if "gradient" not in f["grad"]: raise RuntimeError(f"pas de dégradé sous le titre : {f}")
+            w.nav(pg, "quiz")
+            pg.wait_for_function("() => [...document.querySelectorAll('.choice .l img')].every(i => i.complete && i.naturalWidth > 0)", timeout=8000)
+            nq = pg.evaluate("document.querySelectorAll('.choice .l.img img').length")
+            if nq != 4: raise RuntimeError(f"quiz : {nq} ronds en photo sur 4")
+            pg.close()
+            return f"{n} portraits ; {r['pimg']} cartes, {r2['rimg']}/{r2['rows']} vignettes visibles, mini-lecteur, fiche (titre {ratio(f['h1'], f['bg']):.1f}:1), 4 ronds du quiz"
+        finally:
+            ctx.close()
+    w.step("Portraits chargés (clair)", lambda rec: check_loaded(rec, "light"))
+    w.step("Portraits chargés (sombre)", lambda rec: check_loaded(rec, "dark"))
+
+    def s_fallback(rec):
+        ctx = w.new_ctx()
+        w.expect_errors = True             # images refusées exprès : les erreurs de chargement sont attendues
+        try:
+            pg = w.new_page(ctx)
+            pg.route("**/img/perso/**", lambda r: r.fulfill(status=404, body="absent"))
+            w.goto(pg); w.nav(pg, "personnages"); pg.wait_for_timeout(800)
+            r = pg.evaluate(IMGS)
+            w.shot(pg, rec, "62-portraits-absents")
+            pg.locator(".poster").first.click(); pg.wait_for_selector("#detail-overlay:not(.hidden) .fiche-h h1"); pg.wait_for_timeout(600)
+            f = pg.evaluate("() => { const h = document.querySelector('.fiche-h'); return { photo: h.classList.contains('photo'), img: !!h.querySelector('img'), bg: getComputedStyle(h).backgroundColor, big: document.querySelector('.fiche-h .big').textContent }; }")
+            w.shot(pg, rec, "63-fiche-sans-photo")
+            pg.close()
+            # liste des portraits elle-même absente : initiales partout, aucune image demandée
+            pg = w.new_page(ctx)
+            pg.route("**/perso.json*", lambda r: r.fulfill(status=404, body="absent", headers={"content-type": "text/plain"}))
+            w.goto(pg); w.nav(pg, "personnages"); pg.wait_for_timeout(300)
+            r3 = pg.evaluate("() => ({ imgs: document.querySelectorAll('#main-content img').length, ini: [...document.querySelectorAll('.poster .pc')].map(x => x.textContent.trim()) })")
+            pg.close()
+        finally:
+            w.expect_errors = False; ctx.close()
+        errs = []
+        if r["pimg"] or r["pnoimg"] < 3 or r["broken"]: errs.append(f"cartes : {r}")
+        if not r["ini"] or any(len(x) != 1 for x in r["ini"]): errs.append(f"initiales de repli : {r['ini'][:5]}")
+        if f["photo"] or f["img"] or f["bg"] in ("rgba(0, 0, 0, 0)", "rgb(255, 255, 255)") or len(f["big"]) != 1: errs.append(f"fiche sans photo : {f}")
+        if r3["imgs"] or not all(len(x) == 1 for x in r3["ini"]): errs.append(f"sans perso.json : {r3}")
+        if errs: raise RuntimeError(" ; ".join(errs))
+        return f"images refusées : {r['posters']} cartes et vignettes en initiale sur couleur, fiche en aplat ; sans perso.json : aucune image demandée"
+    w.step("Portraits absents : repli sur l'initiale et la couleur", s_fallback)
+
 
 def worker_main(kind, base, out):
     from playwright.sync_api import sync_playwright
@@ -1246,6 +1338,8 @@ def worker_main(kind, base, out):
                 w.setup(wk, d, ios_policy=True); scenario_sombre(w)
             elif kind == "mini-lecteur":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_mini(w)
+            elif kind == "portraits":
+                w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_portraits(w)
             elif kind == "combos":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_combos(w)
         except Exception:
@@ -1335,7 +1429,7 @@ def main():
             print("serveur local injoignable"); return 2
         print(f"App : {APP}\nServeur : {base}")
         checks = quick_checks()
-        jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions", "sombre", "mini-lecteur"]
+        jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions", "sombre", "mini-lecteur", "portraits"]
         if not quick:
             jobs += ["iphone13", "combos"]
         for kind in jobs:
