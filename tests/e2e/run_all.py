@@ -341,7 +341,9 @@ class Worker:
         page.wait_for_timeout(150)
 
     def wait_ready(self, page, timeout=20000):
-        page.wait_for_function("() => window.__kaam && __kaam.allQuotes.length > 0 && !!document.querySelector('#main-content button')", timeout=timeout)
+        # écran de lancement levé (fond noir retiré) : les mesures de couleur portent sur la vraie page
+        page.wait_for_function("() => window.__kaam && __kaam.allQuotes.length > 0 && !!document.querySelector('#main-content button')"
+                               " && !document.documentElement.classList.contains('launching')", timeout=timeout)
         page.wait_for_timeout(150)
 
     def goto(self, page, path=""):
