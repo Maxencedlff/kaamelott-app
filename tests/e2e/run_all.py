@@ -117,7 +117,7 @@ COMBOS = [
     ["all", "0", "0", "1", "0", "1"], ["film", "0", "0", "1", "1", "0"],
 ]
 
-NAV = {"citations": "Répliques", "quiz": "Quiz", "personnages": "Personnages", "recherche": "Chercher", "favoris": "Favoris"}
+NAV = {"citations": "Répliques", "quiz": "Quiz", "personnages": "Personnages", "recherche": "Rechercher", "favoris": "Favoris"}
 MAIN_SEL = "#quote-card"
 
 
@@ -414,7 +414,7 @@ def scenario_screens(w):
 
     def s_settings(rec):
         pg = state["page"]
-        pg.click("#btn-settings")
+        pg.click("#mast-set")
         pg.wait_for_selector("#sheet:not([hidden]) #sh-title")
         pg.wait_for_timeout(300)
         w.shot(pg, rec, "04-reglages")
@@ -531,6 +531,60 @@ def scenario_screens(w):
     w.step("État d'erreur (data.json 403)", s_err)
 
 
+def _lum_rgb(r, g, b):
+    f = lambda v: (v / 255 / 12.92) if v / 255 <= .04045 else ((v / 255 + .055) / 1.055) ** 2.4
+    return .2126 * f(r) + .7152 * f(g) + .0722 * f(b)
+
+
+def text_on_image_ratio(pg, text_sel):
+    """Contraste MESURÉ d'un texte posé sur une image : le texte est masqué, la zone qu'il couvre est capturée,
+    et l'on prend le pixel le plus défavorable du fond (le plus proche de la couleur du texte)."""
+    import io, re as _re
+    from PIL import Image
+    color = pg.evaluate("s => getComputedStyle(document.querySelector(s)).color", text_sel)
+    tl = _lum_rgb(*[int(float(x)) for x in _re.findall(r"[\d.]+", color)[:3]])
+    box = pg.evaluate("""s => { const e = document.querySelector(s); e.style.visibility = 'hidden';
+        const r = e.getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; }""", text_sel)
+    pg.wait_for_timeout(50)
+    png = pg.screenshot(clip=box, animations="disabled")
+    pg.evaluate("s => { document.querySelector(s).style.visibility = ''; }", text_sel)
+    im = Image.open(io.BytesIO(png)).convert("RGB")
+    lums = sorted(_lum_rgb(*px) for px in (im.get_flattened_data() if hasattr(im, 'get_flattened_data') else im.getdata()))
+    worst = lums[-1] if tl > .5 else lums[0]
+    return (max(tl, worst) + .05) / (min(tl, worst) + .05)
+
+
+QUIZ_CUT = """() => { const st = document.getElementById('quiz-stage'), m = document.getElementById('main-content');
+  const card = document.querySelector('.qcard').getBoundingClientRect(), q = document.querySelector('.quiz-q .quote').getBoundingClientRect(), s = st.getBoundingClientRect();
+  return { qpage: m.classList.contains('qpage'), inner: st.scrollHeight - st.clientHeight, cardBot: card.bottom, qBot: q.bottom, stBot: s.bottom,
+           bg: getComputedStyle(document.querySelector('.qcard')).backgroundColor, body: getComputedStyle(document.body).backgroundColor,
+           ink: getComputedStyle(document.querySelector('.quiz-q .quote')).color, len: document.querySelector('.quiz-q .quote').textContent.length }; }"""
+
+
+def quiz_never_cut(w, pg, rec, n, fname):
+    """La question du quiz n'est jamais coupée : entière dans sa zone, ou c'est la page qui défile ; carte neutre (pas noire en clair).
+    n questions tirées, puis la réplique la plus longue du pool (cas de la question du jour) rendue de force."""
+    w.nav(pg, "quiz")
+    pg.evaluate("document.fonts.ready"); pg.wait_for_timeout(200)
+    bad, seen = [], 0
+    for k in range(n + 1):
+        if k == n:
+            pg.evaluate("""() => { const A = __kaam.allQuotes; let L = null;
+              A.forEach(q => { if (q.video && (!L || q.quote.length > L.quote.length) && q.quote.length < 700) L = q; });
+              const qt = document.querySelector('.quiz-q .quote'); qt.innerHTML = '« ' + L.quote + ' »'; qt.dataset.fs0 = '22';
+              fitQuiz(document.getElementById('quiz-stage')); }""")
+            pg.wait_for_timeout(100)
+        r = pg.evaluate(QUIZ_CUT)
+        seen = max(seen, r["len"])
+        if r["inner"] > 1 or (not r["qpage"] and r["cardBot"] > r["stBot"] + 1): bad.append(r)
+        if r["body"] == "rgb(255, 255, 255)" and r["bg"] != "rgb(245, 245, 247)": bad.append({"carte non neutre en clair": r["bg"]})
+        if k == 0: w.shot(pg, rec, fname)
+        if k == n: w.shot(pg, rec, fname + "-longue")
+        if k < n - 1: pg.click("#quiz-next"); pg.wait_for_timeout(120); pg.evaluate("document.fonts.ready")
+    if bad: raise RuntimeError(f"question coupée ou carte non neutre : {bad[:2]}")
+    return f"{n} questions + la plus longue ({seen} signes) : jamais coupées (page qui défile si besoin), carte {r['bg']}"
+
+
 def check_compact(w, pg, rec, fname):
     """Grand titre repliable : Personnages défilé -> barre compacte visible, lisible, sous la zone sûre, sans saut."""
     w.nav(pg, "personnages")
@@ -601,7 +655,7 @@ def scenario_combos(w):
                         else: pg.click("#btn-next")
                     elif key == "random":
                         if verify: pg.locator("#quote-card .quote").click(position={"x": 8, "y": 8})
-                        else: pg.click("#btn-random")
+                        else: pg.click("#btn-random" if pg.locator("#btn-random").count() else "#btn-next")
                     elif key == "prev" and not verify:
                         if pg.locator("#btn-prev:not([disabled])").count(): pg.click("#btn-prev")
                     if key != "start":
@@ -685,6 +739,12 @@ def scenario_vague2(w):
         return "D toujours visible, lignes immobiles après réponse, verdict annoncé"
     w.step("Quiz : D visible, rien ne bouge, verdict annoncé", s_quizD)
 
+    def s_qcut(rec):
+        pg = page()
+        try: return quiz_never_cut(w, pg, rec, 10, "30d-quiz-jamais-coupe-se")
+        finally: pg.close()
+    w.step("Quiz (SE) : question jamais coupée, carte neutre", s_qcut)
+
     def s_quiz_scene(rec):
         pg = page(); w.nav(pg, "quiz")
         pg.locator(".choice").first.click(); pg.wait_for_selector(".choice.right"); pg.wait_for_timeout(600)
@@ -737,12 +797,24 @@ def scenario_vague2(w):
     def s_fiche(rec):
         pg = page(); w.nav(pg, "personnages")
         pg.locator(".idx-row").first.click(); pg.wait_for_selector("#fiche-list .ent")
-        r = pg.evaluate("({ ep: document.querySelectorAll('.ep-h').length, cells: [...document.querySelectorAll('#fiche-list .ent-a')].map(a => a.children.length + a.querySelectorAll('.w2').length), livres: document.querySelectorAll('.livres button').length })")
+        r = pg.evaluate("""() => ({ ep: document.querySelectorAll('.ep-h').length, ents: document.querySelectorAll('#fiche-list .ent').length,
+            more: document.querySelectorAll('#fiche-list .ent > .ent-more').length, rows: document.querySelectorAll('#fiche-list .ent-a, #fiche-list [data-act=share], #fiche-list [data-act=video]').length,
+            livres: document.querySelectorAll('.livres button').length, fab: !!document.querySelector('.fiche-h .play'), pills: [...document.querySelectorAll('.fiche-acts .pill')].map(b => b.textContent.trim()),
+            part: document.querySelector('.fiche-h .part').textContent, stats: !!document.querySelector('.stats') })""")
         w.shot(pg, rec, "32-fiche-se")
+        # menu « … » : Écouter / Voir la scène seulement s'ils existent
+        pg.locator("#fiche-list .ent-more").first.click(); pg.wait_for_selector("#sheet:not([hidden]) [data-m]")
+        acts = pg.evaluate("[...document.querySelectorAll('#sheet [data-m]')].map(b => b.dataset.m)")
+        w.shot(pg, rec, "32b-fiche-menu-se")
         pg.close()
-        if not r["ep"] or set(r["cells"]) != {4}: raise RuntimeError(f"fiche : {r}")
-        return f"{r['ep']} en-têtes d'épisode, 4 cellules par entrée, {r['livres']} Livres"
-    w.step("Fiche personnage : épisodes, 4 cellules fixes", s_fiche)
+        errs = []
+        if not r["ep"] or r["more"] != r["ents"] or r["rows"]: errs.append(f"lignes : {r}")
+        if r["fab"] or r["stats"] or "Aléatoire" not in r["pills"][-1] or not re.match(r"^[\d\u202f\u00a0 ]+ répliques · [\d\u202f\u00a0 ]+ épisodes?$", r["part"]): errs.append(f"en-tête : {r}")
+        if r["livres"] < 2: errs.append(f"Livres : {r['livres']}")
+        if not {"fav", "share"} <= set(acts): errs.append(f"menu : {acts}")
+        if errs: raise RuntimeError(" ; ".join(errs))
+        return f"{r['ep']} en-têtes d'épisode, un « … » par ligne (aucune rangée d'actions), {r['livres']} Livres en liste, « {r['part']} », menu {acts}"
+    w.step("Fiche personnage : en-tête, Livres en liste, « … » par ligne", s_fiche)
 
     def s_search(rec):
         pg = page(); w.nav(pg, "recherche")
@@ -765,7 +837,7 @@ def scenario_vague2(w):
     def s_fav(rec):
         favs = fav_objects()
         pg = page(extra={"kaam_fav": json.dumps(favs, ensure_ascii=False)}); w.nav(pg, "favoris")
-        pg.locator("[data-act=fav]").first.click(); pg.wait_for_selector(".ent.off")
+        pg.locator(".ent-more").first.click(); pg.click("#sheet [data-m=fav]"); pg.wait_for_selector(".ent.off")
         off = pg.evaluate("document.querySelectorAll('.ent.off').length")
         n1 = pg.evaluate("JSON.parse(localStorage.getItem('kaam_fav')).length")
         w.shot(pg, rec, "34-favori-retire")
@@ -866,13 +938,13 @@ SWIPE_JS = """([dx]) => { const el = document.getElementById('quote-card'); cons
 def scenario_fonctions(w):
     """Ordre, toucher et glisser, mémorisation, envoi des avis, hors ligne (service worker)."""
     def setting(pg, sel):
-        pg.click("#btn-settings"); pg.wait_for_selector("#sheet:not([hidden])")
+        pg.click("#mast-set"); pg.wait_for_selector("#sheet:not([hidden])")
         pg.click(f"#sheet {sel}"); pg.wait_for_timeout(80)
         pg.click("#sheet-close"); pg.wait_for_selector("#sheet", state="hidden")
 
     def s_order(rec):
         pg = w.new_page(w.ctx()); w.goto(pg)
-        if "Aléatoire" not in pg.inner_text(".bar-sum"): raise RuntimeError("le mode par défaut n'est pas Aléatoire")
+        if pg.evaluate("document.getElementById('mast-set').classList.contains('dot') || !!document.querySelector('.bar')"): raise RuntimeError("réglages par défaut : point ou résumé affiché")
         setting(pg, '[data-order="seq"]')
         idx = lambda: pg.evaluate("__kaam.quoteIdx")
         pos = lambda: pg.evaluate("(() => { const P = __kaam.pool(); return P ? P.indexOf(__kaam.quoteIdx) : __kaam.quoteIdx; })()")
@@ -883,7 +955,8 @@ def scenario_fonctions(w):
         pg.evaluate(SWIPE_JS, [120]); pg.wait_for_timeout(80); p3 = pos()
         if p3 != p2 - 1: raise RuntimeError(f"glisser → (précédente) : {p2} -> {p3}")
         pg.reload(); w.wait_ready(pg)
-        if "ordre" not in pg.inner_text(".bar-sum"): raise RuntimeError("mode « Dans l'ordre » oublié au rechargement")
+        if "sur" not in pg.inner_text(".quote-counter") or "ordre" not in (pg.get_attribute("#mast-set", "aria-label") or "") or not pg.evaluate("document.getElementById('mast-set').classList.contains('dot')"):
+            raise RuntimeError("mode « Dans l'ordre » oublié au rechargement (ou point des réglages absent)")
         setting(pg, '[data-order="random"]')
         a = idx(); pg.evaluate(SWIPE_JS, [-120]); pg.wait_for_timeout(80); b = idx()
         if a == b: raise RuntimeError("glisser en aléatoire ne change pas de réplique")
@@ -1049,7 +1122,7 @@ def scenario_fonctions(w):
         w.goto(pg)
         for k in range(3):
             pg.click("#btn-audio"); pg.wait_for_function("() => !__kaam.player.paused")
-            pg.click("#btn-random"); pg.wait_for_timeout(150)
+            pg.click("#btn-next"); pg.wait_for_timeout(150)
         pg.close()
         if dups(log): raise RuntimeError(f"son : fichiers téléchargés deux fois : {dups(log)[:3]}")
         log = {"fetch": Counter(), "media": set()}
@@ -1103,7 +1176,7 @@ def scenario_sombre(w):
         if not r["dark"]: raise RuntimeError("le navigateur n'est pas en mode sombre")
         if r["body"] != "rgb(0, 0, 0)": raise RuntimeError(f"fond sombre attendu #000 : {r['body']}")
         if ratio(r["ink"], r["body"]) < 15: raise RuntimeError(f"texte peu lisible sur fond sombre : {r['ink']}")
-        if ratio(r["quote"], r["card"]) < 4.5: raise RuntimeError(f"réplique peu lisible sur la pochette : {r['quote']} / {r['card']}")
+        if r["card"] != "rgba(0, 0, 0, 0)" and ratio(r["quote"], r["card"]) < 4.5: raise RuntimeError(f"réplique peu lisible sur la carte : {r['quote']} / {r['card']}")
         if ratio(r["who"], r["body"]) < 4.5: raise RuntimeError(f"nom (rouge) peu lisible : {r['who']}")
         if ["(prefers-color-scheme: dark)", "#000000"] not in r["metas"]: raise RuntimeError(f"theme-color sombre absent : {r['metas']}")
         return f"fond {r['body']}, texte {r['ink']}, pochette {r['card']} ; theme-color clair et sombre"
@@ -1112,17 +1185,22 @@ def scenario_sombre(w):
     def s_colors(rec):
         pg = S["pg"]
         w.nav(pg, "personnages")
-        bad = pg.evaluate("""() => [...document.querySelectorAll('.av[style]')].map(a => [a.textContent, getComputedStyle(a).backgroundColor, getComputedStyle(a).color])""")
+        r = pg.evaluate("""() => ({ styled: document.querySelectorAll('#main-content [style*="--c"]').length,
+            mono: [...document.querySelectorAll('.av.mono:not(.img):not(.more-av)')].map(a => [getComputedStyle(a).backgroundImage, !!a.querySelector('use[href="#i-person"]')]) })""")
         w.shot(pg, rec, "51-sombre-personnages")
-        low = [b for b in bad if ratio(b[1], b[2]) < 4.5]
-        if not bad or low: raise RuntimeError(f"ronds de personnages peu lisibles en blanc : {low[:3]}")
-        return f"{len(bad)} ronds de couleur, tous lisibles en blanc (≥ 4,5:1)"
-    w.step("Sombre : couleurs des personnages lisibles", s_colors)
+        import re as _re
+        def gray(bg):
+            cols = _re.findall(r"rgb\((\d+), (\d+), (\d+)\)", bg)
+            return cols and all(max(map(int, c)) - min(map(int, c)) <= 6 for c in cols)
+        bad = [m for m in r["mono"] if not (gray(m[0]) and m[1])]
+        if r["styled"] or not r["mono"] or bad: raise RuntimeError(f"couleur arbitraire : {r['styled']} aplats, monogrammes non gris {bad[:2]}")
+        return f"aucun aplat de couleur ; {len(r['mono'])} personnages sans photo en silhouette grise"
+    w.step("Sombre : aucun aplat de couleur, silhouettes grises", s_colors)
 
     def s_sheet(rec):
         pg = S["pg"]
         w.nav(pg, "citations")
-        pg.click("#btn-settings"); pg.wait_for_selector("#sheet:not([hidden]) #sh-title"); pg.wait_for_timeout(400)
+        pg.click("#mast-set"); pg.wait_for_selector("#sheet:not([hidden]) #sh-title"); pg.wait_for_timeout(400)
         r = pg.evaluate("({ sheet: getComputedStyle(document.getElementById('sheet')).backgroundColor, cell: getComputedStyle(document.querySelector('#sheet .g')).backgroundColor })")
         w.shot(pg, rec, "52-sombre-reglages")
         if r["sheet"] != "rgb(28, 28, 30)" or r["cell"] != "rgb(44, 44, 46)": raise RuntimeError(f"feuille sombre : {r}")
@@ -1193,12 +1271,20 @@ def scenario_mini(w):
     def s_text(rec):
         pg = w.new_page(w.ctx()); w.goto(pg)
         pg.evaluate("() => { const A = __kaam.allQuotes; __kaam.quoteIdx = A.findIndex(q => !q.audio && !q.video); __kaam.render(); }")
-        r = pg.evaluate("({ audio: !!document.getElementById('btn-audio'), badge: document.querySelector('#scrub .badge').textContent, nil: !!document.querySelector('.transport .tp.nil') })")
+        r = pg.evaluate("""() => { const vis = e => !!e && getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().height > 0;
+          const txt = document.getElementById('main-content').innerText;
+          return { audio: !!document.getElementById('btn-audio'), video: !!document.getElementById('btn-video'), nil: document.querySelectorAll('.nil').length,
+                   scrub: vis(document.querySelector('#scrub .track')), dead: /Texte seul|Pas de scène|--:--|0:00/.test(txt) }; }""")
         w.shot(pg, rec, "57-texte-seul")
+        # même règle dans un menu de liste : ni « Écouter » ni « Voir la scène » pour une réplique qui n'en a pas
+        q = pg.evaluate("__kaam.allQuotes[__kaam.quoteIdx].quote")
+        pg.click("#btn-fav"); w.nav(pg, "favoris"); pg.locator(".ent-more").first.click(); pg.wait_for_selector("#sheet [data-m]")
+        acts = pg.evaluate("[...document.querySelectorAll('#sheet [data-m]')].map(b => b.dataset.m)")
         pg.close()
-        if r["audio"] or r["badge"] != "Texte seul" or not r["nil"]: raise RuntimeError(f"réplique sans son : {r}")
-        return "lecteur grisé « Texte seul », même disposition"
-    w.step("Réplique sans son : lecteur grisé « Texte seul »", s_text)
+        if r["audio"] or r["video"] or r["nil"] or r["scrub"] or r["dead"] or "audio" in acts or "video" in acts:
+            raise RuntimeError(f"réplique sans son ni scène : {r}, menu {acts}")
+        return f"ni lecteur, ni barre, ni « Texte seul », ni « Pas de scène » : masqués ; menu {acts}"
+    w.step("Réplique sans son ni scène : rien de grisé, tout est masqué", s_text)
 
     def s_contrast(rec):
         # mode clair : texte blanc des boutons rouges, rouge du texte, gris tertiaire, onglet actif ≥ 4,5:1
@@ -1219,12 +1305,18 @@ def scenario_mini(w):
         return "contrastes ≥ 4,5:1 : " + ", ".join(f"{n} {v}" for n, v in low)
     w.step("Contrastes (clair) : boutons rouges, rouge du texte, gris", s_contrast)
 
+    def s_qcut(rec):
+        pg = w.new_page(w.ctx()); w.goto(pg)
+        try: return quiz_never_cut(w, pg, rec, 10, "59-quiz-jamais-coupe")
+        finally: pg.close()
+    w.step("Quiz (iPhone 13, clair) : question jamais coupée, carte neutre", s_qcut)
+
 IMGS = """() => { const ok = im => im.complete && im.naturalWidth > 0;
   const q = s => [...document.querySelectorAll(s)];
   const vis = el => { const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight && r.width > 0; };
   return { posters: q('.poster').length, pimg: q('.poster .pc.img img').filter(ok).length, pnoimg: q('.poster .pc:not(.img)').length,
            rows: q('.idx-row').filter(vis).length, rimg: q('.idx-row .av.img img').filter(vis).filter(ok).length,
-           ini: q('.idx-row .av:not(.img)').filter(vis).map(a => a.textContent.trim()),
+           ini: q('.idx-row .av:not(.img)').filter(vis).map(a => a.textContent.trim()).filter(Boolean),
            broken: q('img').filter(im => im.complete && !im.naturalWidth).length }; }"""
 
 
@@ -1248,7 +1340,7 @@ def scenario_portraits(w):
             if n < 120: raise RuntimeError(f"perso.json : {n} portraits seulement")
             # pochette : rond du personnage en photo
             pg.evaluate("() => { const A = __kaam.allQuotes; __kaam.quoteIdx = A.findIndex(q => q.name === 'ARTHUR' && q.audio); __kaam.render(); }")
-            pg.wait_for_function("() => { const i = document.querySelector('.cote .ini img'); return i && i.complete && i.naturalWidth > 0; }", timeout=6000)
+            pg.wait_for_function("() => { const i = document.querySelector('#quote-card.photo .bgimg img'); return i && i.complete && i.naturalWidth > 0; }", timeout=6000)
             pg.click("#btn-audio"); pg.wait_for_timeout(200); pg.evaluate("__kaam.player.loop = true")
             w.nav(pg, "personnages")
             # cartes visibles (les suivantes, hors écran à droite, se chargent au défilement : loading="lazy")
@@ -1265,19 +1357,45 @@ def scenario_portraits(w):
             pg.locator(".poster").first.click()
             pg.wait_for_function("() => { const i = document.querySelector('.fiche-h.photo .hero img'); return i && i.complete && i.naturalWidth > 0; }", timeout=8000)
             pg.wait_for_timeout(300)
-            f = pg.evaluate("""() => { const cs = e => getComputedStyle(document.querySelector(e));
-              return { h1: cs('.fiche-h h1').color, bg: cs('body').backgroundColor, grad: getComputedStyle(document.querySelector('.fiche-h .hero'), '::after').backgroundImage }; }""")
             w.shot(pg, rec, f"61-fiche-photo-{scheme}")
-            if ratio(f["h1"], f["bg"]) < 7: raise RuntimeError(f"titre de la fiche peu lisible : {f}")
-            if "gradient" not in f["grad"]: raise RuntimeError(f"pas de dégradé sous le titre : {f}")
+            f = {"h1": text_on_image_ratio(pg, ".fiche-h h1"), "part": text_on_image_ratio(pg, ".fiche-h .part")}
+            if f["h1"] < 4.5 or f["part"] < 4.5: raise RuntimeError(f"titre de la fiche peu lisible sur la photo (mesuré) : {f}")
             w.nav(pg, "quiz")
             pg.wait_for_function("() => [...document.querySelectorAll('.choice .l img')].every(i => i.complete && i.naturalWidth > 0)", timeout=8000)
             nq = pg.evaluate("document.querySelectorAll('.choice .l.img img').length")
             if nq != 4: raise RuntimeError(f"quiz : {nq} ronds en photo sur 4")
             pg.close()
-            return f"{n} portraits ; {r['pimg']} cartes, {r2['rimg']}/{r2['rows']} vignettes visibles, mini-lecteur, fiche (titre {ratio(f['h1'], f['bg']):.1f}:1), 4 ronds du quiz"
+            return f"{n} portraits ; {r['pimg']} cartes, {r2['rimg']}/{r2['rows']} vignettes visibles, mini-lecteur, fiche (titre {f['h1']:.1f}:1, sous-titre {f['part']:.1f}:1 mesurés sur la photo), 4 ronds du quiz"
         finally:
             ctx.close()
+    def card_contrast(rec, scheme):
+        opts, kw = (w.ctx(), w._ctx_kw)[1]
+        ctx = w.make_context(w.browser, {**opts, "color_scheme": scheme}, **kw)
+        try:
+            pg = w.new_page(ctx); w.goto(pg)
+            out, bad = [], []
+            for name in ["ARTHUR", "PERCEVAL", "LÉODAGAN", "KARADOC", "GUENIÈVRE", "MERLIN", "LA DAME DU LAC", "SÉLI"]:
+                ok = pg.evaluate("""n => { const A = __kaam.allQuotes, i = A.findIndex(q => q.name === n && q.quote.length > 60); if (i < 0) return false;
+                    __kaam.quoteIdx = i; __kaam.render(); return true; }""", name)
+                if not ok: continue
+                try: pg.wait_for_function("() => { const i = document.querySelector('#quote-card .bgimg img'); return !i || (i.complete && i.naturalWidth > 0); }", timeout=6000)
+                except Exception: pass
+                pg.wait_for_timeout(250)
+                info = pg.evaluate("""() => { const c = document.getElementById('quote-card'); return { photo: c.classList.contains('photo'),
+                    bg: getComputedStyle(c).backgroundColor, styled: c.hasAttribute('style'), cote: !!c.querySelector('.cote, .quote-hint') }; }""")
+                if info["styled"] or info["cote"]: bad.append(f"{name} : aplat ou mention dans la carte {info}")
+                if info["photo"]:
+                    rt = text_on_image_ratio(pg, "#quote-card .quote"); out.append(f"{name.title()} {rt:.1f}")
+                    if rt < 4.5: bad.append(f"{name} : {rt:.2f}:1")
+                elif info["bg"] not in ("rgb(245, 245, 247)", "rgb(28, 28, 30)"): bad.append(f"{name} : fond {info['bg']}")
+            w.shot(pg, rec, f"64-carte-photo-{scheme}")
+            pg.close()
+            if bad or len(out) < 4: raise RuntimeError(f"carte : {bad} ({out})")
+            return "texte blanc sur photo floutée, contraste mesuré (pixel le plus clair) : " + ", ".join(out)
+        finally:
+            ctx.close()
+    w.step("Carte sur photo floutée : contraste mesuré ≥ 4,5:1 (clair)", lambda rec: card_contrast(rec, "light"))
+    w.step("Carte sur photo floutée : contraste mesuré ≥ 4,5:1 (sombre)", lambda rec: card_contrast(rec, "dark"))
     w.step("Portraits chargés (clair)", lambda rec: check_loaded(rec, "light"))
     w.step("Portraits chargés (sombre)", lambda rec: check_loaded(rec, "dark"))
 
@@ -1291,25 +1409,25 @@ def scenario_portraits(w):
             r = pg.evaluate(IMGS)
             w.shot(pg, rec, "62-portraits-absents")
             pg.locator(".poster").first.click(); pg.wait_for_selector("#detail-overlay:not(.hidden) .fiche-h h1"); pg.wait_for_timeout(600)
-            f = pg.evaluate("() => { const h = document.querySelector('.fiche-h'); return { photo: h.classList.contains('photo'), img: !!h.querySelector('img'), bg: getComputedStyle(h).backgroundColor, big: document.querySelector('.fiche-h .big').textContent }; }")
+            f = pg.evaluate("() => { const h = document.querySelector('.fiche-h'); return { photo: h.classList.contains('photo'), img: !!h.querySelector('img'), bg: getComputedStyle(h).backgroundColor, ink: getComputedStyle(h.querySelector('h1')).color }; }")
             w.shot(pg, rec, "63-fiche-sans-photo")
             pg.close()
             # liste des portraits elle-même absente : initiales partout, aucune image demandée
             pg = w.new_page(ctx)
             pg.route("**/perso.json*", lambda r: r.fulfill(status=404, body="absent", headers={"content-type": "text/plain"}))
             w.goto(pg); w.nav(pg, "personnages"); pg.wait_for_timeout(300)
-            r3 = pg.evaluate("() => ({ imgs: document.querySelectorAll('#main-content img').length, ini: [...document.querySelectorAll('.poster .pc')].map(x => x.textContent.trim()) })")
+            r3 = pg.evaluate("() => ({ imgs: document.querySelectorAll('#main-content img').length, ini: [...document.querySelectorAll('.poster .pc')].map(x => x.querySelector('use[href=\"#i-person\"]') ? 'P' : x.textContent.trim()) })")
             pg.close()
         finally:
             w.expect_errors = False; ctx.close()
         errs = []
         if r["pimg"] or r["pnoimg"] < 3 or r["broken"]: errs.append(f"cartes : {r}")
-        if not r["ini"] or any(len(x) != 1 for x in r["ini"]): errs.append(f"initiales de repli : {r['ini'][:5]}")
-        if f["photo"] or f["img"] or f["bg"] in ("rgba(0, 0, 0, 0)", "rgb(255, 255, 255)") or len(f["big"]) != 1: errs.append(f"fiche sans photo : {f}")
-        if r3["imgs"] or not all(len(x) == 1 for x in r3["ini"]): errs.append(f"sans perso.json : {r3}")
+        if r["ini"]: errs.append(f"initiales colorées encore là : {r['ini'][:5]}")
+        if f["photo"] or f["img"] or f["bg"] != "rgb(245, 245, 247)" or f["ink"] != "rgb(29, 29, 31)": errs.append(f"fiche sans photo (fond neutre attendu) : {f}")
+        if r3["imgs"] or not r3["ini"] or not all(x == "P" for x in r3["ini"]): errs.append(f"sans perso.json : {r3}")
         if errs: raise RuntimeError(" ; ".join(errs))
-        return f"images refusées : {r['posters']} cartes et vignettes en initiale sur couleur, fiche en aplat ; sans perso.json : aucune image demandée"
-    w.step("Portraits absents : repli sur l'initiale et la couleur", s_fallback)
+        return f"images refusées : {r['posters']} cartes et vignettes en silhouette grise, fiche sur fond neutre ; sans perso.json : aucune image demandée"
+    w.step("Portraits absents : repli sur la silhouette grise", s_fallback)
 
 
 def worker_main(kind, base, out):

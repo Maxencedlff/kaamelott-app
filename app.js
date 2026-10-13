@@ -332,7 +332,7 @@ player.addEventListener('ended', () => { setPlayingBtn(null); tickScrub(); rende
 player.addEventListener('pause', () => { if (!switching && !player.ended && playingBtn && !playingBtn.classList.contains('wait')) setPlayingBtn(null); renderMini(); });
 player.addEventListener('error', () => { if (playingBtn) audioFailed(); });
 
-// ===== BARRE DE LECTURE (écran Répliques) : avancement du son ou de la scène, temps écoulé et restant =====
+// ===== BARRE DE LECTURE (écran Répliques) : filet d'avancement du son ou de la scène, visible pendant la lecture seulement =====
 let scrubRaf = 0;
 function tickScrub() {
   cancelAnimationFrame(scrubRaf);
@@ -343,10 +343,7 @@ function tickScrub() {
   const m = playingBtn?.id === 'btn-audio' || (audioQ && q && audioQ.i === q.i && !inline) ? player : inline ? cardVideo : null;
   const d = m ? m.duration : NaN, t = m ? m.currentTime || 0 : 0;
   sc.style.setProperty('--p', (isFinite(d) && d > 0 ? Math.min(100, t / d * 100) : 0).toFixed(2) + '%');
-  sc.classList.toggle('on', !!m && t > 0);
-  const [a, , b] = sc.querySelectorAll('.times > span');
-  if (sc.classList.contains('none')) { a.textContent = ''; b.textContent = ''; }
-  else { a.textContent = mmss(t); b.textContent = isFinite(d) && d > 0 ? '−' + mmss(Math.max(0, d - t)) : '--:--'; }
+  sc.classList.toggle('on', !!m && !m.paused && !m.ended);
   const bd = sc.querySelector('.badge');
   if (bd) { const txt = failNote || bd.dataset.t || ''; bd.textContent = txt; bd.hidden = !txt; }
   if (m && !m.paused && !m.ended) scrubRaf = requestAnimationFrame(tickScrub);
@@ -539,30 +536,24 @@ function rand(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 // Pictogramme du jeu de symboles d'index.html (à la manière des SF Symbols)
 const icon = (id, cls = '') => `<svg viewBox="0 0 28 28"${cls ? ` class="${cls}"` : ''} aria-hidden="true"><use href="#i-${id}"/></svg>`;
 
-// ===== COULEURS : chaque personnage a son aplat (toujours lisible en blanc, clair comme sombre), chaque Livre sa pochette =====
-const PAL = ['#3b5b92', '#b4532a', '#2f7a6b', '#6a4c9c', '#8c6a2f', '#a8325e', '#2d6f9e', '#4f6b3a', '#5b5f97', '#7a4b3a'];
-const FIXED = { 'ARTHUR': '#3b5b92', 'PERCEVAL': '#b4532a', 'KARADOC': '#8c6a2f', 'LÉODAGAN': '#7a4b3a', 'LANCELOT': '#2d6f9e',
-  'GUENIÈVRE': '#a8325e', 'MERLIN': '#4f6b3a', 'BOHORT': '#6a4c9c', 'SÉLI': '#5b5f97', 'PÈRE BLAISE': '#2f7a6b' };
-function colorOf(name) {
-  if (FIXED[name]) return FIXED[name];
-  let h = 0; for (const c of String(name || '')) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return PAL[h % PAL.length];
-}
-// Initiale du rond d'un personnage, sans l'article (« La Dame du Lac » → D)
-function initial(n) { const s = nameCase(n || '').replace(/^(Le|La|Les)\s+|^L[’']\s*/, ''); return (s.match(/\p{L}/u) || ['?'])[0].toUpperCase(); }
 // ===== PORTRAITS : une image par personnage, tirée de ses propres scènes (img/perso/, liste dans perso.json) =====
 // p = 3:4 (grandes cartes), s = carré (vignettes, ronds), w = 4:3 (en-tête de fiche). Noms de fichier à empreinte : immuables.
-// Sans image (ou image introuvable) : l'initiale sur la couleur du personnage, qui sert aussi de fond pendant le chargement.
+// Sans image (ou image introuvable) : la silhouette grise des Contacts d'iOS, jamais une couleur inventée.
 let PERSO = {};
 function persoURL(name, kind) { const f = PERSO[name]; return f ? `img/perso/${f}-${kind}.jpg` : null; }
 function faceHTML(name, kind = 's', cls = 'av') {
   const u = persoURL(name, kind);
-  return `<span class="${cls}${u ? ' img' : ''}" style="--c:${colorOf(name)}" aria-hidden="true">${initial(name)}${u ? `<img src="${u}" alt="" loading="lazy" decoding="async">` : ''}</span>`;
+  return `<span class="${cls} mono${u ? ' img' : ''}" aria-hidden="true">${icon('person', 'pg')}${u ? `<img src="${u}" alt="" loading="lazy" decoding="async">` : ''}</span>`;
 }
-// image absente ou refusée : retirée, l'initiale reste (écouteur unique, en capture : l'erreur d'une image ne remonte pas)
+// image absente ou refusée : retirée, la silhouette reste (écouteur unique, en capture : l'erreur d'une image ne remonte pas)
 function onImgError(e) {
   const im = e.target;
-  if (im && im.tagName === 'IMG' && im.parentElement?.classList.contains('img')) { im.parentElement.classList.remove('img'); im.closest('.fiche-h')?.classList.remove('photo'); im.remove(); }
+  if (im && im.tagName === 'IMG' && im.parentElement?.classList.contains('img')) {
+    im.parentElement.classList.remove('img');
+    im.closest('.fiche-h')?.classList.remove('photo');
+    im.closest('.stage')?.classList.remove('photo');   // carte de réplique : fond neutre
+    im.remove();
+  }
 }
 async function loadPerso() {
   try {
@@ -571,7 +562,6 @@ async function loadPerso() {
     if (j && typeof j === 'object' && !Array.isArray(j)) PERSO = j;
   } catch {}
 }
-const LCOL = { I: '#3b5b92', II: '#2f7a6b', III: '#b4532a', IV: '#6a4c9c', V: '#a8325e', VI: '#4a4a4f', Film: '#8c6a2f', Inédits: '#5b5f97' };
 const livreNom = L => /^[IV]+$/.test(L) ? `Livre ${L}` : L === 'Film' ? 'Premier Volet' : L;
 
 // ===== MISE EN FORME =====
@@ -730,7 +720,7 @@ let mastIO = null, mastMO = null, mastSc = null;
 function armMast() {
   const mast = document.getElementById('main-header'), main = document.getElementById('main-content');
   if (!mast || !main) return;
-  if (!main.querySelector('#quiz-stage.answered')) main.classList.remove('qpage');
+  if (!main.querySelector('#quiz-stage.answered, #quiz-stage.long')) main.classList.remove('qpage');
   const sc = main.classList.contains('qpage') ? main : main.querySelector(':scope > .scroll');
   let s = sc && sc.querySelector(':scope > .mast-sent');
   if (sc === mastSc && s) return;                              // déjà suivi
@@ -750,11 +740,11 @@ function watchMast() {
   new MutationObserver(() => armMast()).observe(main, { childList: true });
 }
 // Sous-titre de l'en-tête par vue (Personnages et Favoris : leur grand titre suffit)
-const MAST = { quiz: 'Quiz', personnages: 'Personnages', recherche: 'Chercher', favoris: 'Favoris' };
+const MAST = { quiz: 'Quiz', personnages: 'Personnages', recherche: 'Rechercher', favoris: 'Favoris' };
 function mastFor(view) { return view === 'citations' ? (verifyMode ? 'Vérification' : 'Répliques') : MAST[view]; }
 function refreshMast() { const el = document.getElementById('mast-sub'); if (el) setMast(el.dataset.t || el.textContent); }
 // bouton rond Réglages de l'en-tête : sur l'écran Répliques seulement
-function showMastSet() { const b = document.getElementById('mast-set'); if (b) b.hidden = !(currentView === 'citations' && allQuotes.length && document.getElementById('detail-overlay').classList.contains('hidden')); }
+function showMastSet() { const b = document.getElementById('mast-set'); if (b) b.hidden = !(currentView === 'citations' && allQuotes.length && document.getElementById('detail-overlay').classList.contains('hidden')); refreshSetBtn(); }
 // Clavier (iPad, ordinateur) : flèches gauche / droite pour changer de réplique
 function onArrowKeys(e) {
   if (currentView !== 'citations' || sheetOpen() || !document.getElementById('detail-overlay').classList.contains('hidden')) return;
@@ -896,8 +886,7 @@ const fitMemo = new Map();      // taille trouvée par fitQuote, par réplique e
 // Corps de la réplique calculé sur la place réelle de la pochette : le texte en occupe au moins les deux tiers, jamais plus
 // petit que le barème quoteSize() sauf pour tenir ; au-delà du plancher, la réplique défile dans la pochette.
 function fitQuote(card, qt, qb, q) {
-  const hint = qb.querySelector('.quote-hint');
-  const avail = qb.clientHeight - (hint ? hint.offsetHeight + 10 : 0);
+  const avail = qb.clientHeight;
   const key = `${q.i}|${card.clientWidth}x${avail}|${textScale()}`;
   const set = fs => { qt.style.fontSize = fs + 'px'; };
   if (fitMemo.has(key)) { set(fitMemo.get(key)); return; }
@@ -936,6 +925,7 @@ function citationsModel(q) {
     : [SRC_LABEL[source], { text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : 'Aléatoire', autoPlay ? 'Lecture auto' : '']
         .filter(Boolean).join(SEP);
   const inlineVideo = !!((videoOnly || verifyMode) && q.video);
+  // l'aide n'est jamais dans la carte : une ligne discrète dessous, sur les 3 premières répliques
   const hint = !verifyMode && !inlineVideo && hintCount() < 3 ? (inOrder ? 'Touchez ou glissez pour la suivante' : 'Touchez ou glissez pour changer') : '';
   if (hint) countHint();
   return {
@@ -945,36 +935,48 @@ function citationsModel(q) {
     what: q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : 'Son OK',
     no: String(q.i + 1).padStart(5, '0').replace(/^(\d{2})/, '$1 '),   // « 03 345 », espace fine
     atStart: !inOrder && randPos <= 0,
-    // ce que dit la barre de lecture quand rien ne joue
-    badge: verifyMode && q.audio && q.approx ? 'Son estimé' : inlineVideo ? 'Scène' : !q.audio ? 'Texte seul' : '',
+    // ce que dit la barre de lecture (vérification seulement) ; une réplique sans son n'a ni barre ni libellé
+    badge: verifyMode && q.audio && q.approx ? 'Son estimé' : '',
   };
 }
-// Bouton lecture du son (rond central) : pictogramme lecture / pause, libellé pour VoiceOver (« Réessayer » après un échec)
+// Bouton lecture du son : pictogramme lecture / pause, libellé pour VoiceOver (« Réessayer » après un échec).
+// Sans son : rien (ce qui n'existe pas est masqué, jamais grisé).
 function listenHTML(q, cls = 'tp') {
   return q.audio
     ? `<button class="${cls}" id="btn-audio">${icon('play', 'i-pl')}${icon('pause', 'i-pa')}<span class="lp">Écouter</span><span class="ls">Arrêter</span></button>`
-    : `<span class="${cls} nil" aria-hidden="true">${icon('play', 'i-pl')}</span>`;
+    : '';
 }
-// Gabarit de l'écran Répliques : la pochette (couleur du personnage), le nom, la barre de lecture, les commandes
+// Réglages autres que ceux par défaut : un point sur le bouton Réglages (et dans son libellé pour VoiceOver)
+function activeFilters() {
+  return [source !== 'all' ? SRC_LABEL[source] : '', { text: '', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : '', autoPlay ? 'Lecture auto' : ''].filter(Boolean);
+}
+function refreshSetBtn() {
+  const b = document.getElementById('mast-set');
+  if (!b) return;
+  const f = verifyMode ? ['Vérification'] : activeFilters();
+  b.classList.toggle('dot', f.length > 0);
+  b.setAttribute('aria-label', f.length ? `Réglages (${f.join(', ')})` : 'Réglages');
+}
+// Gabarit de l'écran Répliques : la carte (photo floutée du personnage, ou fond neutre), le nom, la lecture, la navigation
 function citationsHTML(q, m, dir) {
   const size = Math.round(Math.min(quoteSize(q.quote), innerWidth < 360 || innerHeight < 620 ? Q_MAX.videoSE : Q_MAX.video) * textScale());
-  const L = livreDe(q);
-  const scene = q.video && m.inlineVideo
-    ? `<span class="tool nil" aria-hidden="true">${icon('film')}<span>Scène</span></span>`
-    : q.video
-    ? `<button class="tool" id="btn-video">${icon('film')}<span>Scène</span></button>`
-    : `<span class="tool nil">${icon('film')}<span>Pas de scène</span></span>`;
+  const photo = !m.inlineVideo && persoURL(q.name, 's');
+  const playable = !!(q.audio || m.inlineVideo);
+  // outils en glyphes seuls : Au hasard (dans l'ordre seulement : en aléatoire, « Autre » fait déjà ce travail), Scène (si elle existe), Partager
+  const tools = [
+    inOrder ? `<button class="tool" id="btn-random" aria-label="Une réplique au hasard">${icon('shuffle')}</button>` : '',
+    q.video && !m.inlineVideo ? `<button class="tool" id="btn-video" aria-label="Voir la scène">${icon('film')}</button>` : '',
+    `<button class="tool" id="btn-share" aria-label="Partager">${icon('share')}<span class="t">Partager</span></button>`,
+  ].join('');
+  const foot = [m.counter, m.hint].filter(Boolean).join(' · ');
   return `
-    <button class="bar${verifyMode ? ' verify' : ''}" id="btn-settings">
-      <span class="bar-sum">${verifyMode ? '' : '<span class="bar-k">Réglages :</span>'}${m.summary}</span>${icon('chev', 'chev')}
-    </button>
+    ${verifyMode ? `<button class="bar verify" id="btn-settings"><span class="bar-sum">${m.summary}</span>${icon('chev', 'chev')}</button>` : ''}
     ${m.inlineVideo ? sceneHTML(q, 'qvideo-slot') : ''}
-    <div class="stage ${m.inlineVideo ? 'plain' : 'art'} swap-in${dir < 0 ? ' back' : dir > 0 ? '' : ' rand'}" id="quote-card"${m.inlineVideo ? '' : ` style="--c:${colorOf(q.name)}"`}>
+    <div class="stage ${m.inlineVideo ? 'plain' : 'art'}${photo ? ' photo' : ''} swap-in${dir < 0 ? ' back' : dir > 0 ? '' : ' rand'}" id="quote-card">
+      ${photo ? `<span class="bgimg img" aria-hidden="true"><img src="${photo}" alt="" decoding="async"></span>` : ''}
       <div class="qblock">
         <blockquote class="quote" lang="fr"${m.inlineVideo ? ` style="font-size:${size}px"` : ''}>${quoteHTML(q.quote)}</blockquote>
-        ${m.hint ? `<p class="quote-hint" aria-hidden="true">${m.hint}</p>` : ''}
       </div>
-      ${m.inlineVideo ? '' : `<div class="cote" aria-hidden="true">${faceHTML(q.name, 's', 'ini')}<span class="cl"><b>Kaamelott</b>${L ? ' · ' + esc(livreNom(L)) : ''}</span></div>`}
     </div>
     <div class="meta">
       <div class="who-b"><button class="who" id="btn-who" aria-label="${esc(nameCase(q.name))}, voir la fiche du personnage">${esc(nameCase(q.name))}</button>
@@ -982,28 +984,23 @@ function citationsHTML(q, m, dir) {
       ${verifyMode ? `${q.video ? `<button class="ic" id="btn-video" aria-label="Scène en grand">${icon('film')}</button>` : ''}<button class="ic" id="btn-share" aria-label="Partager">${icon('share')}<span class="t lab">Partager</span></button>` : ''}
       ${favCellHTML(q, m.fav)}
     </div>
-    <div class="scrub${q.audio || m.inlineVideo ? '' : ' none'}" id="scrub" aria-hidden="true"><div class="track"><i></i></div>
-      <div class="times"><span></span><span class="badge" data-t="${m.badge}"${m.badge ? '' : ' hidden'}>${m.badge}</span><span></span></div></div>
+    <div class="scrub${playable ? '' : ' none'}" id="scrub" aria-hidden="true"><div class="track"><i></i></div><span class="badge" data-t="${m.badge}"${m.badge ? '' : ' hidden'}>${m.badge}</span></div>
     ${verifyMode ? `
       ${m.reviewable ? `<div class="vrow">${listenHTML(q, 'tp sm')}<button class="ok" id="avis-ok">${icon('check')}<span>${m.what}</span></button><button class="ko" id="avis-ko">Problème</button></div>` : ''}
       <div class="vfoot"><div class="stage-foot vf"><span class="quote-counter">${m.counter}</span>${m.reviewable ? `<button class="skip" id="avis-skip">Passer</button>` : ''}</div><div class="done-slot"></div></div>`
     : `
       <div class="transport">
-        <button class="ts" id="btn-prev" aria-label="${inOrder ? 'Réplique précédente' : 'Revenir à la réplique précédente'}"${m.atStart ? ' disabled' : ''}>${icon('prev')}</button>
-        ${m.inlineVideo ? `<button class="tp" id="btn-replay" aria-label="Revoir la scène">${icon('replay')}</button>` : listenHTML(q)}
-        <button class="ts" id="btn-next" aria-label="${inOrder ? 'Réplique suivante' : 'Autre réplique'}">${icon('next')}</button>
+        <button class="ts" id="btn-prev" aria-label="${inOrder ? 'Réplique précédente' : 'Revenir à la réplique précédente'}"${m.atStart ? ' disabled' : ''}>${icon('chev-l')}<span>${inOrder ? 'Précédente' : 'Retour'}</span></button>
+        ${m.inlineVideo ? `<button class="tp" id="btn-replay" aria-label="Revoir la scène">${icon('replay')}</button>` : listenHTML(q) || '<span class="tp-x"></span>'}
+        <button class="ts" id="btn-next" aria-label="${inOrder ? 'Réplique suivante' : 'Autre réplique'}"><span>${inOrder ? 'Suivante' : 'Autre'}</span>${icon('chev')}</button>
       </div>
-      <div class="tools">
-        <button class="tool" id="btn-random">${icon('shuffle')}<span>Au hasard</span></button>
-        ${scene}
-        <button class="tool" id="btn-share">${icon('share')}<span class="t">Partager</span></button>
-      </div>
-      ${m.counter ? `<div class="stage-foot"><span class="quote-counter">${m.counter}</span></div>` : ''}`}`;
+      <div class="tools">${tools}</div>
+      ${foot ? `<div class="stage-foot"><span class="quote-counter">${esc(foot)}</span></div>` : ''}`}`;
 }
 // Boutons de l'écran Répliques ; lance la scène dans la carte et le son en lecture auto (dans le geste)
 function bindCitations(q, m, keep) {
   const $ = id => document.getElementById(id);
-  $('btn-settings').addEventListener('click', openSettings);
+  $('btn-settings')?.addEventListener('click', openSettings);
   $('btn-who').addEventListener('click', e => { e.stopPropagation(); openPersonnage(q.name); });
   $('btn-fav').addEventListener('click', () => favButton($('btn-fav'), q));
   $('btn-share').addEventListener('click', () => shareQuote(q, $('btn-share')));
@@ -1015,8 +1012,9 @@ function bindCitations(q, m, keep) {
     // en aléatoire, les boutons font comme les gestes (historique) ; dans l'ordre, voisines dans le corpus
     $('btn-prev').addEventListener('click', () => swipeBack());
     $('btn-next').addEventListener('click', () => swipeForward());
-    $('btn-random').addEventListener('click', () => randomQuote());
+    $('btn-random')?.addEventListener('click', () => randomQuote());
   }
+  refreshSetBtn();
   const fig = $('qvideo-slot');
   if (fig) { bindScene(fig, cardVideo); playCardVideo(q, fig); }
   else cardVideo.pause();
@@ -1074,25 +1072,39 @@ function fitCard(card, q, inlineVideo) {
   firstRender = false;
   requestAnimationFrame(() => fitOverflow(card));
 }
-// Toucher la pochette = suivante ; glisser horizontalement = suivante / précédente (le défilement vertical reste libre)
+// Toucher la carte = suivante ; glisser horizontalement = suivante / précédente (le défilement vertical reste libre) ;
+// toucher long = écouter (le son part au relâcher, donc dans le geste : iOS l'autorise)
+const LONG_PRESS = 450;
 function bindCardGestures(card) {
-  let lastScroll = 0;
+  let lastScroll = 0, lastLong = 0, pressT = null;
   const qb = card.querySelector('.qblock');
   qb.addEventListener('scroll', () => { lastScroll = Date.now(); fitOverflow(card); }, { passive: true });
   card.addEventListener('click', e => {
     if (e.target.closest('button')) return;
+    if (Date.now() - lastLong < 700) return;                // fin d'un toucher long : le son, pas la suivante
     if (getSelection().toString().length) return;           // on sélectionnait du texte pour le copier
     if (Date.now() - lastScroll < 250) return;              // on faisait défiler une réplique longue
     swipeForward();
   });
-  let sx = 0, sy = 0, st = 0;
-  card.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); }, { passive: true });
+  card.addEventListener('contextmenu', e => { if (document.getElementById('btn-audio')) e.preventDefault(); });
+  let sx = 0, sy = 0, st = 0, moved = false;
+  const unpress = () => { clearTimeout(pressT); card.classList.remove('press'); };
+  card.addEventListener('touchstart', e => {
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); moved = false;
+    unpress();
+    if (document.getElementById('btn-audio')) pressT = setTimeout(() => card.classList.add('press'), LONG_PRESS);
+  }, { passive: true });
   card.addEventListener('touchmove', e => {
     const dx = Math.abs(e.touches[0].clientX - sx), dy = Math.abs(e.touches[0].clientY - sy);
+    if (dx > 10 || dy > 10) { moved = true; unpress(); }
     if (dx > dy && dx > 8) e.preventDefault();
   }, { passive: false });
+  card.addEventListener('touchcancel', unpress, { passive: true });
   card.addEventListener('touchend', e => {
+    unpress();
     const dx = sx - e.changedTouches[0].clientX, dy = Math.abs(sy - e.changedTouches[0].clientY);
+    const audio = document.getElementById('btn-audio');
+    if (!moved && audio && Date.now() - st >= LONG_PRESS) { lastLong = Date.now(); audio.click(); return; }
     const fast = Date.now() - st < 250 && Math.abs(dx) > 30;
     if ((Math.abs(dx) > 50 || fast) && Math.abs(dx) > dy) { if (dx > 0) swipeForward(); else swipeBack(); }
   }, { passive: true });
@@ -1360,11 +1372,14 @@ function buildQuizPool() {
     if (quizAccepts(q)) (quizByChar.m[q.name] = quizByChar.m[q.name] || []).push(i);   // pas de « ||= » : iOS 13.4 et plus
   });
 }
+// Quiz libre : de préférence une réplique qui tient en entier à l'écran avec ses 4 réponses (240 signes au plus)
+const QUIZ_LEN = 240;
 function quizPick() {
   buildQuizPool();
   const names = Object.keys(quizByChar.m);
-  for (let t = 0; t < 20; t++) {
+  for (let t = 0; t < 40; t++) {
     const i = rand(quizByChar.m[rand(names)]);
+    if (allQuotes[i].quote.length > QUIZ_LEN && t < 30) continue;
     if (!QUIZ_RECENT.includes(i)) { QUIZ_RECENT.push(i); if (QUIZ_RECENT.length > 80) QUIZ_RECENT.shift(); return allQuotes[i]; }
   }
   return allQuotes[rand(quizByChar.m[rand(names)])];
@@ -1415,18 +1430,22 @@ function quizMarkChoices(btn, q) {
     else b.classList.add('dim');
   });
 }
-// cases du score : Jour · Tentative · Jours justes (question du jour) ou Justes · Série · Record
-function quizUpdateScore(daily, hist, record) {
-  const sc = document.querySelector('.score').children;
+// Score : rien tant qu'on n'a pas joué, puis une seule ligne de texte sous le titre
+function quizStatText(daily, hist) {
   if (daily) {
-    sc[1].querySelector('b').innerHTML = '1<em>/1</em>';
-    sc[2].querySelector('b').textContent = Object.values(hist).filter(Boolean).length;
-  } else {
-    sc[0].querySelector('b').innerHTML = `${quizState.correct}<em>/${quizState.total}</em>`;
-    sc[1].querySelector('b').textContent = quizState.streak;
-    sc[2].querySelector('b').textContent = quizState.best;
-    if (record && quizState.best > 1) { sc[2].classList.add('rec'); sc[2].querySelector('span').textContent = 'Nouveau record'; }
+    if (!dailyState()) return '';
+    const n = Object.values(hist).filter(Boolean).length;
+    return `${nf(n)} ${n > 1 ? 'jours justes' : 'jour juste'}`;
   }
+  const { correct, total, streak, best } = quizState;
+  if (!total) return '';
+  return `${nf(correct)} sur ${nf(total)}${streak > 1 ? ` · série de ${nf(streak)}` : ''}${best > 1 ? ` · record ${nf(best)}` : ''}`;
+}
+function quizUpdateScore(daily, hist) {
+  const el = document.getElementById('quiz-stat');
+  if (!el) return;
+  const t = quizStatText(daily, hist);
+  el.textContent = t; el.hidden = !t;
 }
 // la récompense : la scène, projetée dans le geste (donc avec le son), en tête de la zone ; en relecture, sans le son
 function quizShowScene(q, replay) {
@@ -1444,7 +1463,7 @@ function quizNavAfter(daily) {
   if (daily) {
     const res = readJSON('kaam_qdj', {});
     nav.className = 'nav two';
-    nav.innerHTML = `<button class="pill gray" id="qdj-share">${icon('share')}<span class="t">Partager</span></button><button class="pill" id="quiz-free">Quiz libre</button>`;
+    nav.innerHTML = `<button class="tbtn" id="qdj-share"><span class="t">Partager</span></button><button class="pill" id="quiz-free">Quiz libre</button>`;
     const d = new Date().toLocaleDateString('fr-FR');
     document.getElementById('qdj-share').addEventListener('click', e => shareText(`Kaamelott · Qui a dit ça ? · ${d} · ${res.ok ? 'Juste' : 'Faux'}${quizState.best ? ` (record ${quizState.best})` : ''}`, e.currentTarget));
     document.getElementById('quiz-free').addEventListener('click', () => renderQuiz());
@@ -1462,7 +1481,7 @@ function quizAnswer(btn, replay, ctx) {
   const { q, daily, stage, fade } = ctx;
   const { correct, lost, record } = quizRecord(btn, replay, ctx);
   quizMarkChoices(btn, q);
-  quizUpdateScore(daily, ctx.hist, record);
+  quizUpdateScore(daily, ctx.hist);
   // source : l'épisode seulement (le nom est déjà dans la ligne « Juste »)
   const vd = document.getElementById('quiz-verdict');
   vd.innerHTML = `${correct ? 'Juste.' : 'Faux.'}<span>${correct ? `C’est bien ${esc(nameCase(q.name))}.` : `C’était ${esc(nameCase(q.name))}.`}${!correct && lost > 1 && !daily ? ` Série de ${lost} perdue.` : ''}${record && quizState.best > 1 ? ' Nouveau record.' : ''}</span>`;
@@ -1479,25 +1498,27 @@ function quizAnswer(btn, replay, ctx) {
   quizNavAfter(daily);
 }
 // Quiz : jamais de texte ni de scène coupés. Avant la réponse, le corps de la question descend jusqu'à ce qu'elle tienne ;
-// après, la scène prend la hauteur disponible (16:9 entier, centrée), la question se lit dessous en faisant défiler.
+// si elle ne tient toujours pas, c'est la page entière qui défile (jamais une ligne tranchée). Après la réponse, la scène
+// prend la hauteur disponible (16:9 entier), la question se lit dessous en faisant défiler.
 function fitQuiz(stage) {
   if (!stage?.isConnected) return;
+  const main = document.getElementById('main-content');
   const qt = stage.querySelector('.quiz-q .quote');
   const fr = stage.querySelector('.q-scene .frame');
-  if (fr) {
-    const main = document.getElementById('main-content');
-    main.classList.remove('qpage');
-    if (stage.scrollHeight <= stage.clientHeight + 1) { armMast(); return; }   // tout tient : rien à faire
-    // sinon la page entière défile : scène presque pleine largeur (16:9 entière), question entière, puis les choix
+  main.classList.remove('qpage');
+  stage.classList.remove('long');
+  if (!fr && qt) {
+    let fs = +qt.dataset.fs0 || parseFloat(qt.style.fontSize) || 24;
+    qt.style.fontSize = fs + 'px';
+    const min = Math.round((innerHeight < 620 ? 15 : 17) * textScale());
+    while (fs > min && stage.scrollHeight > stage.clientHeight + 1) { fs--; qt.style.fontSize = fs + 'px'; }
+  }
+  if (stage.scrollHeight > stage.clientHeight + 1) {
+    if (!fr) stage.classList.add('long');
     main.classList.add('qpage');
     main.scrollTop = 0;
-    armMast();
-    return;
   }
-  if (!qt) return;
-  let fs = parseFloat(qt.style.fontSize) || 24;
-  const min = Math.round(17 * textScale());
-  while (fs > min && stage.scrollHeight > stage.clientHeight + 1) { fs--; qt.style.fontSize = fs + 'px'; }
+  armMast();
 }
 function renderQuiz(daily = false) {
   if (!quizState) initQuiz();
@@ -1517,42 +1538,34 @@ function renderQuiz(daily = false) {
   const short = innerHeight < 620;
   const fs = Math.round(Math.min(quoteSize(q.quote), short ? Q_MAX.quizSE : Q_MAX.quiz) * textScale());
   const done = dailyState();
-  // quatre couleurs différentes : une couleur déjà prise passe à la suivante libre de la palette
-  const qcol = [];
-  choices.forEach(c => { let col = colorOf(c), k = PAL.indexOf(col); while (qcol.includes(col)) { k = (k + 1) % PAL.length; col = PAL[k]; } qcol.push(col); });
   const hist = readJSON('kaam_qdj_hist', {});
-  const daysOk = Object.values(hist).filter(Boolean).length;
+  const stat = quizStatText(daily, hist);
   main.innerHTML = `
-    <div class="score">${daily
-      ? `<div><span>Jour</span><b class="dt">${new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}</b></div>
-         <div><span>Tentative</span><b>${done ? 1 : 0}<em>/1</em></b></div>
-         <div><span>Jours justes</span><b>${daysOk}</b></div>`
-      : `<div><span>Justes</span><b>${quizState.correct}<em>/${quizState.total}</em></b></div>
-         <div><span>Série</span><b>${quizState.streak}</b></div>
-         <div><span>Record</span><b>${quizState.best}</b></div>`}
-    </div>
+    <p class="qstat" id="quiz-stat"${stat ? '' : ' hidden'}>${esc(stat)}</p>
     <div class="scroll" id="quiz-stage">
       <p class="verdict" id="quiz-verdict" hidden></p>
       <div class="qcard">
         <div id="quiz-scene" class="q-scene"></div>
         <figure class="quiz-q">
           <p class="ask" id="quiz-ask">${daily ? 'Question du jour · qui a dit ça ?' : 'Qui a dit ça ?'}</p>
-          <blockquote class="quote" lang="fr" style="font-size:${fs}px">${quoteHTML(q.quote)}</blockquote>
+          <blockquote class="quote" lang="fr" style="font-size:${fs}px" data-fs0="${fs}">${quoteHTML(q.quote)}</blockquote>
           <figcaption class="src" id="quiz-after" hidden></figcaption>
         </figure>
       </div>
     </div>
     <div class="choices" role="group" aria-label="Qui a dit ça ?">
-      ${choices.map((c, k) => `<button class="choice" data-choice="${esc(c)}">${faceHTML(c, 's', 'l').replace(/--c:#[0-9a-f]+/, `--c:${qcol[k]}`)}<span class="n">${esc(nameCase(c))}</span><span class="v"></span></button>`).join('')}
+      ${choices.map(c => `<button class="choice" data-choice="${esc(c)}">${faceHTML(c, 's', 'l')}<span class="n">${esc(nameCase(c))}</span><span class="v"></span></button>`).join('')}
     </div>
     ${daily
-      ? `<div class="nav one" id="quiz-nav"><button class="pill gray" id="quiz-free">Revenir au quiz libre</button></div>`
-      : `<div class="nav two" id="quiz-nav"><button class="pill gray" id="quiz-daily">${icon('cal')}<span>${done ? `Du jour · ${done.ok ? 'juste' : 'faux'}` : 'Question du jour'}</span></button><button class="pill gray" id="quiz-next">Passer</button></div>`}`;
+      ? `<div class="nav txt" id="quiz-nav"><button class="tbtn" id="quiz-free">Revenir au quiz libre</button></div>`
+      : `<div class="nav txt" id="quiz-nav"><button class="tbtn" id="quiz-daily">${done ? `Question du jour · ${done.ok ? 'juste' : 'faux'}` : 'Question du jour'}</button><button class="tbtn" id="quiz-next">Passer</button></div>`}`;
 
   const stage = document.getElementById('quiz-stage');
   // la question entière dans la zone (corps réduit jusqu'à 17 px) ; après la réponse, la scène entière en tête
   const fade = () => fitQuiz(stage);
   fade();
+  // les polices arrivées après coup changent la hauteur du texte : on remesure (jamais une ligne coupée)
+  document.fonts?.ready.then(() => { if (stage.isConnected) fade(); });
   document.getElementById('quiz-next')?.addEventListener('click', () => renderQuiz());
   document.getElementById('quiz-daily')?.addEventListener('click', () => renderQuiz(true));
   document.getElementById('quiz-free')?.addEventListener('click', () => renderQuiz());
@@ -1566,76 +1579,107 @@ function renderQuiz(daily = false) {
 }
 
 // ===== ENTRÉES DE LISTE (fiche, recherche, favoris) =====
-// Rangée d'actions à colonnes fixes : Écouter · Scène · Favori (· Partager hors fiche) ; une pièce absente reste une cellule grisée
-// Rangée d'actions à colonnes fixes : Écouter · Scène · Favori · Partager (même jeu partout : listes, fiche, écran principal).
-// Une pièce absente le dit en clair ; ni son ni scène : une seule case sur deux colonnes.
-// Quatre commandes à place fixe : Écouter (rond à gauche) · Scène · Favori (étoile à droite) · Partager.
-// Une pièce absente reste à sa place, grisée ; ni son ni scène : une seule case qui en vaut deux.
-function entActs(q, opts) {
-  const fav = isFav(q);
-  const nil = (t, w2, cls = '') => `<span class="cell nil${w2 ? ' w2' : ''}${cls}"${cls ? ' aria-hidden="true"' : ''}>${cls === ' pl' ? icon('quote') + `<span class="sr">${t}</span>` : t}</span>`;
-  const media = !allQuotes.length
-    ? nil(navigator.onLine === false ? 'Hors ligne' : 'Indisponible', true, ' pl')     // favoris relus sans les répliques
-    : !q.audio && !q.video ? nil('Sans son ni scène', true, ' pl')
-    : (q.audio ? `<button class="cell pl" data-act="audio">${icon('play', 'i-pl')}${icon('pause', 'i-pa')}<span class="lp sr">Écouter</span><span class="ls sr">Arrêter</span></button>` : nil('Pas de son', false, ' pl'))
-      + (q.video ? `<button class="cell sc" data-act="video">${icon('film')}Scène</button>` : nil('Pas de scène', false, ' sc'));
-  return `<div class="ent-a">
-      ${media}
-      <button class="cell fv${fav ? ' on' : ''}" data-act="fav" aria-pressed="${fav}">${favFace(fav, opts.remove ? 'Retirer' : 'Favori')}</button>
-      <button class="cell sh" data-act="share">${icon('share')}<span class="t">Partager</span></button>
-    </div>`;
-}
+// Une ligne = la réplique (toucher : elle s'ouvre) et un bouton « … » (ou un toucher long sur la ligne) qui ouvre le menu :
+// Écouter, Voir la scène (seulement s'ils existent), Favori, Partager. Rien n'est répété sous chaque ligne.
 function entHTML(q, k, opts = {}) {
   const meta = opts.fiche ? '' : `<div class="ent-m">${opts.name === false ? '' : `<b>${esc(nameCase(q.name))}</b>`}${epHTML(q)}</div>`;
   const lost = opts.remove && !q.live;                   // favori dont la réplique n'existe plus telle quelle
   return `<div class="ent" data-k="${k}">
-    ${lost ? `<div class="ent-m">${esc(nameCase(q.name))} · réplique modifiée depuis : touchez l’étoile pour la retirer</div>` : meta}
+    ${lost ? `<div class="ent-m">${esc(nameCase(q.name))} · réplique modifiée depuis : retirez-la avec le bouton « … »</div>` : meta}
     ${lost ? `<div class="ent-q">${typo(q.quote)}</div>` : `<button class="ent-q" data-act="goto">${opts.query ? highlight(q.quote, opts.query) : typo(q.quote)}</button>`}
-    ${entActs(q, opts)}
+    <span class="ent-on" aria-hidden="true">${icon('play')}</span>
+    <button class="ent-more" data-act="menu" aria-haspopup="dialog" aria-label="Actions : ${esc(nameCase(q.name))}">${icon('more')}</button>
   </div>`;
+}
+// Menu d'une ligne (feuille d'actions d'iOS) ; chaque action ferme le menu
+function openEntryMenu(q, ent, opts, onFav) {
+  const playing = playingBtn && playingBtn === ent.querySelector('.ent-more');
+  const fav = isFav(q);
+  const row = (act, ic, lab, cls = '') => `<button class="gr${cls}" data-m="${act}">${icon(ic, 'mi')}<span class="k t">${lab}</span></button>`;
+  const rows = [
+    allQuotes.length && q.audio ? row('audio', playing ? 'pause' : 'play', playing ? 'Arrêter' : 'Écouter') : '',
+    allQuotes.length && q.video ? row('video', 'film', 'Voir la scène') : '',
+    q.live === false ? '' : allQuotes.length ? row('goto', 'quote', 'Ouvrir la réplique') : '',
+    row('fav', fav ? 'star-f' : 'star', opts.remove ? 'Retirer des favoris' : fav ? 'Retirer des favoris' : 'Ajouter aux favoris'),
+    row('share', 'share', 'Partager'),
+  ].join('');
+  const sheet = openSheet(`
+    <div class="grab" aria-hidden="true"></div>
+    <div class="sh-nav"><span></span><h2 id="sh-title">${esc(nameCase(q.name))}</h2><button class="r" id="sheet-close">OK</button></div>
+    <p class="mq">${typo(q.quote)}</p>
+    <div class="g">${rows}</div>`);
+  sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
+  sheet.querySelectorAll('[data-m]').forEach(b => b.addEventListener('click', () => {
+    const m = b.dataset.m, more = ent.querySelector('.ent-more');
+    if (m === 'share') { shareQuote(q, b).then(() => setTimeout(closeSheet, 700)); return; }
+    closeSheet();
+    if (m === 'audio') playAudio(q.audio, more, q);
+    else if (m === 'video') showVideo(q);
+    else if (m === 'goto') gotoQuote(q);
+    else if (m === 'fav') onFav();
+  }));
 }
 const undoByEntry = new WeakMap();   // entrée de favori retirée → de quoi la remettre à sa place
 // Délégation des actions d'une liste d'entrées ; list(k) rend la réplique de l'entrée k
 function bindEntries(container, list, opts = {}) {
-  container.addEventListener('click', e => {
-    const a = e.target.closest('[data-act]');
-    if (!a) return;
-    const ent = a.closest('.ent');
+  const act = (a, ent) => {
     const q = list(+ent.dataset.k);
     if (!q) return;
-    const act = a.dataset.act;
-    if (act === 'audio') playAudio(q.audio, a, q);
-    else if (act === 'video') showVideo(q);
-    else if (act === 'goto') gotoQuote(q);
-    else if (act === 'share') shareQuote(q, a);
-    else if (act === 'fav' && opts.remove) {
-      // Favoris : retirée tout de suite, mais l'entrée reste en place, barrée, avec « Remettre »
-      const at = favorites.findIndex(f => sameQuote(f, q));
-      const saved = favorites[at];
-      if (at < 0) return;
-      favorites.splice(at, 1);
-      if (!saveFavorites()) { favorites.splice(at, 0, saved); a.innerHTML = favFace(true, 'Retirer', 'Non enregistré'); return; }
-      const row = ent.querySelector('.ent-a');
-      const rowHTML = row.outerHTML;
-      ent.classList.add('off');
-      row.outerHTML = `<div class="ent-a undo"><span class="lab">Retirée des favoris</span><button class="cell un" data-act="undo">Remettre</button></div>`;
-      undoByEntry.set(ent, { at, saved, rowHTML });
-      opts.onCount?.();
-      ent.querySelector('[data-act="undo"]').focus({ preventScroll: true });
-    }
-    else if (act === 'undo' && undoByEntry.has(ent)) {
+    const what = a.dataset.act;
+    if (what === 'goto') gotoQuote(q);
+    else if (what === 'menu') openEntryMenu(q, ent, opts, () => favEntry(q, ent));
+    else if (what === 'undo' && undoByEntry.has(ent)) {
       const { at, saved, rowHTML } = undoByEntry.get(ent);
       if (!isFav(saved)) {
         favorites.splice(Math.min(at, favorites.length), 0, saved);
         if (!saveFavorites()) { favorites = favorites.filter(f => f !== saved); a.textContent = 'Non enregistré'; return; }
       }
       ent.classList.remove('off');
-      ent.querySelector('.ent-a').outerHTML = rowHTML;
+      ent.querySelector('.ent-a.undo').remove();
+      ent.querySelector('.ent-more').hidden = false;
       undoByEntry.delete(ent);
       opts.onCount?.();
+      document.getElementById('sr-live').textContent = 'Remise dans les favoris.';
     }
-    else if (act === 'fav') favButton(a, q);
+  };
+  // Favori depuis le menu ; dans Favoris : retirée tout de suite, la ligne reste en place, barrée, avec « Remettre »
+  const favEntry = (q, ent) => {
+    if (!opts.remove) {
+      const ok = toggleFav(q);
+      document.getElementById('sr-live').textContent = !ok ? 'Favori non enregistré : le stockage de l’appareil est plein ou bloqué.'
+        : isFav(q) ? 'Ajoutée aux favoris.' : 'Retirée des favoris.';
+      return;
+    }
+    const at = favorites.findIndex(f => sameQuote(f, q));
+    const saved = favorites[at];
+    if (at < 0) return;
+    favorites.splice(at, 1);
+    if (!saveFavorites()) { favorites.splice(at, 0, saved); document.getElementById('sr-live').textContent = 'Non enregistré : le stockage de l’appareil est plein ou bloqué.'; return; }
+    ent.classList.add('off');
+    ent.querySelector('.ent-more').hidden = true;
+    ent.insertAdjacentHTML('beforeend', `<div class="ent-a undo"><span class="lab">Retirée des favoris</span><button class="cell un" data-act="undo">Remettre</button></div>`);
+    undoByEntry.set(ent, { at, saved });
+    opts.onCount?.();
+    ent.querySelector('[data-act="undo"]').focus({ preventScroll: true });
+  };
+  let lastLong = 0, pressT = null, sx = 0, sy = 0;
+  container.addEventListener('click', e => {
+    if (Date.now() - lastLong < 700) { e.preventDefault(); return; }   // fin d'un toucher long : le menu est déjà ouvert
+    const a = e.target.closest('[data-act]');
+    const ent = a?.closest('.ent');
+    if (a && ent) act(a, ent);
   });
+  // toucher long sur une ligne = son menu
+  container.addEventListener('touchstart', e => {
+    clearTimeout(pressT);
+    const ent = e.target.closest('.ent');
+    if (!ent || ent.classList.contains('off') || e.target.closest('.ent-more, [data-act=undo]')) return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    pressT = setTimeout(() => { lastLong = Date.now(); act(ent.querySelector('.ent-more'), ent); }, 500);
+  }, { passive: true });
+  container.addEventListener('touchmove', e => { if (Math.abs(e.touches[0].clientX - sx) > 10 || Math.abs(e.touches[0].clientY - sy) > 10) clearTimeout(pressT); }, { passive: true });
+  ['touchend', 'touchcancel'].forEach(ev => container.addEventListener(ev, () => clearTimeout(pressT), { passive: true }));
+  container.addEventListener('contextmenu', e => { if (e.target.closest('.ent')) e.preventDefault(); });
 }
 
 // ===== PERSONNAGES =====
@@ -1664,7 +1708,7 @@ function renderPersonnages() {
       const l = sortKey(c[0]).charAt(0).toUpperCase();
       if (l !== letter) { letter = l; rows += `<div class="idx-l">${l}</div>`; }
     }
-    if (minors && c[1] < MINOR && !rows.includes('idx-more')) rows += `<button class="idx-more" id="pers-more"><span class="av sq more-av" aria-hidden="true">${icon('people')}</span><span class="t"><span class="n">Rôles de passage</span><span class="c">${nf(minors)} personnages, moins de ${MINOR} répliques chacun</span></span>${icon('chev', 'chev')}</button>`;
+    if (minors && c[1] < MINOR && !rows.includes('idx-more')) rows += `<button class="idx-more" id="pers-more"><span class="av sq mono more-av" aria-hidden="true">${icon('people')}</span><span class="t"><span class="n">Rôles de passage</span><span class="c">${nf(minors)} personnages, moins de ${MINOR} répliques chacun</span></span>${icon('chev', 'chev')}</button>`;
     rows += row(c, minors && c[1] < MINOR ? ' minor' : '');
   });
   if (duos.length) rows += `<div class="idx-l voix">À plusieurs voix</div>` + duos.map(c => row(c, ' duo')).join('');
@@ -1672,11 +1716,11 @@ function renderPersonnages() {
   const top = az ? [] : solo.slice(0, 10);
   main.innerHTML = `
     <div class="scroll" id="pers-scroll">
-      <div class="page-h"><h1 class="sr">Personnages</h1><p>${nf(solo.length)} personnages · ${nf(allQuotes.length)} répliques</p></div>
+      <div class="page-h"><h1 class="sr">Personnages</h1></div>
       <label class="pf field">${icon('search')}<input id="pers-filter" type="search" placeholder="Filtrer les noms" aria-label="Filtrer les noms" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done"></label>
       ${top.length ? `<div id="pers-top"><h2 class="h2">Les plus présents</h2><div class="shelf posters">${top.map(([n, c]) => `<button class="poster" data-char="${esc(n)}">${faceHTML(n, 'p', 'pc')}<b>${esc(nameCase(n))}</b><span>${plural(c, 'réplique')}</span></button>`).join('')}</div></div>` : ''}
       <div class="sec-h"><h2 class="h2" id="pers-h">${az ? 'De A à Z' : 'Tous'}<span class="hc"> · ${nf(solo.length)}</span></h2>
-        <button class="sortb" data-sort="${az ? 'count' : 'alpha'}" aria-label="${az ? 'Trier par nombre de répliques' : 'Trier de A à Z'}">${az ? 'Trier par répliques' : 'Trier de A à Z'}</button></div>
+        <button class="sortb tbtn" data-sort="${az ? 'count' : 'alpha'}" aria-label="${az ? 'Trier par nombre de répliques' : 'Trier de A à Z'}">${az ? 'Par répliques' : 'De A à Z'}</button></div>
       <div class="perso-list${minors && !persAll ? ' collapsed' : ''}${az ? ' az' : ''}" id="pers-list">${rows}</div>
     </div>`;
   const sc = document.getElementById('pers-scroll'), listEl = document.getElementById('pers-list'), input = document.getElementById('pers-filter');
@@ -1784,29 +1828,25 @@ function openPersonnage(name, restore) {
   const epCount = new Map();
   quotes.forEach(q => epCount.set(epKey(q), (epCount.get(epKey(q)) || 0) + 1));
   const epTitre = q => q.film ? 'Premier volet' : q.inedit ? q.inedit.replace(/^Inédit \d\s*:\s*/, '') : titleCase(q.title || '');
-  // part du corpus
-  const pc = n => (n * 100).toLocaleString('fr-FR', { maximumFractionDigits: 1, minimumFractionDigits: n * 100 < 10 ? 1 : 0 });
   const byLivre = new Map();
   quotes.forEach(q => { const L = livreDe(q); if (L) byLivre.set(L, (byLivre.get(L) || 0) + 1); });
   const livres = LIVRES.filter(L => byLivre.has(L));
-  const first = quotes[0];
+  const withAudio = quotes.filter(q => q.audio);
   const nm = nameCase(name);
   const hero = persoURL(name, 'w');   // grande image en tête (sinon l'aplat de couleur et l'initiale)
   let start = restore?.start || 0, shown = start, lastEp = null;
   const overlay = openOverlay(`
     <div class="back"><button id="detail-back" aria-label="Retour aux personnages">${icon('back')}</button><span class="nt" aria-hidden="true">${esc(nm)}</span></div>
     <div class="scroll" id="fiche-scroll">
-      <header class="fiche-h${hero ? ' photo' : ''}" style="--c:${colorOf(name)}">${hero ? `<span class="hero img" aria-hidden="true"><img src="${hero}" alt="" decoding="async"></span>` : ''}<span class="big" aria-hidden="true">${initial(name)}</span>
+      <header class="fiche-h${hero ? ' photo' : ''}">${hero ? `<span class="hero img" aria-hidden="true"><img src="${hero}" alt="" decoding="async"></span>` : ''}
         <div class="tx"><h1${nm.length > 13 ? ' class="long"' : ''}>${esc(nm)}</h1>
-        <p class="part">Première réplique : ${esc(epLabel(first) || '—')}</p></div>
-        <button class="play" id="f-rand" aria-label="Une réplique au hasard">${icon('shuffle')}</button>
+        <p class="part">${plural(quotes.length, 'réplique')} · ${plural(epCount.size, 'épisode')}</p></div>
       </header>
-      <div class="stats">
-        <div><span>Répliques</span><b>${nf(quotes.length)}</b></div>
-        <div><span>Épisodes</span><b>${nf(epCount.size)}</b></div>
-        <div><span>Part du total</span><b>${pc(quotes.length / allQuotes.length)} %</b></div>
+      <div class="pills fiche-acts${withAudio.length ? '' : ' one'}">
+        ${withAudio.length ? `<button class="pill gray" id="f-play">${icon('play')}Écouter</button>` : ''}
+        <button class="pill gray" id="f-rand">${icon('shuffle')}Aléatoire</button>
       </div>
-      ${livres.length > 1 ? `<h2 class="h2">Livres</h2><div class="livres shelf" role="group" aria-label="Aller au Livre">${livres.map(L => `<button class="alb-c" data-livre="${L}" aria-label="${esc(livreNom(L))}, ${plural(byLivre.get(L), 'réplique')}"><span class="alb" style="--c:${LCOL[L]}" aria-hidden="true"><small>${/^[IV]+$/.test(L) ? 'Livre' : 'Kaamelott'}</small><b>${L}</b></span><span class="cap2" aria-hidden="true"><b>${esc(livreNom(L))}</b><span>${plural(byLivre.get(L), 'réplique')}</span></span></button>`).join('')}</div>` : ''}
+      ${livres.length > 1 ? `<h2 class="h2">Livres</h2><div class="livres glist" role="group" aria-label="Aller au Livre">${livres.map(L => `<button class="gl-row" data-livre="${L}"><span class="k">${esc(livreNom(L))}</span><span class="d">${plural(byLivre.get(L), 'réplique')}</span>${icon('chev', 'chev')}</button>`).join('')}</div>` : ''}
       <h2 class="h2">Répliques</h2>
       <div id="fiche-list" class="fiche"></div>
     </div>`);
@@ -1830,7 +1870,7 @@ function openPersonnage(name, restore) {
     listEl.insertAdjacentHTML('beforeend', html);
     shown += next.length;
     if (shown < quotes.length) {
-      listEl.insertAdjacentHTML('beforeend', `<button class="more pill gray">Afficher les 50 suivantes · ${nf(quotes.length - shown)} restantes</button>`);
+      listEl.insertAdjacentHTML('beforeend', `<button class="more tbtn">Afficher les 50 suivantes · ${nf(quotes.length - shown)} restantes</button>`);
       const b = listEl.querySelector('.more:not(.top)');
       b.addEventListener('click', () => more());
       io?.observe(b);
@@ -1838,7 +1878,7 @@ function openPersonnage(name, restore) {
   };
   const from = s0 => {
     start = s0; shown = s0; lastEp = null;
-    listEl.innerHTML = s0 > 0 ? `<button class="more top pill gray">Revenir au début · ${nf(s0)} répliques avant</button>` : '';
+    listEl.innerHTML = s0 > 0 ? `<button class="more top tbtn">Revenir au début · ${nf(s0)} répliques avant</button>` : '';
     listEl.querySelector('.more.top')?.addEventListener('click', () => { from(0); sc.scrollTop = 0; });
   };
   from(start);
@@ -1852,6 +1892,12 @@ function openPersonnage(name, restore) {
   }));
   bindEntries(listEl, k => quotes[k]);
   overlay.querySelector('#f-rand').addEventListener('click', () => gotoQuote(rand(quotes)));   // la fiche est retrouvée au retour
+  // Écouter : une de ses répliques avec son, ouverte et jouée dans le geste
+  overlay.querySelector('#f-play')?.addEventListener('click', () => {
+    const q = rand(withAudio); gotoQuote(q);
+    const b = document.getElementById('btn-audio');
+    if (b && !playingBtn) playAudio(q.audio, b, allQuotes[quoteIdx]);
+  });
   overlayCtx = { kind: 'fiche', snap: () => ({ name, start, shown, top: sc.scrollTop }) };
   overlay.querySelector('#detail-back').addEventListener('click', () => { stopVideos(); ficheState = null; closeOverlay(); });
 }
@@ -1902,7 +1948,7 @@ function renderRecherche() {
   const main = document.getElementById('main-content');
   main.innerHTML = `
     <div class="search"><label class="field">${icon('search')}
-      <input type="search" id="search-input" placeholder="Un mot, une réplique, un nom" aria-label="Chercher une réplique" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+      <input type="search" id="search-input" placeholder="Un mot, une réplique, un nom" aria-label="Rechercher une réplique" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
       <button class="clr" id="search-clear" aria-label="Effacer">${icon('x')}</button></label>
     </div>
     <div class="scroll" id="search-results"></div>`;
@@ -1938,7 +1984,7 @@ function doSearch(query, container, keep) {
   const res = searchHits(query);
   const hits = res ? res.text : [];
   // la requête désigne un personnage : une ligne de renvoi vers sa fiche, puis les répliques qui contiennent le mot
-  const who = (res?.who || []).map(([n, c]) => `<button class="res-who idx-like" data-name="${esc(n)}">${faceHTML(n)}<span class="t"><span class="n">${esc(nameCase(n))}</span><span class="c">Personnage · ${plural(c, 'réplique')}</span></span>${icon('chev', 'chev')}</button>`).join('');
+  const who = (res?.who || []).map(([n, c]) => `<button class="res-who idx-like" data-name="${esc(n)}">${faceHTML(n)}<span class="t"><span class="n">${esc(nameCase(n))}</span><span class="c">${plural(c, 'réplique')}</span></span>${icon('chev', 'chev')}</button>`).join('');
   const bindWho = () => container.querySelectorAll('.res-who').forEach(b => b.addEventListener('click', () => openPersonnage(b.dataset.name)));
   if (!hits.length) {
     container.innerHTML = (who ? `<h2 class="res-h">Personnages</h2>${who}` : '') + `<div class="empty">${who ? '' : `<span class="ei">${icon('search')}</span>`}<b>${who ? 'Aucune réplique ne contient ce mot.' : `Rien pour « ${esc(query)} ».`}</b><small>Vérifiez l’orthographe, ou essayez le début d’un mot.</small></div>`;
@@ -1958,7 +2004,7 @@ function doSearch(query, container, keep) {
     shown += next.length;
     searchState.shown = shown;
     if (shown < hits.length) {
-      listEl.insertAdjacentHTML('beforeend', `<button class="more pill gray">Afficher la suite · ${nf(hits.length - shown)} restantes</button>`);
+      listEl.insertAdjacentHTML('beforeend', `<button class="more tbtn">Afficher la suite · ${nf(hits.length - shown)} restantes</button>`);
       listEl.querySelector('.more').addEventListener('click', () => more());
     }
   };
@@ -1983,8 +2029,8 @@ function renderFavoris() {
   setMast(mastFor('favoris'));
   const main = document.getElementById('main-content');
   if (!favorites.length) {
-    main.innerHTML = `<div class="scroll"><div class="page-h"><h1 class="sr">Favoris</h1><p>Aucune réplique enregistrée</p></div>
-      <div class="empty"><span class="ei">${icon('star')}</span><b>Aucun favori</b><small>Touchez l’étoile à côté d’un nom pour garder une réplique ici.</small>${allQuotes.length ? '<button class="pill" id="fav-open">Ouvrir une réplique au hasard</button>' : ''}</div></div>`;
+    main.innerHTML = `<div class="scroll"><div class="page-h"><h1 class="sr">Favoris</h1></div>
+      <div class="empty fav0"><span class="ei">${icon('star')}</span><b>Aucun favori</b><small>Touchez ☆ sur une réplique pour la garder ici.</small>${allQuotes.length ? '<button class="tbtn" id="fav-open">Réplique au hasard</button>' : ''}</div></div>`;
     document.getElementById('fav-open')?.addEventListener('click', () => { quoteIdx = pickRandom(); setView('citations'); });
     return;
   }
