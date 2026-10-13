@@ -677,6 +677,34 @@ function setMast(t) {
   if (!el) return;
   el.dataset.t = t;
   el.innerHTML = `<span class="mt">${esc(t)}</span>` + (navigator.onLine === false ? ' <span class="off">Hors ligne</span>' : '');
+  const ct = document.getElementById('mast-ct');
+  if (ct) ct.textContent = t;
+}
+// Grand titre repliable (iOS) : un témoin de 8 px en haut de la zone qui défile ; dès qu'il sort, l'en-tête passe en
+// barre compacte. IntersectionObserver seulement (aucun écouteur de défilement) ; sans lui, le grand titre reste.
+// Zone suivie : la liste de l'écran (#main-content > .scroll), ou la page entière du quiz après la réponse (.qpage).
+let mastIO = null, mastMO = null, mastSc = null;
+function armMast() {
+  const mast = document.getElementById('main-header'), main = document.getElementById('main-content');
+  if (!mast || !main) return;
+  if (!main.querySelector('#quiz-stage.answered')) main.classList.remove('qpage');
+  const sc = main.classList.contains('qpage') ? main : main.querySelector(':scope > .scroll');
+  let s = sc && sc.querySelector(':scope > .mast-sent');
+  if (sc === mastSc && s) return;                              // déjà suivi
+  mastIO?.disconnect(); mastMO?.disconnect(); mastIO = mastMO = null; mastSc = sc;
+  if (!sc || !('IntersectionObserver' in window)) { mast.classList.remove('compact'); return; }
+  if (!s) { s = document.createElement('i'); s.className = 'mast-sent'; s.setAttribute('aria-hidden', 'true'); sc.prepend(s); }
+  mast.classList.toggle('compact', sc.scrollTop > 8);           // position restaurée : bon état d'emblée
+  mastIO = new IntersectionObserver(es => mast.classList.toggle('compact', !es[es.length - 1].isIntersecting), { root: sc });
+  mastIO.observe(s);
+  // la liste est réécrite (résultats de Chercher) : le témoin disparu est remis
+  mastMO = new MutationObserver(() => { if (!sc.querySelector(':scope > .mast-sent')) { mastSc = null; armMast(); } });
+  mastMO.observe(sc, { childList: true });
+}
+function watchMast() {
+  const main = document.getElementById('main-content');
+  // un écran est rendu (ou sa liste réécrite, comme les résultats de Chercher) : on resuit la bonne zone
+  new MutationObserver(() => armMast()).observe(main, { childList: true });
 }
 // Sous-titre de l'en-tête par vue (Personnages et Favoris : leur grand titre suffit)
 const MAST = { quiz: 'Quiz', personnages: 'Personnages', recherche: 'Chercher', favoris: 'Favoris' };
@@ -1414,19 +1442,13 @@ function fitQuiz(stage) {
   const qt = stage.querySelector('.quiz-q .quote');
   const fr = stage.querySelector('.q-scene .frame');
   if (fr) {
-    fr.style.width = ''; fr.style.margin = ''; stage.classList.remove('tight', 'tight2');
-    if (stage.scrollHeight <= stage.clientHeight + 1) return;           // tout tient : rien à faire
-    // la question (déjà lue) passe sur une ligne avec l'épisode ; la scène prend le reste, entière
-    stage.classList.add('tight');
-    // très petit écran : seule l'épisode reste sous la scène
-    if (stage.clientHeight < 200) stage.classList.add('tight2');
-    const sc = fr.closest('.scene'), card = stage.querySelector('.qcard'), vd = document.getElementById('quiz-verdict');
-    const csC = getComputedStyle(card);
-    const room = stage.clientHeight - (vd && !vd.hidden ? vd.offsetHeight + 8 : 0) - parseFloat(csC.paddingTop) - parseFloat(csC.paddingBottom)
-      - (parseFloat(getComputedStyle(sc).marginTop) || 0) - (parseFloat(getComputedStyle(sc).marginBottom) || 0)
-      - stage.querySelector('.quiz-q').offsetHeight - 8;
-    const w = fr.clientWidth;
-    if (w * 9 / 16 > room && room > 40) { fr.style.width = Math.floor(room * 16 / 9) + 'px'; fr.style.margin = '0 auto'; }
+    const main = document.getElementById('main-content');
+    main.classList.remove('qpage');
+    if (stage.scrollHeight <= stage.clientHeight + 1) { armMast(); return; }   // tout tient : rien à faire
+    // sinon la page entière défile : scène presque pleine largeur (16:9 entière), question entière, puis les choix
+    main.classList.add('qpage');
+    main.scrollTop = 0;
+    armMast();
     return;
   }
   if (!qt) return;
@@ -1437,6 +1459,7 @@ function fitQuiz(stage) {
 function renderQuiz(daily = false) {
   if (!quizState) initQuiz();
   stopVideos();
+  document.getElementById('main-content').classList.remove('qpage');
   setMast(daily ? 'Question du jour' : 'Quiz');
   const main = document.getElementById('main-content');
   let q, choices;
@@ -1653,8 +1676,15 @@ function openOverlay(html) {
   overlay.classList.remove('hidden');
   document.getElementById('mast-set').hidden = true;
   // barre de navigation : transparente sur l'aplat, opaque (avec le titre) une fois l'aplat passé
+  // (témoin au bas de l'aplat, suivi par IntersectionObserver sous la barre : aucun écouteur de défilement)
   const sc = overlay.querySelector('.scroll'), nb = overlay.querySelector('.back'), hero = overlay.querySelector('.fiche-h');
-  if (sc && nb) sc.addEventListener('scroll', () => nb.classList.toggle('solid', sc.scrollTop > (hero ? hero.offsetHeight - nb.offsetHeight - 8 : 4)), { passive: true });
+  if (sc && nb && !nb.classList.contains('solid')) {
+    const s = document.createElement('i'); s.className = 'mast-sent'; s.setAttribute('aria-hidden', 'true');
+    s.style.cssText = hero ? 'top:auto;bottom:8px;height:1px' : '';
+    (hero || sc).append(s);
+    if ('IntersectionObserver' in window) new IntersectionObserver(es => nb.classList.toggle('solid', !es[es.length - 1].isIntersecting), { root: sc, rootMargin: `-${nb.offsetHeight}px 0px 0px 0px` }).observe(s);
+    else nb.classList.add('solid');
+  }
   renderMini();
   // le retour est aussi en bas (pouce) : même action que « Retour » en haut
   overlay.querySelector('#detail-back2')?.addEventListener('click', () => overlay.querySelector('#detail-back')?.click());
@@ -2162,6 +2192,7 @@ document.addEventListener('DOMContentLoaded', () => {
   registerSW();
   bindNav();
   bindMini();
+  watchMast();
   document.getElementById('mast-set').addEventListener('click', openSettings);
   boot();
 });

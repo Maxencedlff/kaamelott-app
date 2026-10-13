@@ -27,6 +27,7 @@
   --fill2: #e5e5ea;             /* piste de la barre de lecture, éléments éteints */
   --line: rgba(60, 60, 67, .18);
   --bar: #f9f9f9;               /* barres du bas : opaques, toujours lisibles */
+  --bar-t: rgba(249, 249, 249, .92);  /* barre du haut repliée, translucide (avec flou seulement) */
   --sheet: #f2f2f7;             /* fond d'une feuille (liste groupée) */
   --cell: #ffffff;              /* cellule d'une liste groupée */
   --seg-on: #ffffff;
@@ -40,6 +41,8 @@
   --tab: 50px;
   --st: env(safe-area-inset-top, 0px);
   --sb: env(safe-area-inset-bottom, 0px);
+  --mh: calc(var(--st) + 56px);   /* hauteur de l'en-tête au grand titre */
+  --ch: 44px;                     /* barre repliée (sous la zone sûre), comme la barre de navigation d'iOS */
 }
 /* ---------- Jetons : sombre (teintes d'iOS) ---------- */
 @media (prefers-color-scheme: dark) {
@@ -47,7 +50,7 @@
     --accent: #fa2d48; --accent-t: #ff4d63; --accent-bg: #e0102b;
     --ink: #f5f5f7; --ink2: #98989d; --ink3: #8e8e93;
     --bg: #000000; --bg2: #1c1c1e; --fill: #1c1c1e; --fill2: #3a3a3c;
-    --line: rgba(84, 84, 88, .6); --bar: #161618; --sheet: #1c1c1e; --cell: #2c2c2e; --seg-on: #636366;
+    --line: rgba(84, 84, 88, .6); --bar: #161618; --bar-t: rgba(22, 22, 24, .92); --sheet: #1c1c1e; --cell: #2c2c2e; --seg-on: #636366;
     --scrim: rgba(0, 0, 0, .55); --hud: rgba(44, 44, 46, .94); --ok: #30d158; --qcard: #1c1c1e; --chev: #5a5a5e;
   }
 }
@@ -73,7 +76,7 @@ svg { display: block; flex: none; }
 mark { background: none; color: var(--accent-t); font-weight: 600; }
 
 #app {
-  height: 100vh; height: 100dvh;
+  position: relative; height: 100vh; height: 100dvh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;
   grid-template-columns: minmax(0, 1fr);
@@ -81,18 +84,34 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 #app > * { grid-column: 1; min-width: 0; }   /* tous dans la même colonne : la page poussée recouvre l'en-tête et le contenu */
 
 /* ---------- En-tête : grand titre à la manière d'Apple ---------- */
+/* Hors du flux (posé sur le contenu, qui garde sa place) : se replier ne déplace rien. Au défilement, le grand titre
+   s'efface et laisse une barre de 44 pt sous la zone sûre, titre centré, fond translucide et filet. */
 .mast {
-  grid-row: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: calc(var(--st) + 8px) var(--pad) 0; min-height: calc(var(--st) + 56px);
+  position: absolute; top: 0; left: 0; right: 0; z-index: 4; height: var(--mh);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: calc(var(--st) + 8px) var(--pad) 0; pointer-events: none;
 }
+.mast > * { pointer-events: auto; position: relative; }
+.mast::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: calc(var(--st) + var(--ch)); background: var(--bar); box-shadow: 0 .5px 0 var(--line); opacity: 0; transition: opacity .2s; }
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .mast::before { background: var(--bar-t); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); }
+}
+.mast-sub, .mast .round { transition: opacity .2s, transform .2s; }
+.mast-ct { position: absolute; top: var(--st); left: 64px; right: 64px; height: var(--ch); display: grid; place-items: center; font-size: 17px; font-weight: 600; letter-spacing: -.41px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.mast.compact::before, .mast.compact .mast-ct { opacity: 1; }
+.mast.compact .mast-sub { opacity: 0; pointer-events: none; }
+.mast.compact .round { transform: translateY(calc(var(--ch) / 2 - (var(--mh) - var(--st)) / 2 - 4px)); }
+.mast-sent { position: absolute; top: 0; left: 0; width: 1px; height: 8px; opacity: 0; pointer-events: none; }
 .mast-sub { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .mast-sub .mt { font-size: 34px; line-height: 41px; font-weight: 700; letter-spacing: .37px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mast-sub .off { flex: none; padding: 2px 9px; border-radius: 980px; background: var(--fill); color: var(--ink2); font-size: 13px; line-height: 18px; font-weight: 600; letter-spacing: -.08px; }
 .round { width: 36px; height: 36px; border-radius: 50%; background: var(--fill); color: var(--accent); display: grid; place-items: center; flex: none; }
 .round svg { width: 22px; height: 22px; }
 
-#main-content { grid-row: 2; min-height: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; }
-.scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding-bottom: 28px; }
+#main-content { grid-row: 2; min-height: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; padding-top: var(--mh); }
+/* une liste qui commence la page passe sous l'en-tête (et sous la barre repliée) */
+#main-content > .scroll:first-child { margin-top: calc(-1 * var(--mh)); padding-top: var(--mh); }
+.scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding-bottom: 28px; }
 
 /* ---------- Boutons ---------- */
 .pill {
@@ -323,9 +342,14 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .q-scene:empty { display: none; }
 .q-scene .scene { margin: -8px -8px 14px; }
 .q-scene .frame { border-radius: 14px; }
-#quiz-stage.tight .quiz-q .quote { font-size: 17px !important; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#quiz-stage.tight2 .quiz-q .quote { display: none; }
-#quiz-stage.tight .quiz-q .src { margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* après la réponse, si tout ne tient pas : la page entière défile (scène presque pleine largeur, question entière,
+   puis les 4 choix) ; « Question suivante » reste en bas, à portée du pouce */
+#main-content.qpage { overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+#main-content.qpage > * { flex: none; }
+#main-content.qpage #quiz-stage { overflow: visible; padding-bottom: 4px; }
+.qpage .q-scene .scene { margin: -10px -12px 12px; }
+.qpage .q-scene .frame { border-radius: 12px; }
+.qpage .nav { position: sticky; bottom: 0; z-index: 2; margin: 0; padding: 8px var(--pad) 10px; background: var(--bg); box-shadow: 0 -.5px 0 var(--line); }
 .ask { margin-bottom: 8px; font-size: 15px; font-weight: 600; color: #ff6b7d; letter-spacing: -.24px; }
 .quiz-q .quote { color: #f5f5f7; line-height: 1.2; }
 .quiz-q .src { margin-top: 10px; font-size: 13px; line-height: 18px; color: #a1a1a6; }
@@ -388,6 +412,9 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .back.solid { background: var(--bar); box-shadow: 0 .5px 0 var(--line); }
 .back.solid .nt { opacity: 1; }
 .back.solid #detail-back { background: var(--fill); color: var(--accent); }
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .back.solid { background: var(--bar-t); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); }
+}
 .fiche-h { position: relative; background: var(--c); color: #fff; padding: calc(var(--st) + 64px) var(--pad) 22px; min-height: calc(var(--st) + 236px); display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; }
 .fiche-h .big { position: absolute; right: -12px; top: calc(var(--st) + 4px); font-size: 220px; line-height: 1; font-weight: 700; letter-spacing: -.04em; color: rgba(255, 255, 255, .13); pointer-events: none; }
 .fiche-h h1 { position: relative; font-size: 40px; line-height: 44px; font-weight: 700; letter-spacing: -.02em; padding-right: 72px; overflow-wrap: break-word; }
@@ -497,7 +524,8 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
   .score b { font-size: 20px; line-height: 24px; }
 }
 @media (max-height: 640px) {
-  .mast { min-height: calc(var(--st) + 48px); padding-top: calc(var(--st) + 6px); }
+  :root { --mh: calc(var(--st) + 48px); }
+  .mast { padding-top: calc(var(--st) + 6px); }
   .mast-sub .mt { font-size: 28px; line-height: 34px; }
   .round { width: 32px; height: 32px; }
   .stage { margin-top: 6px; }
@@ -522,6 +550,11 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
   .qcard { padding: 14px 16px 16px; border-radius: 18px; }
   .q-scene .scene { margin: -4px -4px 10px; }
   .q-scene .scene:not([data-s="error"]):not([data-s="muted"]) .leg { display: none; }
+  /* « Touchez l'image pour le son » : petite, dans le coin bas gauche, loin des visages */
+  .q-scene .leg { left: 6px; bottom: 7px; }
+  .q-scene .leg .st { gap: 4px; padding: 2px 7px; font-size: 11px; line-height: 14px; }
+  .q-scene .leg .st i { width: 6px; height: 6px; }
+  .qpage .nav { margin: 0; padding: 6px var(--pad) 8px; }
   #quiz-stage { margin-top: 8px; }
   .verdict { font-size: 20px; line-height: 24px; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .verdict span { display: inline; margin-left: 6px; font-size: 15px; }
@@ -553,7 +586,8 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 }
 /* paysage (iPhone tourné) : on regagne de la hauteur */
 @media (orientation: landscape) and (max-height: 500px) {
-  .mast { min-height: 0; padding-top: 4px; }
+  :root { --mh: calc(var(--st) + 36px); --ch: 36px; }
+  .mast { padding-top: calc(var(--st) + 4px); }
   .mast-sub .mt { font-size: 22px; line-height: 28px; }
   .tools, .stage-foot:not(.vf) { display: none; }
   :root { --tab: 44px; }

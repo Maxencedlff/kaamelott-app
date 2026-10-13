@@ -466,6 +466,20 @@ def scenario_screens(w):
         w.shot(pg, rec, "10-fiche-personnage")
     w.step("Fiche personnage", s_fiche)
 
+    def s_fiche_bar(rec):
+        pg = state["page"]
+        pg.evaluate("document.getElementById('fiche-scroll').scrollTop = 600"); pg.wait_for_timeout(450)
+        r = pg.evaluate("() => ({ solid: document.querySelector('#detail-overlay .back').classList.contains('solid'), nt: getComputedStyle(document.querySelector('.back .nt')).opacity })")
+        w.shot(pg, rec, "10b-fiche-barre")
+        pg.evaluate("document.getElementById('fiche-scroll').scrollTop = 0"); pg.wait_for_timeout(350)
+        back = pg.evaluate("document.querySelector('#detail-overlay .back').classList.contains('solid')")
+        if not r["solid"] or float(r["nt"]) < .99 or back: raise RuntimeError(f"barre de la fiche : {r}, revenue en haut solid={back}")
+        pg.click("#detail-back"); pg.wait_for_selector("#detail-overlay.hidden", state="attached")
+        return "barre opaque avec le nom une fois l'aplat passé, transparente en haut"
+    w.step("Fiche : barre repliée au défilement", s_fiche_bar)
+
+    w.step("Grand titre replié au défilement (clair)", lambda rec: check_compact(w, state["page"], rec, "10c-titre-replie"))
+
     def s_search(rec):
         pg = fresh()
         w.nav(pg, "recherche")
@@ -515,6 +529,41 @@ def scenario_screens(w):
             pg.close(); w.expect_errors = False
         return "message : " + txt.replace("\n", " / ")
     w.step("État d'erreur (data.json 403)", s_err)
+
+
+def check_compact(w, pg, rec, fname):
+    """Grand titre repliable : Personnages défilé -> barre compacte visible, lisible, sous la zone sûre, sans saut."""
+    w.nav(pg, "personnages")
+    pg.evaluate("document.getElementById('pers-scroll').scrollTop = 0"); pg.wait_for_timeout(350)
+    r0 = pg.evaluate("""() => ({ compact: document.getElementById('main-header').classList.contains('compact'),
+        y: document.querySelector('#pers-list').getBoundingClientRect().top })""")
+    if r0["compact"]: raise RuntimeError("barre repliée alors que rien n'a défilé")
+    pg.evaluate("document.getElementById('pers-scroll').scrollTop = 300"); pg.wait_for_timeout(450)
+    r = pg.evaluate("""() => { const m = document.getElementById('main-header'), ct = document.getElementById('mast-ct'), cs = getComputedStyle(ct),
+        bf = getComputedStyle(m, '::before'), big = getComputedStyle(document.querySelector('#mast-sub'));
+        const st = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--st')) || 0;
+        const b = ct.getBoundingClientRect(), safe = document.querySelector('[data-qa=safe]');
+        return { compact: m.classList.contains('compact'), txt: ct.textContent, fs: cs.fontSize, fw: cs.fontWeight, op: cs.opacity, bigOp: big.opacity,
+                 color: cs.color, bg: bf.backgroundColor, bgOp: bf.opacity, shadow: bf.boxShadow, top: b.top, cx: b.left + b.width / 2, vw: innerWidth,
+                 safeTop: safe ? 47 : 0, y: document.querySelector('#pers-list').getBoundingClientRect().top + 300 }; }""")
+    w.shot(pg, rec, fname)
+    import re as _re
+    def lum(c):
+        v = [float(x) for x in _re.findall(r"[\d.]+", c)[:3]]
+        f = lambda x: x / 255 / 12.92 if x / 255 <= .04045 else ((x / 255 + .055) / 1.055) ** 2.4
+        return .2126 * f(v[0]) + .7152 * f(v[1]) + .0722 * f(v[2])
+    ratio = (max(lum(r["color"]), lum(r["bg"])) + .05) / (min(lum(r["color"]), lum(r["bg"])) + .05)
+    errs = []
+    if not r["compact"]: errs.append("pas de barre compacte après défilement")
+    if r["txt"] != "Personnages" or r["fs"] != "17px" or r["fw"] not in ("600", "semibold"): errs.append(f"titre compact {r['txt']!r} {r['fs']} {r['fw']}")
+    if float(r["op"]) < .99 or float(r["bgOp"]) < .99 or float(r["bigOp"]) > .01: errs.append(f"opacités {r['op']}/{r['bgOp']}/{r['bigOp']}")
+    if "0.5px" not in r["shadow"] and ".5px" not in r["shadow"]: errs.append(f"filet absent : {r['shadow']}")
+    if ratio < 7: errs.append(f"titre compact peu lisible ({ratio:.1f}:1)")
+    if r["top"] < r["safeTop"] - .5: errs.append(f"titre sous l'encoche ({r['top']})")
+    if abs(r["cx"] - r["vw"] / 2) > 2: errs.append(f"titre non centré ({r['cx']})")
+    if abs(r["y"] - r0["y"]) > 1: errs.append(f"saut de mise en page : liste {r0['y']} -> {r['y'] - 300}")
+    if errs: raise RuntimeError(" ; ".join(errs))
+    return f"barre compacte « {r['txt']} » 17 px, contraste {ratio:.1f}:1 sur {r['bg']}, filet, pas de saut"
 
 
 # Invariant après chaque navigation : la réplique affichée respecte TOUS les filtres, et le pool aussi
@@ -623,7 +672,8 @@ def scenario_vague2(w):
                 ys = pg.evaluate("[...document.querySelectorAll('.choice')].map(x => Math.round(x.getBoundingClientRect().top))")
                 live = pg.evaluate("document.getElementById('sr-live').textContent")
                 w.shot(pg, rec, "30-quiz-apres-se")
-                if ys != r["ys"]: raise RuntimeError(f"les réponses ont bougé : {r['ys']} -> {ys}")
+                # après la réponse, la page peut défiler (scène en grand au-dessus) : les 4 lignes restent, même espacement
+                if [y - ys[0] for y in ys] != [y - r["ys"][0] for y in r["ys"]]: raise RuntimeError(f"les réponses ont bougé : {r['ys']} -> {ys}")
                 if not re.match(r"^(Juste|Faux)", live): raise RuntimeError(f"verdict non annoncé : {live!r}")
             else:
                 pg.click("#quiz-next"); pg.wait_for_timeout(60)
@@ -631,6 +681,39 @@ def scenario_vague2(w):
         if bad: raise RuntimeError(f"réponse D cachée ou absente {bad} fois sur 8")
         return "D toujours visible, lignes immobiles après réponse, verdict annoncé"
     w.step("Quiz : D visible, rien ne bouge, verdict annoncé", s_quizD)
+
+    def s_quiz_scene(rec):
+        pg = page(); w.nav(pg, "quiz")
+        pg.locator(".choice").first.click(); pg.wait_for_selector(".choice.right"); pg.wait_for_timeout(600)
+        # état « sans le son » forcé : la pastille doit rester petite, en bas à gauche
+        pg.evaluate("() => { const f = document.getElementById('quiz-fig'), v = f.querySelector('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } f.dataset.s = 'muted'; const st = f.querySelector('.st'); st.className = 'st red'; st.innerHTML = '<i></i>Touchez l’image pour le son'; }")
+        pg.wait_for_timeout(100)
+        G = """() => { const R = e => e.getBoundingClientRect(), m = document.getElementById('main-content');
+          const top = R(document.getElementById('main-header')).top + parseFloat(getComputedStyle(m).paddingTop);
+          const nav = R(document.getElementById('quiz-nav')), fr = R(document.querySelector('#quiz-fig .frame')), vd = R(document.getElementById('quiz-verdict'));
+          const pill = R(document.querySelector('#quiz-fig .st'));
+          return { vw: innerWidth, qpage: m.classList.contains('qpage'), top, navTop: nav.top, navBot: nav.bottom, tabs: R(document.querySelector('.tabs')).top,
+                   fr: [fr.left, fr.top, fr.width, fr.height], vd: [vd.top, vd.bottom], pill: [pill.left - fr.left, fr.bottom - pill.bottom, pill.width, pill.height],
+                   ch: [...document.querySelectorAll('.choice')].map(c => [R(c).top, R(c).bottom]), sh: m.scrollHeight, cl: m.clientHeight }; }"""
+        r = pg.evaluate(G)
+        w.shot(pg, rec, "30b-quiz-scene-se")
+        errs = []
+        fl, ft, fw, fh = r["fr"]
+        if fw < .85 * r["vw"]: errs.append(f"scène {fw:.0f} px < 85 % de {r['vw']}")
+        if abs(fw / fh - 16 / 9) > .02: errs.append(f"scène hors 16:9 ({fw:.0f}×{fh:.0f})")
+        if r["vd"][0] < r["top"] - .5 or r["vd"][1] > ft: errs.append(f"verdict caché ou recouvert {r['vd']}")
+        if ft < r["top"] - .5 or ft + fh > r["navTop"] + .5: errs.append(f"scène coupée : {ft:.0f}-{ft + fh:.0f}, zone {r['top']:.0f}-{r['navTop']:.0f}")
+        if r["navBot"] > r["tabs"] + .5: errs.append("« Question suivante » sous les onglets")
+        px, pb, pw, ph = r["pill"]
+        if px > 12 or pb > 12 or pw > fw * .75 or ph > 20: errs.append(f"pastille trop grande ou mal placée {r['pill']}")
+        pg.evaluate("document.getElementById('main-content').scrollTop = 99999"); pg.wait_for_timeout(300)
+        r2 = pg.evaluate(G)
+        w.shot(pg, rec, "30c-quiz-choix-se")
+        if any(t < r2["top"] - .5 or b > r2["navTop"] + .5 for t, b in r2["ch"]): errs.append(f"un choix est recouvert en bas de page : {r2['ch']} / {r2['navTop']}")
+        pg.close()
+        if errs: raise RuntimeError(" ; ".join(errs))
+        return f"scène {fw:.0f}×{fh:.0f} ({fw / r['vw']:.0%} de l'écran), verdict, choix et « Question suivante » dégagés ; pastille {pw:.0f}×{ph:.0f} en bas à gauche"
+    w.step("Quiz SE : scène en grand après la réponse, rien de coupé", s_quiz_scene)
 
     def s_az(rec):
         pg = page(); w.nav(pg, "personnages")
@@ -1050,6 +1133,12 @@ def scenario_sombre(w):
         w.shot(pg, rec, "54-sombre-fiche")
         pg.close()
     w.step("Sombre : quiz et fiche", s_quiz)
+
+    def s_compact(rec):
+        pg = w.new_page(w.ctx()); w.goto(pg)
+        try: return check_compact(w, pg, rec, "58-sombre-titre-replie")
+        finally: pg.close()
+    w.step("Sombre : grand titre replié au défilement", s_compact)
 
 
 def scenario_mini(w):
