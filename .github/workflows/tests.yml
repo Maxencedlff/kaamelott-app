@@ -29,7 +29,9 @@ jobs:
         with: { python-version: '3.12' }
       - run: pip install playwright==1.62.0
       - uses: actions/cache@v4
-        with: { path: ~/.cache/ms-playwright, key: pw-1.62.0-${{ runner.os }} }
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-1.62.0-${{ runner.os }}
       - run: python -m playwright install --with-deps chromium webkit
       - run: QA_BUDGET=600 python tests/e2e/run_all.py --quick
       - if: always()
