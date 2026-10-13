@@ -417,9 +417,18 @@ function parseCharacter(raw) {
   charMemo.set(raw, c);
   return c;
 }
+// Didascalies des scripts (« (désignant Guethenoc) », « (à la cantonade) ») : jamais affichées.
+// Le texte original reste intact dans data.json ; seule la réplique dite est montrée, cherchée et partagée.
+function stripDid(t) {
+  if (!t || t.indexOf('(') < 0) return t;
+  return t.replace(/\s*\([^()]*\)\s*/g, ' ')
+    .replace(/\s+([,.…])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim() || t;
+}
 function parseQuote(item, i) {
   const c = parseCharacter(item.character || '');
-  return { i, quote: item.quote, name: c.name, livre: c.livre, episode: c.episode, title: c.title, film: c.film,
+  return { i, quote: stripDid(item.quote), name: c.name, livre: c.livre, episode: c.episode, title: c.title, film: c.film,
     inedit: item.inedit ? c.inedTxt : '', hide: !!item.hide,
     audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx };
 }
@@ -489,7 +498,7 @@ function loadFavorites() {
 }
 function saveFavorites() { return writeJSON('kaam_fav', favorites); }
 // même réplique : même texte et même personnage (nom corrigé par NAME_FIX pour les favoris anciens)
-function sameQuote(f, q) { return f.quote === q.quote && (NAME_FIX[f.name] || f.name) === q.name; }
+function sameQuote(f, q) { return stripDid(f.quote) === q.quote && (NAME_FIX[f.name] || f.name) === q.name; }   // favoris enregistrés avec didascalies compris
 function isFav(q) { return favorites.some(f => sameQuote(f, q)); }
 // faux si l'enregistrement a échoué (stockage plein ou refusé) : rien n'est changé en mémoire
 function toggleFav(q) {

@@ -25,7 +25,7 @@ export function loadApp({ data = true } = {}) {
   const t = ctx.__t;
   t.store = store;
   const fn = name => (...a) => t.get(name)(...a);
-  for (const n of ['titleCase', 'typo', 'highlight', 'searchHits', 'pool', 'stepQuote', 'nameCase', 'parseQuote', 'audioURL', 'videoURL',
+  for (const n of ['stripDid', 'sameQuote', 'titleCase', 'typo', 'highlight', 'searchHits', 'pool', 'stepQuote', 'nameCase', 'parseQuote', 'audioURL', 'videoURL',
                    'dailyQuestion', 'esc', 'fmtEp', 'loadFavorites', 'readJSON', 'writeJSON', 'isFav', 'toggleFav']) t[n] = fn(n);
   if (data) {
     const raw = JSON.parse(fs.readFileSync(path.join(APP, 'data.json'), 'utf8'));

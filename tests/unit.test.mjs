@@ -78,7 +78,7 @@ test('question du jour : déterministe, 4 choix dont la bonne réponse', () => {
   assert.equal(a.q.i, b.q.i); assert.equal(new Set(a.choices).size, 4); assert.ok(a.choices.includes(a.q.name));
 });
 test('parseQuote : index i stable, noms corrigés à la lecture', () => {
-  all.slice(0, 2000).forEach(q => assert.equal(t.raw[q.i].quote, q.quote));
+  all.slice(0, 2000).forEach(q => assert.equal(t.stripDid(t.raw[q.i].quote), q.quote));
   assert.ok(!all.some(q => q.name === 'LÉODAGANR' || q.name === 'PÈRE BIAISE'));
 });
 test('esc : tous les caractères dangereux', () => {
@@ -90,4 +90,14 @@ test('favoris : kaam_fav relu sans être réécrit', () => {
   t.loadFavorites();
   assert.ok(t.isFav(all[5]));
   assert.equal(t.store.get('kaam_fav'), JSON.stringify(favs));
+});
+
+test('didascalies : jamais affichées, favoris anciens toujours reconnus', () => {
+  assert.equal(t.stripDid('Sire ? (de nouveau) Sire !'), 'Sire ? Sire !');
+  assert.equal(t.stripDid('Mais non. (il lui embrasse la main) Je gueule mais…'), 'Mais non. Je gueule mais…');
+  assert.equal(t.stripDid('On a rien à dire (à la cantonade) quand on est con !'), 'On a rien à dire quand on est con !');
+  assert.equal(t.stripDid('Sans didascalie.'), 'Sans didascalie.');
+  assert.ok(!all.some(q => /\([^)]*\)/.test(q.quote)), 'une réplique affichée contient encore une didascalie');
+  const avec = all.find(q => t.raw[q.i].quote.includes('('));
+  assert.ok(t.sameQuote({ quote: t.raw[avec.i].quote, name: avec.name }, avec), 'favori enregistré avec didascalie non reconnu');
 });
