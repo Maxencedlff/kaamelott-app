@@ -1106,6 +1106,25 @@ def scenario_mini(w):
         return "lecteur grisé « Texte seul », même disposition"
     w.step("Réplique sans son : lecteur grisé « Texte seul »", s_text)
 
+    def s_contrast(rec):
+        # mode clair : texte blanc des boutons rouges, rouge du texte, gris tertiaire, onglet actif ≥ 4,5:1
+        pg = w.new_page(w.ctx(), {"kaam_verify": "1"}); w.goto(pg)
+        r = pg.evaluate("""() => { const cs = e => getComputedStyle(document.querySelector(e));
+          return [['OK', cs('#avis-ok').color, cs('#avis-ok').backgroundColor], ['Problème', cs('#avis-ko').color, cs('#avis-ko').backgroundColor],
+                  ['nom', cs('#btn-who').color, cs('body').backgroundColor], ['résumé', cs('.bar-sum').color, cs('body').backgroundColor],
+                  ['compteur', cs('.quote-counter').color, cs('body').backgroundColor], ['onglet actif', cs('.nav-btn.active').color, cs('.tabs').backgroundColor]]; }""")
+        pg.close()
+        import re as _re
+        def lum(c):
+            v = [int(x) / 255 for x in _re.findall(r"\d+", c)[:3]]
+            f = lambda x: x / 12.92 if x <= .04045 else ((x + .055) / 1.055) ** 2.4
+            return .2126 * f(v[0]) + .7152 * f(v[1]) + .0722 * f(v[2])
+        low = [(n, round((max(lum(a), lum(b)) + .05) / (min(lum(a), lum(b)) + .05), 2)) for n, a, b in r]
+        bad = [x for x in low if x[1] < 4.5]
+        if bad: raise RuntimeError(f"contraste < 4,5:1 : {bad}")
+        return "contrastes ≥ 4,5:1 : " + ", ".join(f"{n} {v}" for n, v in low)
+    w.step("Contrastes (clair) : boutons rouges, rouge du texte, gris", s_contrast)
+
 
 def worker_main(kind, base, out):
     from playwright.sync_api import sync_playwright

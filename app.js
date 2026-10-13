@@ -346,7 +346,7 @@ function tickScrub() {
   sc.classList.toggle('on', !!m && t > 0);
   const [a, , b] = sc.querySelectorAll('.times > span');
   if (sc.classList.contains('none')) { a.textContent = ''; b.textContent = ''; }
-  else { a.textContent = mmss(t); b.textContent = isFinite(d) && d > 0 ? '−' + mmss(Math.max(0, d - t)) : '–:––'; }
+  else { a.textContent = mmss(t); b.textContent = isFinite(d) && d > 0 ? '−' + mmss(Math.max(0, d - t)) : '--:--'; }
   const bd = sc.querySelector('.badge');
   if (bd) { const txt = failNote || bd.dataset.t || ''; bd.textContent = txt; bd.hidden = !txt; }
   if (m && !m.paused && !m.ended) scrubRaf = requestAnimationFrame(tickScrub);
@@ -888,7 +888,9 @@ function listenHTML(q, cls = 'tp') {
 function citationsHTML(q, m, dir) {
   const size = Math.round(Math.min(quoteSize(q.quote), innerWidth < 360 || innerHeight < 620 ? Q_MAX.videoSE : Q_MAX.video) * textScale());
   const L = livreDe(q);
-  const scene = q.video
+  const scene = q.video && m.inlineVideo
+    ? `<span class="tool nil" aria-hidden="true">${icon('film')}<span>Scène</span></span>`
+    : q.video
     ? `<button class="tool" id="btn-video">${icon('film')}<span>Scène</span></button>`
     : `<span class="tool nil">${icon('film')}<span>Pas de scène</span></span>`;
   return `
@@ -901,7 +903,7 @@ function citationsHTML(q, m, dir) {
         <blockquote class="quote" lang="fr"${m.inlineVideo ? ` style="font-size:${size}px"` : ''}>${quoteHTML(q.quote)}</blockquote>
         ${m.hint ? `<p class="quote-hint" aria-hidden="true">${m.hint}</p>` : ''}
       </div>
-      ${m.inlineVideo ? '' : `<div class="cote" aria-hidden="true"><span class="ini">${initial(q.name)}</span><span class="cl"><b>Kaamelott</b>${L ? ' · ' + esc(livreNom(L)) : ''}</span><span class="no">N° ${m.no}</span></div>`}
+      ${m.inlineVideo ? '' : `<div class="cote" aria-hidden="true"><span class="ini">${initial(q.name)}</span><span class="cl"><b>Kaamelott</b>${L ? ' · ' + esc(livreNom(L)) : ''}</span></div>`}
     </div>
     <div class="meta">
       <div class="who-b"><button class="who" id="btn-who" aria-label="${esc(nameCase(q.name))}, voir la fiche du personnage">${esc(nameCase(q.name))}</button>
@@ -985,7 +987,12 @@ function fitOverflow(card) {
 }
 // Taille du texte calculée sur la place réelle (puis recalculée une fois les polices chargées)
 function fitCard(card, q, inlineVideo) {
-  if (!inlineVideo) {
+  if (inlineVideo) {
+    const qt = card.querySelector('.quote'), qb = card.querySelector('.qblock');
+    let fs = parseFloat(qt.style.fontSize) || 22;
+    const min = Math.round(17 * textScale());
+    while (fs > min && qt.offsetHeight > qb.clientHeight + 1) { fs--; qt.style.fontSize = fs + 'px'; }
+  } else {
     const go = () => fitQuote(card, card.querySelector('.quote'), card.querySelector('.qblock'), q);
     go();
     if (firstRender && document.fonts?.ready) document.fonts.ready.then(() => {
@@ -1058,7 +1065,7 @@ function openProblem(q) {
   const ctx = [nameCase(q.name), q.film ? 'Film' : q.inedit ? q.inedit.replace(/ :.*/, '') : [q.livre && `Livre ${q.livre}`, q.episode && `Épisode ${q.episode}`].filter(Boolean).join(' · ')].filter(Boolean).join(' · ');
   const sheet = openSheet(`
     <div class="grab" aria-hidden="true"></div>
-    <div class="sh-nav"><button class="l" id="avis-cancel">Annuler</button><h2 id="sh-title">Problème</h2><span></span></div>
+    <div class="sh-nav"><button class="l" id="avis-cancel">Annuler</button><h2 id="sh-title">Problème</h2><button class="r" id="avis-send2" disabled>Envoyer</button></div>
     <p class="gf ctr">${esc(ctx)}</p>
     ${PB_LISTS.filter(([k]) => has(k)).map(([, lab, rows]) => `<p class="gh">${lab}</p><div class="g">${rows.map(([id, l]) =>
       `<button class="gr" data-pb="${id}" role="checkbox" aria-checked="false"><span class="k">${l}</span>${icon('check', 'ck')}</button>`).join('')}</div>`).join('')}
@@ -1067,7 +1074,8 @@ function openProblem(q) {
     <div class="sh-foot"><button class="pill wide" id="avis-send" disabled>Signaler et passer</button><p class="sh-help" id="avis-help">Cochez au moins une case, ou écrivez une précision.</p></div>`);
   const picked = new Set();
   const send = sheet.querySelector('#avis-send'), note = sheet.querySelector('#avis-note');
-  const upd = () => { send.disabled = !picked.size && !note.value.trim(); sheet.querySelector('#avis-help').hidden = !send.disabled; };
+  const send2 = sheet.querySelector('#avis-send2');
+  const upd = () => { send.disabled = send2.disabled = !picked.size && !note.value.trim(); sheet.querySelector('#avis-help').hidden = !send.disabled; };
   sheet.querySelectorAll('[data-pb]').forEach(b => b.addEventListener('click', () => {
     const id = b.dataset.pb;
     if (picked.has(id)) picked.delete(id); else picked.add(id);
@@ -1077,7 +1085,8 @@ function openProblem(q) {
   note.addEventListener('input', () => { upd(); note.style.height = 'auto'; note.style.height = Math.min(Math.max(note.scrollHeight, 88), 120) + 'px'; });
   note.addEventListener('focus', () => setTimeout(() => note.scrollIntoView({ block: 'center' }), 300));
   sheet.querySelector('#avis-cancel').addEventListener('click', closeSheet);
-  send.addEventListener('click', () => { closeSheet(); recordAvis(q, false, [...picked], note.value.trim()); });
+  const go = () => { closeSheet(); recordAvis(q, false, [...picked], note.value.trim()); };
+  send.addEventListener('click', go); send2.addEventListener('click', go);
 }
 function recordAvis(q, ok, problemes, note) {
   if (avisFaits[q.i]) return;                   // jamais deux avis pour la même réplique
@@ -1132,7 +1141,7 @@ function renderVerifyDone() {
   const total = allQuotes.reduce((n, q) => n + ((q.audio || q.video) && inSrc(q, source) ? 1 : 0), 0);
   const vals = Object.values(avisFaits);
   document.getElementById('main-content').innerHTML = `
-    <button class="bar verify" id="btn-settings"><span class="bar-sum">Vérification${SEP}Terminé</span>${icon('chev', 'chev')}</button>
+    <button class="bar verify" id="btn-settings"><span class="bar-sum">Terminé</span>${icon('chev', 'chev')}</button>
     <div class="scroll"><div class="fin"><div class="ok-i">${icon('check')}</div><h1>Tout est vérifié.</h1>
       <p>${nf(total)} sur ${nf(total)}, sur ce téléphone. Merci.</p>
       <dl class="grp"><div><dt>Validés</dt><dd>${nf(vals.filter(v => v !== 2).length)}</dd></div><div><dt>Signalés</dt><dd>${nf(vals.filter(v => v === 2).length)}</dd></div><div><dt>En attente d’envoi</dt><dd>${nf(avisFile.length)}</dd></div></dl>
@@ -1398,6 +1407,33 @@ function quizAnswer(btn, replay, ctx) {
   stage.scrollTop = 0; fade();
   quizNavAfter(daily);
 }
+// Quiz : jamais de texte ni de scène coupés. Avant la réponse, le corps de la question descend jusqu'à ce qu'elle tienne ;
+// après, la scène prend la hauteur disponible (16:9 entier, centrée), la question se lit dessous en faisant défiler.
+function fitQuiz(stage) {
+  if (!stage?.isConnected) return;
+  const qt = stage.querySelector('.quiz-q .quote');
+  const fr = stage.querySelector('.q-scene .frame');
+  if (fr) {
+    fr.style.width = ''; fr.style.margin = ''; stage.classList.remove('tight', 'tight2');
+    if (stage.scrollHeight <= stage.clientHeight + 1) return;           // tout tient : rien à faire
+    // la question (déjà lue) passe sur une ligne avec l'épisode ; la scène prend le reste, entière
+    stage.classList.add('tight');
+    // très petit écran : seule l'épisode reste sous la scène
+    if (stage.clientHeight < 200) stage.classList.add('tight2');
+    const sc = fr.closest('.scene'), card = stage.querySelector('.qcard'), vd = document.getElementById('quiz-verdict');
+    const csC = getComputedStyle(card);
+    const room = stage.clientHeight - (vd && !vd.hidden ? vd.offsetHeight + 8 : 0) - parseFloat(csC.paddingTop) - parseFloat(csC.paddingBottom)
+      - (parseFloat(getComputedStyle(sc).marginTop) || 0) - (parseFloat(getComputedStyle(sc).marginBottom) || 0)
+      - stage.querySelector('.quiz-q').offsetHeight - 8;
+    const w = fr.clientWidth;
+    if (w * 9 / 16 > room && room > 40) { fr.style.width = Math.floor(room * 16 / 9) + 'px'; fr.style.margin = '0 auto'; }
+    return;
+  }
+  if (!qt) return;
+  let fs = parseFloat(qt.style.fontSize) || 24;
+  const min = Math.round(17 * textScale());
+  while (fs > min && stage.scrollHeight > stage.clientHeight + 1) { fs--; qt.style.fontSize = fs + 'px'; }
+}
 function renderQuiz(daily = false) {
   if (!quizState) initQuiz();
   stopVideos();
@@ -1415,6 +1451,9 @@ function renderQuiz(daily = false) {
   const short = innerHeight < 620;
   const fs = Math.round(Math.min(quoteSize(q.quote), short ? Q_MAX.quizSE : Q_MAX.quiz) * textScale());
   const done = dailyState();
+  // quatre couleurs différentes : une couleur déjà prise passe à la suivante libre de la palette
+  const qcol = [];
+  choices.forEach(c => { let col = colorOf(c), k = PAL.indexOf(col); while (qcol.includes(col)) { k = (k + 1) % PAL.length; col = PAL[k]; } qcol.push(col); });
   const hist = readJSON('kaam_qdj_hist', {});
   const daysOk = Object.values(hist).filter(Boolean).length;
   main.innerHTML = `
@@ -1438,15 +1477,15 @@ function renderQuiz(daily = false) {
       </div>
     </div>
     <div class="choices" role="group" aria-label="Qui a dit ça ?">
-      ${choices.map(c => `<button class="choice" data-choice="${esc(c)}"><span class="l" style="--c:${colorOf(c)}" aria-hidden="true">${initial(c)}</span><span class="n">${esc(nameCase(c))}</span><span class="v"></span></button>`).join('')}
+      ${choices.map((c, k) => `<button class="choice" data-choice="${esc(c)}"><span class="l" style="--c:${qcol[k]}" aria-hidden="true">${initial(c)}</span><span class="n">${esc(nameCase(c))}</span><span class="v"></span></button>`).join('')}
     </div>
     ${daily
       ? `<div class="nav one" id="quiz-nav"><button class="pill gray" id="quiz-free">Revenir au quiz libre</button></div>`
       : `<div class="nav two" id="quiz-nav"><button class="pill gray" id="quiz-daily">${icon('cal')}<span>${done ? `Du jour · ${done.ok ? 'juste' : 'faux'}` : 'Question du jour'}</span></button><button class="pill gray" id="quiz-next">Passer</button></div>`}`;
 
   const stage = document.getElementById('quiz-stage');
-  const fade = () => stage.classList.toggle('q-more', stage.scrollHeight - stage.scrollTop - stage.clientHeight > 4);
-  stage.addEventListener('scroll', fade, { passive: true });
+  // la question entière dans la zone (corps réduit jusqu'à 17 px) ; après la réponse, la scène entière en tête
+  const fade = () => fitQuiz(stage);
   fade();
   document.getElementById('quiz-next')?.addEventListener('click', () => renderQuiz());
   document.getElementById('quiz-daily')?.addEventListener('click', () => renderQuiz(true));
@@ -1657,7 +1696,7 @@ function closeOverlay() {
 function epLabel(q) {
   if (q.film) return 'Film';
   if (q.inedit) return coteEp(q);
-  return [q.livre ? `Livre ${q.livre}` : '', q.episode ? `ép. ${q.episode}` : ''].filter(Boolean).join(' · ');
+  return [q.livre ? `Livre\u00a0${q.livre}` : '', q.episode ? `ép.\u00a0${q.episode}` : ''].filter(Boolean).join(' · ');
 }
 const livreDe = q => q.film ? 'Film' : q.inedit ? 'Inédits' : q.livre || '';
 const LIVRES = ['I', 'II', 'III', 'IV', 'V', 'VI', 'Film', 'Inédits'];

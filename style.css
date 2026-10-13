@@ -15,11 +15,12 @@
 :root {
   color-scheme: light dark;
   --f: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Inter, system-ui, "Segoe UI", Roboto, sans-serif;
-  --accent: #fa243c;            /* la seule couleur d'action, celle de Musique */
-  --accent-t: #e0102b;          /* même rouge, un ton plus dense pour le petit texte (4,6:1 sur blanc) */
+  --accent: #fa243c;            /* la seule couleur d'action, celle de Musique (pictogrammes, onglet actif) */
+  --accent-t: #d4102a;          /* même rouge, plus dense pour le texte : 5,4:1 sur blanc, 4,8:1 sur gris */
+  --accent-bg: #e0102b;         /* fond des boutons rouges : texte blanc à 4,9:1 */
   --ink: #1d1d1f;
   --ink2: #6e6e73;
-  --ink3: #86868b;
+  --ink3: #727277;              /* tertiaire, encore lisible (4,7:1) */
   --bg: #ffffff;
   --bg2: #f5f5f7;               /* sections, cartes grises */
   --fill: #f2f2f7;              /* boutons gris, champs */
@@ -43,7 +44,7 @@
 /* ---------- Jetons : sombre (teintes d'iOS) ---------- */
 @media (prefers-color-scheme: dark) {
   :root {
-    --accent: #fa2d48; --accent-t: #ff4d63;
+    --accent: #fa2d48; --accent-t: #ff4d63; --accent-bg: #e0102b;
     --ink: #f5f5f7; --ink2: #98989d; --ink3: #8e8e93;
     --bg: #000000; --bg2: #1c1c1e; --fill: #1c1c1e; --fill2: #3a3a3c;
     --line: rgba(84, 84, 88, .6); --bar: #161618; --sheet: #1c1c1e; --cell: #2c2c2e; --seg-on: #636366;
@@ -96,7 +97,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 /* ---------- Boutons ---------- */
 .pill {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 50px; padding: 0 22px; border-radius: 980px;
-  background: var(--accent); color: #fff; font-size: 17px; font-weight: 600; letter-spacing: -.41px; text-align: center;
+  background: var(--accent-bg); color: #fff; font-size: 17px; font-weight: 600; letter-spacing: -.41px; text-align: center;
 }
 .pill svg { width: 18px; height: 18px; }
 .pill.gray { background: var(--fill); color: var(--accent-t); }
@@ -111,7 +112,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .bar { flex: none; display: inline-flex; align-items: center; gap: 3px; align-self: flex-start; max-width: calc(100% - 2 * var(--pad)); margin: 0 var(--pad); min-height: 30px; font-size: 15px; line-height: 20px; color: var(--ink2); letter-spacing: -.24px; }
 .bar-sum { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .bar-sum .bar-k { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.bar-sum .sep { margin: 0 5px; color: var(--ink3); }
+.bar-sum .sep { margin: 0 5px; color: inherit; }
 .bar .chev { width: 13px; height: 13px; color: var(--ink3); }
 .bar.verify { color: var(--accent-t); font-weight: 600; }
 .bar.verify .sep { color: inherit; }
@@ -134,7 +135,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .cote b { font-weight: 600; color: #fff; }
 .cote .no { margin-left: auto; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, .6); }
 /* en mode Vidéo : la scène prend la place de la pochette, la réplique devient le titre */
-.stage.plain { margin-top: 12px; }
+.stage.plain { margin-top: 12px; min-height: 84px; }   /* la réplique ne cède jamais toute sa place à la scène */
 .stage.plain .quote { color: var(--ink); }
 .swap-in { animation: swap .3s cubic-bezier(.2, .8, .2, 1); }
 .swap-in.back { animation-name: swapb; }
@@ -191,7 +192,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .tools { flex: none; display: grid; grid-template-columns: repeat(3, 1fr); margin: 0 var(--pad) 4px; }
 .tool { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 0 4px; color: var(--ink2); font-size: 11px; line-height: 13px; letter-spacing: .06px; text-align: center; }
 .tool svg { width: 24px; height: 24px; }
-.tool.nil { color: var(--ink3); opacity: .55; }
+.tool.nil { color: var(--ink3); opacity: .7; }
 .tool.said { color: var(--ok); }
 .stage-foot { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; margin: 0 var(--pad); }
 .stage-foot:not(.vf) { justify-content: center; min-height: 22px; margin-bottom: 4px; }
@@ -205,7 +206,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .vrow .tp.playing svg { margin-left: 0; }
 .vrow .tp.nil { color: var(--fill2); }
 .vrow .ok, .vrow .ko { min-height: 52px; border-radius: 980px; display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 16px; font-weight: 600; letter-spacing: -.32px; white-space: nowrap; padding: 0 12px; }
-.vrow .ok { flex: 1.45; background: var(--accent); color: #fff; }
+.vrow .ok { flex: 1.45; background: var(--accent-bg); color: #fff; }
 .vrow .ok svg { width: 20px; height: 20px; }
 .vrow .ok span { overflow: hidden; text-overflow: ellipsis; }
 .vrow .ko { flex: 1; background: var(--fill); color: var(--accent-t); }
@@ -230,7 +231,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .leg .st { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 980px; background: rgba(0, 0, 0, .6); color: #fff; font-size: 13px; line-height: 17px; letter-spacing: -.08px; font-variant-numeric: tabular-nums; }
 .leg .st:empty { display: none; }
 .leg .st i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-.leg .st.red { background: var(--accent); }
+.leg .st.red { background: var(--accent-bg); }
 .leg .st.red i { background: #fff; }
 /* sur l'écran Répliques, la barre de lecture dit déjà le temps : la pastille ne garde que les états utiles */
 #qvideo-slot[data-s="playing"] .leg, #qvideo-slot .prog { display: none; }
@@ -249,8 +250,8 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .tabs { grid-row: 4; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding-bottom: var(--sb); background: var(--bar); box-shadow: 0 -.5px 0 var(--line); position: relative; z-index: 6; }
 .nav-btn { height: var(--tab); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; padding-top: 6px; color: #8e8e93; font-size: 10px; line-height: 12px; font-weight: 500; letter-spacing: .1px; text-align: center; white-space: nowrap; }
 .nav-btn svg { width: 27px; height: 27px; }
-.nav-btn.active { color: var(--accent); }
-.nav-btn[aria-disabled="true"] { color: var(--ink3); opacity: .55; pointer-events: none; }
+.nav-btn.active { color: var(--accent-t); }
+.nav-btn[aria-disabled="true"] { color: var(--ink3); pointer-events: none; }
 .nav-btn.active[aria-disabled="true"] { color: var(--accent); }
 
 /* ---------- Champs, contrôles segmentés ---------- */
@@ -316,13 +317,15 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .score b em { font-style: normal; color: var(--ink3); font-weight: 500; font-size: 16px; }
 .score .rec span { color: var(--accent-t); font-weight: 600; }
 #quiz-stage { padding: 0 var(--pad) 8px; margin-top: 12px; }
-#quiz-stage.q-more { -webkit-mask-image: linear-gradient(#000 calc(100% - 28px), transparent); mask-image: linear-gradient(#000 calc(100% - 28px), transparent); }
 .verdict { margin: 0 0 10px; font-size: 28px; line-height: 32px; font-weight: 700; letter-spacing: .36px; }
 .verdict span { display: block; margin-top: 2px; font-size: 15px; line-height: 20px; font-weight: 400; color: var(--ink2); letter-spacing: -.24px; }
 .qcard { border-radius: 22px; background: var(--qcard); color: #f5f5f7; padding: 20px 20px 20px; }
 .q-scene:empty { display: none; }
 .q-scene .scene { margin: -8px -8px 14px; }
 .q-scene .frame { border-radius: 14px; }
+#quiz-stage.tight .quiz-q .quote { font-size: 17px !important; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#quiz-stage.tight2 .quiz-q .quote { display: none; }
+#quiz-stage.tight .quiz-q .src { margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ask { margin-bottom: 8px; font-size: 15px; font-weight: 600; color: #ff6b7d; letter-spacing: -.24px; }
 .quiz-q .quote { color: #f5f5f7; line-height: 1.2; }
 .quiz-q .src { margin-top: 10px; font-size: 13px; line-height: 18px; color: #a1a1a6; }
@@ -335,8 +338,9 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .choice .v svg { width: 16px; height: 16px; }
 .choice.right .v { background: var(--ok); color: #fff; }
 .choice.right .n { font-weight: 600; }
-.choice.wrong .v { background: var(--accent); color: #fff; }
-.choice.dim { opacity: .4; }
+.choice.wrong .v { background: var(--accent-bg); color: #fff; }
+.choice.dim .n { color: var(--ink2); }
+.choice.dim .l { filter: grayscale(1); }
 .choice:not([aria-disabled="true"]):active { background: var(--fill); }
 .nav { flex: none; display: flex; gap: 12px; margin: 8px var(--pad) 10px; }
 .nav .pill { flex: 1; min-height: 48px; padding: 0 12px; }
@@ -389,7 +393,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .fiche-h h1 { position: relative; font-size: 40px; line-height: 44px; font-weight: 700; letter-spacing: -.02em; padding-right: 72px; overflow-wrap: break-word; }
 .fiche-h h1.long { font-size: 30px; line-height: 35px; }
 .fiche-h .part { position: relative; margin-top: 6px; font-size: 15px; line-height: 20px; color: rgba(255, 255, 255, .85); letter-spacing: -.24px; padding-right: 72px; }
-.fiche-h .play { position: absolute; right: var(--pad); bottom: 20px; width: 56px; height: 56px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; }
+.fiche-h .play { position: absolute; right: var(--pad); bottom: 20px; width: 56px; height: 56px; border-radius: 50%; background: var(--accent-bg); color: #fff; display: grid; place-items: center; }
 .fiche-h .play svg { width: 24px; height: 24px; }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); margin: 18px var(--pad) 0; }
 .stats > div { padding: 0 10px; border-left: .5px solid var(--line); min-width: 0; }
@@ -422,7 +426,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .ent-m b { font-weight: 400; }
 .ent-m b::after { content: " · "; }
 .ent-a { order: 3; display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 4px; }
-.ent-a .cell { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; font-size: 13px; font-weight: 500; color: var(--accent-t); letter-spacing: -.08px; }
+.ent-a .cell { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; font-size: 13px; font-weight: 500; color: var(--ink2); letter-spacing: -.08px; }
 .ent-a .cell svg { width: 17px; height: 17px; }
 .ent-a .cell.sh .t { white-space: nowrap; }
 .ent-a .cell.said { color: var(--ok); }
@@ -442,7 +446,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .ent.off .ent-q, .ent.off .ent-m { opacity: .4; text-decoration: line-through; text-decoration-thickness: 1px; }
 .ent-a.undo { align-items: center; gap: 12px; }
 .ent-a.undo .lab { font-size: 13px; color: var(--ink2); }
-.ent-a.undo .un { font-weight: 600; }
+.ent-a.undo .un { font-weight: 600; color: var(--accent-t); }
 .ent-q:active { opacity: .6; }
 
 /* ---------- Chercher ---------- */
@@ -474,7 +478,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 .rail.indet i { width: 30%; animation: load 1.1s ease-in-out infinite; }
 .boot .m { display: flex; gap: 12px; font-size: 12px; color: var(--ink3); font-variant-numeric: tabular-nums; min-height: 16px; }
 .fin { padding: 8px var(--pad) 0; }
-.fin .ok-i { width: 72px; height: 72px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; margin: 28px 0 18px; }
+.fin .ok-i { width: 72px; height: 72px; border-radius: 50%; background: var(--accent-bg); color: #fff; display: grid; place-items: center; margin: 28px 0 18px; }
 .fin .ok-i svg { width: 38px; height: 38px; }
 .fin h1 { font-size: 34px; line-height: 41px; font-weight: 700; letter-spacing: .37px; }
 .fin p { margin-top: 6px; color: var(--ink2); }
@@ -485,7 +489,7 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
 
 /* ---------- Écrans courts (iPhone SE, 568 px) ---------- */
 @media (max-height: 720px) {
-  .verify ~ .scene .frame, .q-scene .frame { aspect-ratio: 16 / 8; }
+  #qvideo-slot .frame { aspect-ratio: 2 / 1; }
   .choice { min-height: 50px; }
   .choice .l { width: 36px; height: 36px; font-size: 16px; }
   .choice + .choice::before { left: 70px; }
@@ -513,8 +517,8 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
   .vrow .tp { width: 46px; }
   .vfoot, .vfoot .stage-foot { min-height: 38px; }
   .scene { margin-top: 6px; }
-  .verify ~ .scene .frame { aspect-ratio: 16 / 7; }
-  .q-scene .frame { aspect-ratio: 16 / 7; }
+  #qvideo-slot .frame { aspect-ratio: 16 / 7; }
+  .stage.plain { min-height: 66px; }
   .qcard { padding: 14px 16px 16px; border-radius: 18px; }
   .q-scene .scene { margin: -4px -4px 10px; }
   .q-scene .scene:not([data-s="error"]):not([data-s="muted"]) .leg { display: none; }
@@ -525,6 +529,14 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
   .nav { margin: 6px var(--pad) 8px; }
   .nav .pill { min-height: 44px; }
   .fiche-h { min-height: calc(var(--st) + 200px); }
+}
+/* Safari avec la barre d'adresse agrandie, SE dans Safari : la scène s'élargit encore, la place va à la réplique */
+@media (max-height: 560px) {
+  #qvideo-slot .frame { aspect-ratio: 2.6 / 1; }
+  #qvideo-slot .prog { display: block; }
+  #qvideo-slot ~ .scrub, #qvideo-slot ~ .meta .src { display: none; }
+  .bar { min-height: 26px; }
+  .stage.plain { min-height: 56px; }
 }
 @media (max-width: 359px) {
   :root { --pad: 16px; }
