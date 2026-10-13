@@ -517,10 +517,10 @@ mark { background: none; color: var(--accent-t); font-weight: 600; }
   .q-scene .frame { aspect-ratio: 16 / 7; }
   .qcard { padding: 14px 16px 16px; border-radius: 18px; }
   .q-scene .scene { margin: -4px -4px 10px; }
-  .q-scene .scene[data-s="playing"] .leg { display: none; }
+  .q-scene .scene:not([data-s="error"]):not([data-s="muted"]) .leg { display: none; }
   #quiz-stage { margin-top: 8px; }
-  .verdict { font-size: 22px; line-height: 26px; margin-bottom: 6px; }
-  .verdict span { font-size: 13px; line-height: 17px; }
+  .verdict { font-size: 20px; line-height: 24px; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .verdict span { display: inline; margin-left: 6px; font-size: 15px; }
   .choice { min-height: 46px; }
   .nav { margin: 6px var(--pad) 8px; }
   .nav .pill { min-height: 44px; }
