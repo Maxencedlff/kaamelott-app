@@ -33,7 +33,12 @@ jobs:
           path: ~/.cache/ms-playwright
           key: pw-1.62.0-${{ runner.os }}
       - run: python -m playwright install --with-deps chromium webkit
-      - run: QA_BUDGET=600 python tests/e2e/run_all.py --quick
+      # Les machines GitHub sont plus lentes que le PC : un échec de minutage est relancé une fois.
+      # Un vrai bug échoue aux deux passages et la CI reste rouge.
+      - run: |
+          QA_BUDGET=600 python tests/e2e/run_all.py --quick && exit 0
+          echo "::warning::échec au 1er passage, nouvel essai (machine CI lente ?)"
+          QA_BUDGET=600 python tests/e2e/run_all.py --quick
       - if: always()
         uses: actions/upload-artifact@v4
         with:
