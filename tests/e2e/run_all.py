@@ -627,6 +627,9 @@ def check_compact(w, pg, rec, fname):
     try: pg.wait_for_function("() => document.getElementById('main-header').classList.contains('compact')", timeout=3000)
     except Exception: pass
     pg.wait_for_timeout(450)    # fin du fondu (0,2 s)
+    try:                        # machine chargée (CI) : le fondu peut durer plus longtemps
+        pg.wait_for_function("() => +getComputedStyle(document.getElementById('mast-ct')).opacity >= .99", timeout=4000)
+    except Exception: pass
     r = pg.evaluate("""() => { const m = document.getElementById('main-header'), ct = document.getElementById('mast-ct'), cs = getComputedStyle(ct),
         bf = getComputedStyle(m, '::before'), big = getComputedStyle(document.querySelector('#mast-sub'));
         const st = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--st')) || 0;
