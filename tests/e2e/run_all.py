@@ -669,7 +669,10 @@ def check_compact(w, pg, rec, fname):
 
 # Invariant après chaque navigation : la réplique affichée respecte TOUS les filtres, et le pool aussi
 INV = """p => { const K = __kaam, A = K.allQuotes, q = A[K.quoteIdx], P = K.pool();
-  const ok = x => (!p.kaam_sel || JSON.parse(p.kaam_sel).includes(x.part))
+  // sélection effective : une ancienne sélection complète (sans kaam_sel_v2) inclut aussi les pilotes et Dies Iræ
+  const S = p.kaam_sel ? [...K.sel] : null, S0 = p.kaam_sel ? JSON.parse(p.kaam_sel).filter(x => /^(L[1-6]|film|in[123]|dies|pil)$/.test(x)) : [];
+  if (S && !S0.every(x => S.includes(x))) return { q: false, pool: false, inPool: false, card: false, idx: K.quoteIdx, sel: S };
+  const ok = x => (!S || S.includes(x.part))
     && (p.kaam_verify === '1' || p.kaam_video_only !== '1' || !!x.video)
     && (p.kaam_verify === '1' || p.kaam_video_only === '1' || p.kaam_audio_only !== '1' || !!x.audio)
     && (p.kaam_verify !== '1' || !!(x.audio || x.video));
@@ -1714,6 +1717,7 @@ def scenario_pilotes(w):
                 if not ok:
                     # Dies Iræ ajouté en second : exigé dès que data.json en contient
                     if nom.startswith("dies") and not any("court métrage" in it.get("character", "") for it in data_json()): continue
+                    if nom == "dies-autre": continue          # aucune réplique de Dies Iræ retenue n'a un autre interprète
                     raise RuntimeError(f"aucune réplique « {nom} » dans data.json")
                 pg.wait_for_timeout(300)
                 r = pg.evaluate("""() => { const c = document.getElementById('quote-card'), m = document.querySelector('.meta');
