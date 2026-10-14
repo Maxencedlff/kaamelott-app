@@ -10,8 +10,10 @@ APP = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path
 OLD = sys.argv[2] if len(sys.argv) > 2 else None
 d = json.load(open(os.path.join(APP, "data.json"), encoding="utf-8"))
 err, warn = [], []
-ALLOWED = {"character": str, "quote": str, "audio": str, "video": str, "v": int, "vv": int, "approx": int, "inedit": int, "tourne": int, "hide": (int, bool)}
-SRC = re.compile(r"livre\s+(I{1,3}V?|VI?)|épisode\s+\d+|premier volet|inédit", re.I)
+ALLOWED = {"character": str, "quote": str, "audio": str, "video": str, "v": int, "vv": int, "approx": int, "inedit": int, "tourne": int, "hide": (int, bool),
+           "transcription": int, "acteur": str}   # transcription / acteur : pilotes et Dies Iræ (14/10/2026)
+SRC = re.compile(r"livre\s+(I{1,3}V?|VI?)|épisode\s+\d+|premier volet|inédit|court métrage", re.I)
+TRANS = re.compile(r",\s*(pilote, épisode ([1-9]|10): \S.*|Dies Iræ \(court métrage, 2003\))$")
 if not isinstance(d, list) or not d:
     print("data.json : pas une liste non vide"); sys.exit(1)
 for i, it in enumerate(d):
@@ -27,6 +29,9 @@ for i, it in enumerate(d):
     if it.get("video") and not re.fullmatch(r"[0-9a-f]{12}", it["video"]): err.append(f"{i}: clé vidéo {it['video']!r}")
     if it.get("inedit") and not it.get("tourne") and (a or it.get("video")): err.append(f"{i}: inédit jamais tourné avec média")
     if it.get("tourne") and not it.get("inedit"): err.append(f"{i}: tourne sans inedit")
+    if it.get("transcription") and not TRANS.search(c): err.append(f"{i}: transcription hors pilotes / Dies Iræ {c[:60]!r}")
+    if TRANS.search(c) and not it.get("transcription"): err.append(f"{i}: pilote ou Dies Iræ sans « transcription »")
+    if "acteur" in it and (not it.get("transcription") or not it["acteur"].strip()): err.append(f"{i}: acteur sans transcription, ou vide")
     if (it.get("v") and not a) or (it.get("vv") and not it.get("video")) or (it.get("approx") and not a): err.append(f"{i}: v/vv/approx sans média")
 for k in ("audio", "video"):
     dup = [x for x, n in Counter(it.get(k) for it in d if it.get(k)).items() if n > 1]

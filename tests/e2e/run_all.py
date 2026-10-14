@@ -1317,7 +1317,7 @@ def scenario_selection(w, se=False):
                 if not pg.evaluate("!!__kaam.allQuotes[__kaam.quoteIdx].film"): raise RuntimeError("réplique hors film")
             pg.close()
             pg = page({"kaam_source": "serie"}); lab2 = pg.inner_text("#mast-scope"); pg.close()
-            if lab.strip() != "Film" or lab2.strip() != "Toute la série · Inédits": raise RuntimeError(f"libellés {lab!r} {lab2!r}")
+            if lab.strip() != "Film" or lab2.strip() != "Toute la série · Inédits · Dies Iræ · Pilotes": raise RuntimeError(f"libellés {lab!r} {lab2!r}")
             return f"film → « {lab.strip()} », série → « {lab2.strip()} »"
         w.step("Migration : ancienne source", s_migr)
 
@@ -1699,6 +1699,88 @@ def scenario_portraits(w):
     w.step("Portraits absents : repli sur la silhouette grise", s_fallback)
 
 
+def scenario_pilotes(w):
+    """Pilotes et Dies Iræ (répliques transcrites) : mention « Transcription » à côté de la source, « Interprété par »
+    quand l'interprète n'est pas celui de la série, et jamais la photo du personnage de la série sur cette réplique."""
+    def check(rec, scheme):
+        opts, kw = (w.ctx(), w._ctx_kw)[1]
+        ctx = w.make_context(w.browser, {**opts, "color_scheme": scheme}, **kw)
+        try:
+            pg = w.new_page(ctx, {"kaam_audio_only": "1"}); w.goto(pg)
+            res = {}
+            for nom, js in [("autre", "q => q.part === 'pil' && q.acteur && q.audio"), ("meme", "q => q.part === 'pil' && !q.acteur && q.audio && q.name === 'PERCEVAL'"),
+                            ("dies", "q => q.part === 'dies' && q.audio && !q.acteur"), ("dies-autre", "q => q.part === 'dies' && q.acteur && q.audio")]:
+                ok = pg.evaluate(f"() => {{ const A = __kaam.allQuotes, i = A.findIndex({js}); if (i < 0) return false; __kaam.quoteIdx = i; __kaam.render(); return A[i].acteur || true; }}")
+                if not ok:
+                    # Dies Iræ ajouté en second : exigé dès que data.json en contient
+                    if nom.startswith("dies") and not any("court métrage" in it.get("character", "") for it in data_json()): continue
+                    raise RuntimeError(f"aucune réplique « {nom} » dans data.json")
+                pg.wait_for_timeout(300)
+                r = pg.evaluate("""() => { const c = document.getElementById('quote-card'), m = document.querySelector('.meta');
+                    return { photo: c.classList.contains('photo'), img: !!c.querySelector('.bgimg img'), src: m.querySelector('.src')?.textContent || '',
+                             by: m.querySelector('.src.by')?.textContent || '', vis: !!m.querySelector('.trs')?.getClientRects().length }; }""")
+                res[nom] = r
+                if "Transcription" not in r["src"] or not r["vis"]: raise RuntimeError(f"{nom} : « Transcription » absente ou cachée : {r}")
+                if nom in ("autre", "dies-autre"):
+                    if r["by"] != f"Interprété par {ok}": raise RuntimeError(f"{nom} : ligne interprète {r['by']!r} (attendu {ok!r})")
+                    if r["photo"] or r["img"]: raise RuntimeError(f"{nom} : photo du personnage de la série sur un autre interprète")
+                elif r["by"]: raise RuntimeError(f"{nom} : « Interprété par » sur un acteur de la série : {r['by']!r}")
+                w.shot(pg, rec, f"70-pilote-{nom}-{scheme}")
+            pg.close()
+            return " ; ".join(f"{k} : {v['src']}{' / ' + v['by'] if v['by'] else ''}" for k, v in res.items())
+        finally:
+            ctx.close()
+    w.step("Pilotes et Dies Iræ : Transcription, Interprété par, sans photo de la série (clair)", lambda rec: check(rec, "light"))
+    w.step("Pilotes et Dies Iræ : Transcription, Interprété par, sans photo de la série (sombre)", lambda rec: check(rec, "dark"))
+
+    def migration(rec):
+        ctx = w.new_ctx()
+        try:
+            old = json.dumps(["L1", "L2", "L3", "L4", "L5", "L6", "film", "in1", "in2", "in3"])
+            pg = w.new_page(ctx, extra_ls={"kaam_sel": old}); w.goto(pg)
+            a = pg.evaluate("() => ({ sel: __kaam.sel ? [...__kaam.sel] : null, all: document.getElementById('mast-sub')?.textContent || '' })")
+            pg.close()
+            pg = w.new_page(ctx, extra_ls={"kaam_sel": old, "kaam_sel_v2": "1"}); w.goto(pg)
+            b = pg.evaluate("() => (__kaam.sel ? [...__kaam.sel] : null)")
+            pg.close()
+        finally:
+            ctx.close()
+        if a["sel"] is not None and ("pil" not in a["sel"] or "dies" not in a["sel"]): raise RuntimeError(f"ancienne sélection complète : pilotes absents {a}")
+        if b is not None and ("pil" in b or "dies" in b): raise RuntimeError(f"choix récent sans pilotes non respecté : {b}")
+        return f"ancienne sélection complète → {a['sel']} ; choix récent respecté → {b}"
+    w.step("Sélection enregistrée avant les pilotes : reste « Tout Kaamelott »", migration)
+
+    def retour(rec):
+        """« Retour » : la carte ne doit jamais prendre la classe .back (barre des fiches, position absolue en haut) ;
+        après 3 « Autre » puis 3 « Retour », la réplique ne chevauche pas l'en-tête (bug du 14/10)."""
+        CHK = """() => { const c = document.getElementById('quote-card'), q = c && c.querySelector('.quote'), m = document.querySelector('.mast');
+            if (!c || !q || !m) return { err: 'carte ou en-tête absent' };
+            const a = q.getBoundingClientRect(), b = m.getBoundingClientRect();
+            return { pos: getComputedStyle(c).position, cls: c.className, over: Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) }; }"""
+        res = []
+        for nom, prefs, media_default in [("vidéo (défaut)", {}, False), ("texte avec photo", {"kaam_media": "text"}, True)]:
+            ctx = w.new_ctx()
+            try:
+                pg = w.new_page(ctx, prefs, media_default=media_default); w.goto(pg)
+                if nom.startswith("texte"):
+                    pg.evaluate("() => { const A = __kaam.allQuotes; __kaam.quoteIdx = A.findIndex(q => q.name === 'ARTHUR' && q.quote.length > 40); __kaam.render(); }")
+                for k in range(3): pg.click("#btn-next"); pg.wait_for_timeout(450)
+                for k in range(3):
+                    pg.click("#btn-prev"); pg.wait_for_timeout(120)
+                    r = pg.evaluate(CHK)
+                    if r.get("err") or r["pos"] == "absolute" or " back" in f" {r['cls']} ".replace("swap-back", "") or r["over"] > 1:
+                        w.shot(pg, rec, f"71-retour-{k}")
+                        raise RuntimeError(f"{nom}, retour {k + 1} : {r}")
+                    pg.wait_for_timeout(350)
+                w.shot(pg, rec, f"71-retour-{'video' if media_default is False else 'texte'}")
+                res.append(nom)
+                pg.close()
+            finally:
+                ctx.close()
+        return "3 « Autre » puis 3 « Retour » sans chevauchement de l'en-tête : " + ", ".join(res)
+    w.step("Retour : la carte reste en place (pas de classe .back), aucun chevauchement de l'en-tête", retour)
+
+
 def worker_main(kind, base, out):
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
@@ -1731,7 +1813,7 @@ def worker_main(kind, base, out):
             elif kind == "mini-lecteur":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_mini(w)
             elif kind == "portraits":
-                w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_portraits(w)
+                w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_portraits(w); scenario_pilotes(w)
             elif kind == "selection":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_selection(w); scenario_lancement(w)
             elif kind == "selection-se":

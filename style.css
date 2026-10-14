@@ -170,7 +170,7 @@ mark { background: none; color: inherit; font-weight: 700; }
 .stage.plain { margin-top: 12px; min-height: 84px; }   /* la réplique ne cède jamais toute sa place à la scène */
 .stage.plain .quote { color: var(--ink); }
 .swap-in { animation: swap .3s cubic-bezier(.2, .8, .2, 1); }
-.swap-in.back { animation-name: swapb; }
+.swap-in.swap-back { animation-name: swapb; }   /* jamais « .back » : c'est la barre des fiches (absolue, en haut) */
 .swap-in.rand { animation-name: fade; animation-duration: .22s; }
 @keyframes swap { from { opacity: 0; transform: translateX(24px) scale(.985); } }
 @keyframes swapb { from { opacity: 0; transform: translateX(-24px) scale(.985); } }
@@ -182,6 +182,8 @@ mark { background: none; color: inherit; font-weight: 700; }
 .who { display: block; max-width: 100%; font-size: 21px; line-height: 26px; font-weight: 600; letter-spacing: .3px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .src { font-size: 15px; line-height: 20px; color: var(--ink2); letter-spacing: -.24px; }
 .meta .src { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* pilotes, Dies Iræ : « Interprété par … » sur une ligne, sous la source (même gris : le rouge reste aux actions) */
+.meta .src.by { -webkit-line-clamp: 1; }
 .ic { position: relative; width: 44px; height: 44px; margin-right: -8px; border-radius: 50%; background: none; color: var(--accent); display: grid; place-items: center; flex: none; }
 .ic svg { width: 24px; height: 24px; }
 .ic .lab, .ic .t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

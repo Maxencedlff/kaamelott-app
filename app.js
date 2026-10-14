@@ -13,7 +13,9 @@ let favorites = [];       // favoris enregistrés (kaam_fav), tels qu'enregistr�
 // Sélection : parties cochées (kaam_sel), dans l'ordre canonique ; [] possible (écran « Aucune sélection »).
 // Affichage (kaam_media) : video (défaut de qui n'a jamais choisi), audio ou text.
 // Les anciennes clés (kaam_source, kaam_video_only, kaam_audio_only) sont lues pour la migration, jamais réécrites ni effacées.
-const PART_IDS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'film', 'in1', 'in2', 'in3'];
+// Ajoutés le 14/10/2026 : 'dies' (court métrage Dies Iræ, 2003) et 'pil' (épisodes pilotes), répliques transcrites.
+const PART_IDS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'film', 'in1', 'in2', 'in3', 'dies', 'pil'];
+const PART_IDS_V1 = PART_IDS.slice(0, 10);   // parties connues avant l'ajout des pilotes
 const ROM = ['I', 'II', 'III', 'IV', 'V', 'VI'];
 let sel = loadSel();
 let media = loadMedia();
@@ -55,7 +57,15 @@ function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q
 function loadSel() {
   try {
     const raw = localStorage.getItem('kaam_sel');
-    if (raw != null) { const v = JSON.parse(raw); if (Array.isArray(v)) return PART_IDS.filter(id => v.includes(id)); }
+    if (raw != null) {
+      const v = JSON.parse(raw);
+      if (Array.isArray(v)) {
+        // sélection enregistrée avant l'arrivée des pilotes avec tout coché : « Tout Kaamelott » le reste
+        // (kaam_sel_v2 est écrit avec la sélection : un choix fait depuis, pilotes décochés compris, est respecté)
+        if (readStr('kaam_sel_v2', '') !== '1' && PART_IDS_V1.every(id => v.includes(id))) return PART_IDS.slice();
+        return PART_IDS.filter(id => v.includes(id));
+      }
+    }
   } catch {}
   const old = readStr('kaam_source', 'all');            // migration : « Série » = tout sauf le film (inédits compris)
   return old === 'film' ? ['film'] : old === 'serie' ? PART_IDS.filter(id => id !== 'film') : PART_IDS.slice();
@@ -71,11 +81,13 @@ function loadMedia() {
   return 'video';                                       // jamais choisi : Vidéo par défaut
 }
 // rien n'est écrit au chargement : la nouvelle clé ne l'est qu'au premier changement fait par l'utilisateur
-function saveSel() { writeJSON('kaam_sel', sel); }
+function saveSel() { writeJSON('kaam_sel', sel); writeStr('kaam_sel_v2', '1'); }
 function setMediaPref(m) { media = m; videoOnly = m === 'video'; audioOnly = m === 'audio'; writeStr('kaam_media', m); poolCache.clear(); }
 // Partie d'une réplique (calculée une fois, dans parseQuote)
 function partOf(c, inedit) {
   if (c.film) return 'film';
+  if (c.dies) return 'dies';
+  if (c.pil) return 'pil';
   if (inedit) { const m = /Inédit (\d)/.exec(c.inedTxt); return m ? 'in' + m[1] : null; }
   const k = ROM.indexOf(c.livre); return k >= 0 ? 'L' + (k + 1) : null;
 }
@@ -107,6 +119,8 @@ function scopeLabel(s = sel) {
   if (has('film')) out.push('Film');
   if (ined.length === 3) out.push('Inédits');
   else if (ined.length) out.push((ined.length > 1 ? 'Inédits ' : 'Inédit ') + ined.join(' et '));
+  if (has('dies')) out.push('Dies Iræ');
+  if (has('pil')) out.push('Pilotes');
   return out.join(' · ');
 }
 const poolCache = new Map();
@@ -428,7 +442,7 @@ function renderMini() {
   if (el.dataset.k === k) return;
   el.dataset.k = k;
   const sub = [nameCase(q.name), epLabel(q)].filter(Boolean).join(' · ');
-  el.innerHTML = `<button class="mini-open" id="mini-open" aria-label="Ouvrir la réplique : ${esc(nameCase(q.name))}">${faceHTML(q.name, 's', 'tile')}
+  el.innerHTML = `<button class="mini-open" id="mini-open" aria-label="Ouvrir la réplique : ${esc(nameCase(q.name))}">${faceHTML(faceName(q), 's', 'tile')}
       <span class="tx"><b>${typo(q.quote)}</b><span>${esc(sub)}</span></span></button>
     <button class="mb" id="mini-play" aria-label="${on ? 'Pause' : 'Lecture'}">${icon(on ? 'pause' : 'play')}</button>
     <button class="mb mx" id="mini-close" aria-label="Fermer le lecteur">${icon('x')}</button>`;
@@ -475,6 +489,10 @@ function parseCharacter(raw) {
     episode: epM ? epM[1] : '',
     title: epM && epM[2] ? epM[2].trim() : '',
     film: /premier volet/i.test(rest) ? 'Kaamelott : Premier Volet' : '',
+    // « PERCEVAL, pilote, épisode 4: La Romance de Perceval » ; « ARTHUR, Dies Iræ (court métrage, 2003) »
+    // (le court métrage de 2003, pas l'épisode 9 du Livre VI qui porte le même nom)
+    pil: /^\s*pilote\b/i.test(rest),
+    dies: /court métrage/i.test(rest),
     inedTxt: inedM ? `Inédit ${inedM[1]} : ${titleCase(inedM[2].trim())}` : 'Inédit',   // « Le Spectre D'Uther » → « d'Uther »
   };
   charMemo.set(raw, c);
@@ -493,7 +511,9 @@ function parseQuote(item, i) {
   const c = parseCharacter(item.character || '');
   return { i, quote: stripDid(item.quote), name: c.name, livre: c.livre, episode: c.episode, title: c.title, film: c.film,
     inedit: item.inedit ? c.inedTxt : '', tourne: !!item.tourne, hide: !!item.hide, part: partOf(c, item.inedit),
-    audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx };
+    audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx,
+    // pilotes et Dies Iræ : pas de script, répliques transcrites à l'écoute ; acteur = interprète s'il n'est pas celui de la série
+    tr: !!item.transcription, acteur: item.acteur || '' };
 }
 
 const DATA_BYTES = 7000000;   // taille approximative de data.json (le serveur l'envoie compressé, sans longueur)
@@ -633,7 +653,7 @@ async function loadPerso() {
     if (j && typeof j === 'object' && !Array.isArray(j)) PERSO = j;
   } catch {}
 }
-const livreNom = L => /^[IV]+$/.test(L) ? `Livre ${L}` : L === 'Film' ? 'Premier Volet' : L;
+const livreNom = L => /^[IV]+$/.test(L) ? `Livre ${L}` : L === 'Film' ? 'Premier Volet' : L === 'Pilotes' ? 'Épisodes pilotes' : L;
 
 // ===== MISE EN FORME =====
 const nf = n => n.toLocaleString('fr-FR');
@@ -641,6 +661,8 @@ const plural = (n, w, ws = w + 's') => `${nf(n)} ${n > 1 ? ws : w}`;   // « 1 r
 const SEP = '<span class="sep" aria-hidden="true">·</span>';          // séparateur des lignes de résumé
 function fmtEp(q) {
   if (q.film) return `Film · ${q.film}`;
+  if (q.part === 'dies') return 'Dies Iræ · court métrage, 2003';
+  if (q.part === 'pil') return `Pilote ${q.episode}${q.title ? ` : ${q.title}` : ''}`;
   if (q.inedit) return q.tourne ? q.inedit : `${q.inedit} · jamais tourné`;
   if (!q.livre && !q.episode) return '';
   let s = '';
@@ -652,6 +674,8 @@ function fmtEp(q) {
 // Cote courte d'une réplique (« L.IV · É.58 », « Film », « Inédit 3 ») : la référence du registre, en Plex Mono
 function coteEp(q) {
   if (q.film) return 'Film';
+  if (q.part === 'dies') return 'Dies Iræ';
+  if (q.part === 'pil') return `Pilote ${q.episode}`;
   if (q.inedit) { const m = /Inédit (\d)/.exec(q.inedit); return m ? `Inédit ${m[1]}` : 'Inédit'; }
   if (!q.livre && !q.episode) return '';
   return [q.livre ? `L.${q.livre}` : '', q.episode ? `É.${q.episode}` : ''].filter(Boolean).join(' · ');
@@ -694,7 +718,13 @@ function typoHTML(h) {
 function typo(s) { return typoHTML(esc(s == null ? '' : String(s).replace(/'/g, '’'))); }   // apostrophe courbe avant l'échappement
 function quoteHTML(s) { return `<span class="g" aria-hidden="true">«</span> ${typo(s)} <span class="g" aria-hidden="true">»</span>`; }
 // Source d'une réplique, prête à insérer en HTML (typographie appliquée)
-function epHTML(q) { return typo(fmtEp(q)); }
+// « Transcription » : réplique relevée à l'écoute (pilotes, Dies Iræ), pas tirée d'un script
+function epHTML(q) { return typo(fmtEp(q)) + (q.tr ? ' · <span class="trs">Transcription</span>' : ''); }
+// Interprète d'un rôle tenu par un autre acteur que dans la série (« Interprété par Vanessa Guedj »)
+const byLine = q => q.acteur ? `Interprété par ${q.acteur}` : '';
+const byHTML = q => q.acteur ? `<p class="src by">${esc(byLine(q))}</p>` : '';
+// photo du personnage : jamais celle de l'acteur de la série sur une réplique jouée par un autre
+const faceName = q => q.acteur ? '' : q.name;
 // Nom en casse de titre pour les listes (« PÈRE BLAISE » → « Père Blaise », « LA DAME DU LAC » → « La Dame du Lac »)
 const PETITS = new Set(['de', 'du', 'des', 'et', 'le', 'la', 'les', 'aux', 'au', 'à', 'en', 'sur']);
 function nameCase(n) {
@@ -764,12 +794,14 @@ function getCharList() {                       // calculée une fois par chargem
   charCache = { src: allQuotes, list: Object.entries(map).sort((a, b) => b[1] - a[1]) };
   return charCache.list;
 }
+// Clé d'épisode : film, inédit, Dies Iræ et pilote comptés comme un épisode chacun
+const epKeyOf = q => q.film ? 'film' : q.inedit ? 'x' + q.inedit : q.part === 'dies' ? 'dies' : q.part === 'pil' ? 'p' + q.episode : `${q.livre}|${q.episode}`;
 // Nombre d'épisodes où parle chaque personnage (film et inédits comptés comme un épisode chacun), calculé une fois
 let epCache = null;
 function charEpisodes() {
   if (epCache && epCache.src === allQuotes) return epCache.m;
   const sets = {};
-  allQuotes.forEach(q => { (sets[q.name] = sets[q.name] || new Set()).add(q.film ? 'film' : q.inedit ? 'x' + q.inedit : `${q.livre}|${q.episode}`); });
+  allQuotes.forEach(q => { (sets[q.name] = sets[q.name] || new Set()).add(epKeyOf(q)); });
   const m = {};
   for (const n in sets) m[n] = sets[n].size;
   epCache = { src: allQuotes, m };
@@ -973,10 +1005,12 @@ function bindSettings(sheet) {
 
 // ===== FEUILLE « SÉLECTION » : cases rondes, nombres selon l'affichage, total en direct =====
 // Ouverte depuis le sélecteur sous le titre (from = 'scope') ou depuis Réglages › Épisodes (from = 'settings' : « ‹ Réglages »).
-const PART_GROUPS = [['Série', ['L1', 'L2', 'L3', 'L4', 'L5', 'L6']], ['Film', ['film']], ['Inédits', ['in1', 'in2', 'in3']]];
+const PART_GROUPS = [['Série', ['L1', 'L2', 'L3', 'L4', 'L5', 'L6']], ['Film', ['film']], ['Inédits', ['in1', 'in2', 'in3']], ['Avant la série', ['dies', 'pil']]];
 function partLabel(id) {
   if (id[0] === 'L') return `Livre ${ROM[+id[1] - 1]}`;
   if (id === 'film') return 'Kaamelott : Premier Volet';
+  if (id === 'dies') return 'Dies Iræ, court métrage';
+  if (id === 'pil') return 'Épisodes pilotes';
   const q = allQuotes.find(x => x.part === id);
   return q ? q.inedit : `Inédit ${id[2]}`;
 }
@@ -1124,7 +1158,7 @@ function refreshSetBtn() {
 // Gabarit de l'écran Répliques : la carte (photo floutée du personnage, ou fond neutre), le nom, la lecture, la navigation
 function citationsHTML(q, m, dir) {
   const size = Math.round(Math.min(quoteSize(q.quote), innerWidth < 360 || innerHeight < 620 ? Q_MAX.videoSE : Q_MAX.video) * textScale());
-  const photo = !m.inlineVideo && persoURL(q.name, 's');
+  const photo = !m.inlineVideo && !q.acteur && persoURL(q.name, 's');
   const playable = !!(q.audio || m.inlineVideo);
   // outils en glyphes seuls : Au hasard (dans l'ordre seulement : en aléatoire, « Autre » fait déjà ce travail), Scène (si elle existe), Partager
   const tools = [
@@ -1136,7 +1170,7 @@ function citationsHTML(q, m, dir) {
   return `
     ${verifyMode ? `<button class="bar verify" id="btn-settings"><span class="bar-sum">${m.summary}</span>${icon('chev', 'chev')}</button>` : ''}
     ${m.inlineVideo ? sceneHTML(q, 'qvideo-slot') : ''}
-    <div class="stage ${m.inlineVideo ? 'plain' : 'art'}${photo ? ' photo' : ''} swap-in${dir < 0 ? ' back' : dir > 0 ? '' : ' rand'}" id="quote-card">
+    <div class="stage ${m.inlineVideo ? 'plain' : 'art'}${photo ? ' photo' : ''} swap-in${dir < 0 ? ' swap-back' : dir > 0 ? '' : ' rand'}" id="quote-card">
       ${photo ? `<span class="bgimg img" aria-hidden="true"><img src="${photo}" alt="" decoding="async"></span>` : ''}
       <div class="qblock">
         <blockquote class="quote" lang="fr"${m.inlineVideo ? ` style="font-size:${size}px"` : ''}>${quoteHTML(q.quote)}</blockquote>
@@ -1144,7 +1178,7 @@ function citationsHTML(q, m, dir) {
     </div>
     <div class="meta">
       <div class="who-b"><button class="who" id="btn-who" aria-label="${esc(nameCase(q.name))}, voir la fiche du personnage">${esc(nameCase(q.name))}</button>
-        ${fmtEp(q) ? `<p class="src">${epHTML(q)}</p>` : ''}</div>
+        ${fmtEp(q) ? `<p class="src">${epHTML(q)}</p>` : ''}${byHTML(q)}</div>
       ${verifyMode ? `${q.video ? `<button class="ic" id="btn-video" aria-label="Scène en grand">${icon('film')}</button>` : ''}<button class="ic" id="btn-share" aria-label="Partager">${icon('share')}<span class="t lab">Partager</span></button>` : ''}
       ${favCellHTML(q, m.fav)}
     </div>
@@ -1333,7 +1367,7 @@ const PB_LISTS = [
 ];
 function openProblem(q) {
   const has = k => k === 'texte' || !!q[k];
-  const ctx = [nameCase(q.name), q.film ? 'Film' : q.inedit ? q.inedit.replace(/ :.*/, '') : [q.livre && `Livre ${q.livre}`, q.episode && `Épisode ${q.episode}`].filter(Boolean).join(' · ')].filter(Boolean).join(' · ');
+  const ctx = [nameCase(q.name), q.film ? 'Film' : q.inedit ? q.inedit.replace(/ :.*/, '') : q.tr ? coteEp(q) : [q.livre && `Livre ${q.livre}`, q.episode && `Épisode ${q.episode}`].filter(Boolean).join(' · ')].filter(Boolean).join(' · ');
   const sheet = openSheet(`
     <div class="grab" aria-hidden="true"></div>
     <div class="sh-nav"><button class="l" id="avis-cancel">Annuler</button><h2 id="sh-title">Problème</h2><button class="r" id="avis-send2" disabled>Envoyer</button></div>
@@ -1369,7 +1403,7 @@ function recordAvis(q, ok, problemes, note) {
   // « Validé · Annuler » ou « Signalé · Annuler » pendant 5 s : un pouce qui glisse ne valide rien pour de bon
   const ts = avisFile[avisFile.length - 1].ts;
   lastAvis = { i: q.i, idx: quoteIdx, ts, t: Date.now(), ok,
-    label: `${nameCase(q.name)}${q.film ? ', film' : q.livre ? `, Livre ${q.livre}${q.episode ? `, ép. ${q.episode}` : ''}` : ''}` };
+    label: `${nameCase(q.name)}${q.film ? ', film' : q.tr ? `, ${coteEp(q)}` : q.livre ? `, Livre ${q.livre}${q.episode ? `, ép. ${q.episode}` : ''}` : ''}` };
   rebuildVerify();
   if (!verifyIdx.length) { renderCitations(); return; }
   if (inOrder) stepQuote(1); else randomQuote();
@@ -1536,7 +1570,8 @@ async function shareText(text, btn) {
   shareTimers.set(btn, { html, timer: setTimeout(() => { lab.innerHTML = html; btn.classList.remove('said'); shareTimers.delete(btn); }, 1500) });
 }
 function shareQuote(q, btn) {
-  return shareText(`« ${q.quote} »\n${nameCase(q.name)}${fmtEp(q) ? ', ' + fmtEp(q) : ''}\n\nKaamelott`, btn);
+  const extra = [q.acteur && `interprété par ${q.acteur}`, q.tr && 'transcription'].filter(Boolean).join(', ');
+  return shareText(`« ${q.quote} »\n${nameCase(q.name)}${fmtEp(q) ? ', ' + fmtEp(q) : ''}${extra ? ` (${extra})` : ''}\n\nKaamelott`, btn);
 }
 
 // ===== QUIZ =====
@@ -1554,7 +1589,7 @@ function initQuiz() {
 const QUIZ_RECENT = [];                      // 80 dernières questions : pas de redite
 let quizByChar = null;
 function quizAccepts(q) {
-  if (!TOP_CHARS.includes(q.name) || !q.video || q.quote.length < 25) return false;
+  if (q.tr || !TOP_CHARS.includes(q.name) || !q.video || q.quote.length < 25) return false;   // transcriptions : hors quiz
   return !fold(q.quote).includes(fold(q.name.replace(/^(LE|PÈRE) /, '')));
 }
 function buildQuizPool() {
@@ -1797,7 +1832,8 @@ function renderQuiz(daily = false) {
 // Une ligne = la réplique (toucher : elle s'ouvre) et un bouton « … » (ou un toucher long sur la ligne) qui ouvre le menu :
 // Écouter, Voir la scène (seulement s'ils existent), Favori, Partager. Rien n'est répété sous chaque ligne.
 function entHTML(q, k, opts = {}) {
-  const meta = opts.fiche ? '' : `<div class="ent-m">${opts.name === false ? '' : `<b>${esc(nameCase(q.name))}</b>`}${epHTML(q)}</div>`;
+  const by = q.acteur ? `<span class="by">${esc(byLine(q))}</span>` : '';
+  const meta = opts.fiche ? (by ? `<div class="ent-m">${by}</div>` : '') : `<div class="ent-m">${opts.name === false ? '' : `<b>${esc(nameCase(q.name))}</b>`}${epHTML(q)}${by ? ` · ${by}` : ''}</div>`;
   const lost = opts.remove && !q.live;                   // favori dont la réplique n'existe plus telle quelle
   return `<div class="ent" data-k="${k}">
     ${lost ? `<div class="ent-m">${esc(nameCase(q.name))} · réplique modifiée depuis : retirez-la avec le bouton « … »</div>` : meta}
@@ -2031,19 +2067,20 @@ function closeOverlay() {
 // En-tête d'épisode de la fiche, en clair : « Livre IV · ép. 58 », « Film », « Inédit 3 »
 function epLabel(q) {
   if (q.film) return 'Film';
+  if (q.tr) return coteEp(q);
   if (q.inedit) return coteEp(q);
   return [q.livre ? `Livre\u00a0${q.livre}` : '', q.episode ? `ép.\u00a0${q.episode}` : ''].filter(Boolean).join(' · ');
 }
-const livreDe = q => q.film ? 'Film' : q.inedit ? 'Inédits' : q.livre || '';
-const LIVRES = ['I', 'II', 'III', 'IV', 'V', 'VI', 'Film', 'Inédits'];
+const livreDe = q => q.film ? 'Film' : q.inedit ? 'Inédits' : q.part === 'dies' ? 'Dies Iræ' : q.part === 'pil' ? 'Pilotes' : q.livre || '';
+const LIVRES = ['I', 'II', 'III', 'IV', 'V', 'VI', 'Film', 'Inédits', 'Dies Iræ', 'Pilotes'];
 function openPersonnage(name, restore) {
   stopVideos();
   setMast('Personnages');
   const quotes = allQuotes.filter(q => q.name === name);
-  const epKey = q => q.film ? 'film' : q.inedit ? 'x' + q.inedit : `${q.livre}|${q.episode}`;
+  const epKey = epKeyOf;
   const epCount = new Map();
   quotes.forEach(q => epCount.set(epKey(q), (epCount.get(epKey(q)) || 0) + 1));
-  const epTitre = q => q.film ? 'Premier volet' : q.inedit ? q.inedit.replace(/^Inédit \d\s*:\s*/, '') : titleCase(q.title || '');
+  const epTitre = q => q.film ? 'Premier volet' : q.inedit ? q.inedit.replace(/^Inédit \d\s*:\s*/, '') : q.part === 'dies' ? 'Dies Iræ' : titleCase(q.title || '');
   const byLivre = new Map();
   quotes.forEach(q => { const L = livreDe(q); if (L) byLivre.set(L, (byLivre.get(L) || 0) + 1); });
   const livres = LIVRES.filter(L => byLivre.has(L));
@@ -2307,7 +2344,7 @@ function showVideo(q) {
       <figure class="body">
         <blockquote class="quote" lang="fr" style="font-size:${Math.round(Math.min(quoteSize(q.quote), Q_MAX.scene) * textScale())}px">${quoteHTML(q.quote)}</blockquote>
         <div class="meta"><div class="who-b"><button class="who" id="m-who" aria-label="${esc(nameCase(q.name))}, voir la fiche du personnage">${esc(nameCase(q.name))}</button>
-          ${fmtEp(q) ? `<p class="src">${epHTML(q)}</p>` : ''}</div>
+          ${fmtEp(q) ? `<p class="src">${epHTML(q)}</p>` : ''}${byHTML(q)}</div>
           <button class="ic fav${isFav(q) ? ' on' : ''}" id="m-fav" aria-pressed="${isFav(q)}">${favFace(isFav(q))}</button></div>
       </figure>
       <div class="pills">

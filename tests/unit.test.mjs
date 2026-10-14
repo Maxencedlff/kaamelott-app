@@ -47,7 +47,8 @@ test('highlight : ligatures', () => {
   assert.equal(t.highlight('Mon cœur bat', 'cœur'), 'Mon <mark>cœur</mark> bat');
   assert.equal(t.highlight('Ma sœur, mon cœur !', 'soeur'), `Ma <mark>sœur</mark>, mon cœur${NNBSP}!`);
 });
-const PARTS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'film', 'in1', 'in2', 'in3'];
+const PARTS = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'film', 'in1', 'in2', 'in3', 'dies', 'pil'];
+const PARTS_V1 = PARTS.slice(0, 10);   // avant l'ajout des pilotes et de Dies Iræ (14/10/2026)
 const setSel = v => { t.set('sel', v); t.get('poolCache').clear(); t.set('quizSel', null); };
 const setMedia = m => { t.set('media', m); t.set('videoOnly', m === 'video'); t.set('audioOnly', m === 'audio'); t.get('poolCache').clear(); };
 test('pool : sélection et affichage respectés, [] si rien', () => {
@@ -81,7 +82,9 @@ test('scopeLabel : résumé de la sélection', () => {
   assert.equal(L(['L1', 'L3', 'L5']), 'Livres I, III et V');
   assert.equal(L(['L1', 'L2', 'L4', 'L5', 'L6']), 'Livres I, II et IV à VI');
   assert.equal(L(['L1', 'L2', 'L3', 'L4', 'L5', 'L6']), 'Toute la série');
-  assert.equal(L(PARTS.filter(p => p !== 'film')), 'Toute la série · Inédits');
+  assert.equal(L(PARTS.filter(p => p !== 'film')), 'Toute la série · Inédits · Dies Iræ · Pilotes');
+  assert.equal(L(PARTS_V1.filter(p => p !== 'film')), 'Toute la série · Inédits');
+  assert.equal(L(['L1', 'pil']), 'Livre I · Pilotes');
   assert.equal(L(['in1', 'in2']), 'Inédits 1 et 2');
   assert.equal(L(['L6', 'film', 'in3']), 'Livre VI · Film · Inédit 3');
   assert.equal(L([]), 'Aucune sélection');
@@ -104,6 +107,11 @@ test('migration kaam_source / kaam_video_only / kaam_audio_only → kaam_sel / k
     [{ kaam_media: 'text', kaam_video_only: '1' }, PARTS, 'text'],
     [{ kaam_sel: '["L9","L2"]' }, ['L2'], 'video'],
     [{ kaam_sel: 'pas du json', kaam_source: 'film' }, ['film'], 'video'],
+    // sélection enregistrée avant les pilotes, tout coché : « Tout Kaamelott » le reste
+    [{ kaam_sel: JSON.stringify(PARTS_V1) }, PARTS, 'video'],
+    // choix fait depuis (kaam_sel_v2) : pilotes et Dies Iræ décochés, respecté
+    [{ kaam_sel: JSON.stringify(PARTS_V1), kaam_sel_v2: '1' }, PARTS_V1, 'video'],
+    [{ kaam_sel: '["L1","L2"]' }, ['L1', 'L2'], 'video'],
   ];
   for (const [ls, s, m] of cases) {
     t.store.clear(); for (const k in ls) t.store.set(k, ls[k]);
@@ -191,4 +199,24 @@ test('inédits : « jamais tourné » seulement pour ceux qui n’ont pas été 
   if (tourne) assert.equal(t.fmtEp(tourne), tourne.inedit, 'inédit tourné affiché « Inédit N : Titre »');
   assert.ok(jamais && /· jamais tourné$/.test(t.fmtEp(jamais)), 'inédit jamais tourné sans sa mention');
   assert.ok(!all.some(q => q.inedit && !q.tourne && (q.audio || q.video)), 'inédit jamais tourné avec média');
+});
+
+test('pilotes et Dies Iræ : partie, source, transcription, interprète', () => {
+  const p = t.parseQuote({ character: 'GUENIÈVRE, pilote, épisode 1: Le Duel', quote: 'Vous mangez pas ?', transcription: 1, acteur: 'Vanessa Guedj' }, 99001);
+  assert.equal(p.part, 'pil'); assert.equal(p.episode, '1'); assert.equal(p.livre, '');
+  assert.ok(p.tr); assert.equal(p.acteur, 'Vanessa Guedj');
+  assert.equal(t.fmtEp(p), 'Pilote 1 : Le Duel');
+  assert.match(t.get('epHTML')(p), /Transcription/);
+  assert.equal(t.get('byLine')(p), 'Interprété par Vanessa Guedj');
+  assert.equal(t.get('faceName')(p), '', 'photo de la série sur un autre interprète');
+  assert.ok(!t.get('quizAccepts')(p), 'transcription dans le quiz');
+  const d = t.parseQuote({ character: 'ARTHUR, Dies Iræ (court métrage, 2003)', quote: 'Bon.', transcription: 1 }, 99002);
+  assert.equal(d.part, 'dies'); assert.equal(t.fmtEp(d), 'Dies Iræ · court métrage, 2003');
+  assert.equal(t.get('byLine')(d), ''); assert.equal(t.get('faceName')(d), 'ARTHUR');
+  // l'épisode 9 du Livre VI (même nom) reste au Livre VI
+  const l6 = t.parseQuote({ character: 'ARTHUR, livre VI, épisode 9: Dies Irae', quote: 'Bon.' }, 99003);
+  assert.equal(l6.part, 'L6'); assert.ok(!l6.tr);
+  // réplique de la série : rien de changé
+  const s1 = t.parseQuote({ character: 'PERCEVAL, livre I, tome 1, épisode 1: Heat', quote: 'C’est pas faux.' }, 99004);
+  assert.equal(s1.part, 'L1'); assert.equal(t.get('epHTML')(s1).includes('Transcription'), false);
 });
