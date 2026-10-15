@@ -106,6 +106,13 @@ mark { background: none; color: inherit; font-weight: 700; }
 .mast-sent { position: absolute; top: 0; left: 0; width: 1px; height: 8px; opacity: 0; pointer-events: none; }
 .mast-sub { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .mast-sub .mt { font-size: 34px; line-height: 41px; font-weight: 700; letter-spacing: .37px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mast-sub .mt { flex: 0 1 auto; }
+.mast-sub .off svg { display: none; width: 16px; height: 16px; }
+/* le titre ne tient pas à côté : la pastille se réduit à son pictogramme (libellé gardé pour VoiceOver) */
+.mast-sub.tight { gap: 6px; }
+.mast-sub.tight .off { display: grid; place-items: center; width: 26px; height: 22px; padding: 0; }
+.mast-sub.tight .off svg { display: block; }
+.mast-sub.tight .off .ot { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .mast-sub .off { flex: none; padding: 2px 9px; border-radius: 980px; background: var(--fill); color: var(--ink2); font-size: 13px; line-height: 18px; font-weight: 600; letter-spacing: -.08px; }
 .round { position: relative; width: 44px; height: 44px; margin-right: -10px; border-radius: 50%; background: none; color: var(--accent); display: grid; place-items: center; flex: none; }
 .round svg { width: 24px; height: 24px; }
@@ -225,7 +232,8 @@ mark { background: none; color: inherit; font-weight: 700; }
 .tool svg { width: 24px; height: 24px; }
 .tool .t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .tool.said { color: var(--ok); }
-.tool.said .t { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); width: auto; height: auto; clip-path: none; font-size: 11px; line-height: 13px; }
+/* confirmation à droite du pictogramme (Partager est toujours le dernier outil) : jamais sur la ligne du compteur dessous */
+.tool.said .t { position: absolute; top: 50%; left: 100%; transform: translateY(-50%); width: auto; height: auto; clip-path: none; font-size: 13px; line-height: 16px; }
 .stage-foot { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; margin: 0 var(--pad); }
 .stage-foot:not(.vf) { justify-content: center; min-height: 22px; margin-bottom: 4px; }
 .quote-counter { font-size: 13px; line-height: 17px; color: var(--ink3); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

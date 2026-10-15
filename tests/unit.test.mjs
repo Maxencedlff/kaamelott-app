@@ -12,6 +12,13 @@ test('titleCase : casse de phrase, chiffres romains, personnages', () => {
   assert.equal(t.titleCase('VOX POPULI III'), 'Vox populi III');
   assert.equal(t.titleCase('Guenièvre Et L’Orage'), 'Guenièvre et l’Orage');
 });
+test('titleCase : titres en capitales avec un ordinal (« 2e PARTIE ») remis en casse de phrase', () => {
+  assert.equal(t.titleCase('LA POÉTIQUE, 2e PARTIE'), 'La poétique, 2e partie');
+  assert.equal(t.titleCase('LA DISPUTE, 2e PARTIE'), 'La dispute, 2e partie');
+  assert.equal(t.titleCase('L’ASSEMBLÉE DES ROIS, 2e PARTIE'), 'L’assemblée des rois, 2e partie');
+  assert.equal(t.titleCase('LE 1er JOUR'), 'Le 1er jour');
+  assert.equal(t.titleCase('Guenièvre Et L’Orage'), 'Guenièvre et l’Orage');   // casse mixte : inchangé
+});
 test('titleCase : lieux et noms propres', () => {
   assert.equal(t.titleCase('LOTH ET LE GRAAL'), 'Loth et le Graal');
   assert.equal(t.titleCase('SÉFRIANE D’AQUITAINE'), 'Séfriane d’Aquitaine');

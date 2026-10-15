@@ -1785,6 +1785,213 @@ def scenario_pilotes(w):
     w.step("Retour : la carte reste en place (pas de classe .back), aucun chevauchement de l'en-tête", retour)
 
 
+def scenario_correctifs(w, tag=""):
+    """Correctifs du 14/10 (rapport QA iPhone + Android) : chaque étape échouait avant son correctif."""
+    def open_(prefs=None, extra=None, media_default=True):
+        ctx = w.new_ctx()
+        pg = w.new_page(ctx, prefs, extra, media_default=media_default); w.goto(pg)
+        return ctx, pg
+
+    CHK = """() => { const c = document.getElementById('quote-card'), q = c && c.querySelector('.quote'), m = document.querySelector('.mast');
+        const a = q.getBoundingClientRect(), b = m.getBoundingClientRect();
+        return { cls: c.className, pos: getComputedStyle(c).position, over: Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) }; }"""
+    def bad_back(r): return r["pos"] == "absolute" or "swap-back" not in r["cls"] or " back " in f" {r['cls']} " or r["over"] > 1
+
+    def s_prev_undo(rec):
+        out = []
+        ctx, pg = open_({"kaam_in_order": "1", "kaam_hint": "9"})
+        try:
+            for _ in range(2): pg.click("#btn-next"); pg.wait_for_timeout(300)
+            pg.click("#btn-prev"); pg.wait_for_timeout(80)
+            r = pg.evaluate(CHK)
+            if bad_back(r): w.shot(pg, rec, f"80-precedente{tag}"); raise RuntimeError(f"« Précédente » : {r}")
+            out.append("Précédente")
+        finally: ctx.close()
+        ctx, pg = open_({"kaam_verify": "1"})
+        try:
+            pg.wait_for_selector("#avis-ok"); pg.click("#avis-ok"); pg.wait_for_selector("#avis-undo")
+            pg.wait_for_timeout(300); pg.click("#avis-undo"); pg.wait_for_timeout(80)
+            r = pg.evaluate(CHK)
+            if bad_back(r): w.shot(pg, rec, f"80-annuler{tag}"); raise RuntimeError(f"« Annuler » (vérification) : {r}")
+            out.append("Annuler")
+        finally: ctx.close()
+        return "glissement swap-back, carte en place, en-tête jamais chevauché : " + ", ".join(out)
+    w.step("Précédente (dans l'ordre) et Annuler (vérification) : animation de retour sans classe .back", s_prev_undo)
+
+    def s_mini(rec):
+        ctx, pg = open_({"kaam_media": "audio", "kaam_hint": "9"})
+        try:
+            pg.evaluate("() => { const A = __kaam.allQuotes; __kaam.quoteIdx = A.findIndex(q => q.name === 'ARTHUR' && q.audio); __kaam.render(); }")
+            pg.click("#btn-who"); pg.wait_for_selector("#fiche-list .ent")
+            ok = pg.evaluate("""() => { const K = __kaam, cur = K.allQuotes[K.quoteIdx], qs = K.allQuotes.filter(q => q.name === cur.name);
+                for (const e of document.querySelectorAll('#fiche-list .ent')) { const q = qs[+e.dataset.k];
+                  if (q && q.audio && q.i !== cur.i) { e.querySelector('.ent-more').id = 'qa-more'; return true; } } return false; }""")
+            if not ok: raise RuntimeError("aucune autre réplique avec son dans la fiche")
+            pg.click("#qa-more"); pg.click("#sheet [data-m=audio]"); pg.wait_for_timeout(300)
+            pg.evaluate("__kaam.player.loop = true")
+            pg.click("#detail-back"); pg.wait_for_timeout(400)
+            r = pg.evaluate("() => ({ mini: !document.getElementById('mini').hidden, paused: __kaam.player.paused, src: !!__kaam.player.src })")
+            w.shot(pg, rec, f"81-mini-apres-fiche{tag}")
+            if not r["mini"] or not r["src"]: raise RuntimeError(f"son de la fiche sans commande après Retour : {r}")
+            # le son de la carte elle-même : pas de mini-lecteur (la carte le commande)
+            pg.click("#mini-close"); pg.wait_for_timeout(150)
+            pg.click("#btn-audio"); pg.wait_for_timeout(300)
+            own = pg.evaluate("!document.getElementById('mini').hidden")
+            if own: raise RuntimeError("mini-lecteur affiché pour le son de la carte elle-même")
+            return f"Retour vers Répliques : mini-lecteur visible ({'en lecture' if not r['paused'] else 'en pause'}) ; son de la carte : pas de mini-lecteur"
+        finally: ctx.close()
+    w.step("Son lancé depuis une fiche : le mini-lecteur reste après Retour", s_mini)
+
+    INFO = """() => { const c = document.getElementById('quote-card'), qb = c.querySelector('.qblock'), qt = c.querySelector('.quote');
+        const rc = c.getBoundingClientRect(), rq = qb.getBoundingClientRect();
+        return { fs: parseFloat(qt.style.fontSize || getComputedStyle(qt).fontSize), qh: Math.round(qb.clientHeight), more: !!c.querySelector('.more-h'),
+                 spill: rq.bottom > rc.bottom + 1 }; }"""
+    def stable(pg):
+        # mesure stable (deux lectures identiques à 250 ms d'écart) : la machine du banc peut être chargée
+        prev = None
+        pg.wait_for_timeout(400)
+        for _ in range(16):
+            pg.wait_for_timeout(250)
+            cur = pg.evaluate(INFO)
+            if cur == prev: return cur
+            prev = cur
+        return prev
+    def s_resize_one(media, sel):
+        def run(rec):
+            ctx, pg = open_({"kaam_media": media, "kaam_hint": "9"})
+            try:
+                vp = pg.viewport_size; W, H = vp["width"], vp["height"]
+                pg.evaluate(f"() => {{ const A = __kaam.allQuotes; __kaam.quoteIdx = A.findIndex({sel}); __kaam.render(); }}")
+                pg.evaluate("document.fonts.ready"); pg.wait_for_timeout(500)
+                # barre d'adresse d'Android qui apparaît puis disparaît ; puis rotation aller-retour
+                for vw, h in [(W, H - 56), (W, H), (H, W), (W, H)]:
+                    pg.set_viewport_size({"width": vw, "height": h})
+                    a = stable(pg)
+                    pg.evaluate("__kaam.render()")
+                    f = stable(pg)
+                    if a["spill"] or abs(a["fs"] - f["fs"]) > 1 or abs(a["qh"] - f["qh"]) > 3 or a["more"] != f["more"]:
+                        w.shot(pg, rec, f"82-resize-{media}{tag}")
+                        raise RuntimeError(f"{media}, {vw}x{h} : après changement {a} ≠ rendu neuf {f}")
+                return f"remesure identique à un rendu neuf après chaque changement de hauteur : {media} {f['fs']:.0f} px{' (Suite ↓)' if f['more'] else ''}"
+            finally: ctx.close()
+        return run
+    def s_resize_quiz(rec):
+        # quiz : rendu en paysage puis tourné en portrait, jamais coupé
+        ctx, pg = open_()
+        try:
+            vp = pg.viewport_size; W, H = vp["width"], vp["height"]
+            w.nav(pg, "quiz")
+            for dims in [(H, W), (W, H)]:
+                pg.set_viewport_size({"width": dims[0], "height": dims[1]}); pg.wait_for_timeout(600)
+                r = pg.evaluate(QUIZ_CUT)
+                if r["inner"] > 1 or (not r["qpage"] and r["cardBot"] > r["stBot"] + 1):
+                    w.shot(pg, rec, f"82-resize-quiz{tag}"); raise RuntimeError(f"quiz coupé après rotation {dims} : {r}")
+            w.shot(pg, rec, f"82-quiz-tourne{tag}")
+            return "quiz paysage → portrait entier"
+        finally: ctx.close()
+    w.step("Rotation / barre d'adresse : réplique longue (texte) remesurée", s_resize_one("text", "q => q.quote.length > 600 && q.quote.length < 900"))
+    w.step("Rotation / barre d'adresse : réplique moyenne (texte) remesurée", s_resize_one("text", "q => q.name === 'ARTHUR' && q.quote.length > 300 && q.quote.length < 380"))
+    w.step("Rotation / barre d'adresse : réplique avec vidéo remesurée", s_resize_one("video", "q => q.video && q.quote.length > 200 && q.quote.length < 300"))
+    w.step("Rotation : le quiz est remesuré", s_resize_quiz)
+
+    def s_fav(rec):
+        ctx, pg = open_({"kaam_hint": "9"})
+        try:
+            pg.evaluate("() => { const A = __kaam.allQuotes; __kaam.quoteIdx = A.findIndex(q => q.video && A.find(x => x.name === q.name) === q); __kaam.render(); }")
+            st = lambda: pg.get_attribute("#btn-fav", "aria-pressed") + "/" + str(pg.evaluate("document.getElementById('btn-fav').classList.contains('on')")).lower()
+            pg.click("#btn-video"); pg.wait_for_selector("#m-fav"); pg.click("#m-fav"); pg.wait_for_timeout(150)
+            pg.click("#detail-back"); pg.wait_for_timeout(250)
+            a = st()
+            pg.click("#btn-who"); pg.wait_for_selector("#fiche-list .ent")
+            pg.locator("#fiche-list .ent .ent-more").first.click(); pg.click("#sheet [data-m=fav]"); pg.wait_for_timeout(150)
+            pg.click("#detail-back"); pg.wait_for_timeout(250)
+            b = st()
+            w.shot(pg, rec, f"83-etoile{tag}")
+            if a != "true/true" or b != "false/false": raise RuntimeError(f"étoile de la carte : après la scène {a} (attendu true), après la fiche {b} (attendu false)")
+            return "étoile à jour après la scène en grand (ajout) et après le menu de la fiche (retrait)"
+        finally: ctx.close()
+    w.step("Favori changé dans la scène ou la fiche : étoile de la carte à jour", s_fav)
+
+    def s_counter(rec):
+        ctx, pg = open_({"kaam_in_order": "1", "kaam_hint": "9", "kaam_media": "video", "kaam_sel": '["film"]'}, media_default=False)
+        try:
+            out = {}
+            for nom, js in [("sans vidéo", "q => !q.video && q.part === 'film'"), ("hors sélection", "q => q.video && q.part === 'L1'")]:
+                pg.evaluate(f"() => {{ const A = __kaam.allQuotes; __kaam.quoteIdx = A.findIndex({js}); __kaam.render(); }}")
+                pg.wait_for_timeout(150)
+                out[nom] = pg.evaluate("document.querySelector('.quote-counter')?.textContent || ''")
+            w.shot(pg, rec, f"84-compteur{tag}")
+            if out != {"sans vidéo": "Sans vidéo", "hors sélection": "Hors sélection"}: raise RuntimeError(f"compteur : {out}")
+            return f"compteur : {out}"
+        finally: ctx.close()
+    w.step("Dans l'ordre : réplique hors parcours, jamais « 0 sur … »", s_counter)
+
+    def s_copie(rec):
+        ctx, pg = open_({"kaam_in_order": "1", "kaam_hint": "0"})
+        try:
+            pg.evaluate("() => { try { delete Navigator.prototype.share; } catch (e) {} navigator.share = undefined; }")
+            pg.click("#btn-share"); pg.wait_for_timeout(200)
+            r = pg.evaluate("""() => { const t = document.querySelector('#btn-share .t').getBoundingClientRect(), f = document.querySelector('.stage-foot').getBoundingClientRect();
+                return { txt: document.querySelector('#btn-share .t').textContent, over: Math.min(t.bottom, f.bottom) - Math.max(t.top, f.top), right: t.right, vw: innerWidth }; }""")
+            w.shot(pg, rec, f"85-copie{tag}")
+            if r["over"] > 0 or r["right"] > r["vw"]: raise RuntimeError(f"« {r['txt']} » chevauche la ligne du bas ou sort de l'écran : {r}")
+            return f"« {r['txt']} » à côté du pictogramme, sans chevaucher la ligne du bas"
+        finally: ctx.close()
+    w.step("Partager : « Copié » ne chevauche pas la ligne du bas", s_copie)
+
+    def s_hist(rec):
+        ctx, pg = open_({"kaam_hint": "9"})
+        try:
+            idx = lambda: pg.evaluate("__kaam.quoteIdx")
+            pg.click("#btn-next"); pg.wait_for_timeout(250); b = idx()
+            def order(v):
+                pg.click("#mast-set"); pg.click(f'[data-order="{v}"]'); pg.click("#sheet-close"); pg.wait_for_timeout(200)
+            order("seq")
+            for _ in range(3): pg.click("#btn-next"); pg.wait_for_timeout(200)
+            c = idx()
+            order("random")
+            pg.click("#btn-prev"); pg.wait_for_timeout(250); r1 = idx()
+            pg.click("#btn-next"); pg.wait_for_timeout(250); r2 = idx()
+            if r1 != b or r2 != c: raise RuntimeError(f"Retour → {r1} (attendu {b}), Autre → {r2} (attendu {c})")
+            return "Dans l'ordre puis Aléatoire : Retour ramène à la dernière vue en aléatoire, Autre revient à celle atteinte dans l'ordre"
+        finally: ctx.close()
+    w.step("Historique : Dans l'ordre puis Aléatoire, Retour cohérent", s_hist)
+
+    def s_offline(rec):
+        ctx, pg = open_({"kaam_hint": "9"})
+        try:
+            vp = pg.viewport_size
+            ctx.set_offline(True); pg.evaluate("dispatchEvent(new Event('offline'))"); pg.wait_for_timeout(200)
+            out = []
+            for W in (vp["width"], 300, 277):
+                pg.set_viewport_size({"width": W, "height": vp["height"]}); pg.wait_for_timeout(500)
+                r = pg.evaluate("""() => { const mt = document.querySelector('#mast-sub .mt'), off = document.querySelector('#mast-sub .off'), set = document.getElementById('mast-set');
+                    const o = off && off.getBoundingClientRect(), s = set.getBoundingClientRect();
+                    return { cut: mt.scrollWidth - mt.clientWidth, off: !!o && o.width > 0, sr: off ? off.textContent : '', hit: !!o && o.right > s.left + 10 && !set.hidden }; }""")
+                if r["cut"] > 1 or not r["off"] or "Hors ligne" not in r["sr"] or r["hit"]:
+                    w.shot(pg, rec, f"86-hors-ligne-{W}{tag}"); raise RuntimeError(f"{W} px : titre tronqué ou pastille absente : {r}")
+                out.append(str(W))
+            w.shot(pg, rec, f"86-hors-ligne-277{tag}")
+            ctx.set_offline(False)
+            return "grand titre entier à " + ", ".join(out) + " px, pastille « Hors ligne » (pictogramme seul si la place manque)"
+        finally: ctx.close()
+    w.step("Hors ligne : le grand titre n'est jamais tronqué par la pastille", s_offline)
+
+    def s_favs_vides(rec):
+        one = json.dumps(fav_objects()[:1], ensure_ascii=False)
+        ctx, pg = open_({"kaam_fav": one})
+        try:
+            w.nav(pg, "favoris")
+            before = pg.evaluate("[document.getElementById('fav-play').disabled, document.getElementById('fav-rand').disabled]")
+            pg.locator(".ent-more").first.click(); pg.click("#sheet [data-m=fav]"); pg.wait_for_selector(".ent.off")
+            after = pg.evaluate("[document.getElementById('fav-play').disabled, document.getElementById('fav-rand').disabled]")
+            w.shot(pg, rec, f"87-favoris-vides{tag}")
+            if before != [False, False] or after != [True, True]: raise RuntimeError(f"Lecture / Aléatoire désactivés : avant {before}, après {after}")
+            return "dernier favori retiré : Lecture et Aléatoire grisés"
+        finally: ctx.close()
+    w.step("Favoris : Lecture et Aléatoire grisés quand il n'y a plus rien à lire", s_favs_vides)
+
+
 def worker_main(kind, base, out):
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
@@ -1825,6 +2032,8 @@ def worker_main(kind, base, out):
             elif kind == "selection-sombre":
                 d = dict(p.devices["iPhone 13"]); d["color_scheme"] = "dark"
                 w.setup(wk, d, ios_policy=True); scenario_selection(w)
+            elif kind == "correctifs":
+                w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_correctifs(w)
             elif kind == "combos":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_combos(w)
         except Exception:
@@ -1914,7 +2123,7 @@ def main():
             print("serveur local injoignable"); return 2
         print(f"App : {APP}\nServeur : {base}")
         checks = quick_checks()
-        jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions", "sombre", "mini-lecteur", "portraits", "selection"]
+        jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions", "sombre", "mini-lecteur", "portraits", "selection", "correctifs"]
         if not quick:
             jobs += ["iphone13", "combos", "selection-se", "selection-sombre"]
         for kind in jobs:

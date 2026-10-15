@@ -434,7 +434,10 @@ function renderMini() {
   if (!el) return;
   const ov = !document.getElementById('detail-overlay').classList.contains('hidden');
   const q = audioQ;
-  const show = !!q && !!player.src && (currentView !== 'citations' || ov);
+  // sur l'écran Répliques, la carte commande le son de SA réplique ; un son venu d'ailleurs (fiche, liste) garde le mini-lecteur
+  const card = document.getElementById('quote-card') && allQuotes[quoteIdx];
+  const own = !!q && !!card && card.i === q.i;
+  const show = !!q && !!player.src && (currentView !== 'citations' || ov || !own);
   if (el.hidden !== !show) el.hidden = !show;
   if (!show) { el.dataset.k = ''; return; }
   const on = !player.paused && !player.ended;
@@ -619,6 +622,17 @@ function favButton(btn, q, label = 'Favori') {
   }
 }
 
+// Étoile de la carte (écran Répliques) remise à jour quand le favori a changé ailleurs (scène en grand, menu « … » d'une fiche)
+function syncCardFav() {
+  const btn = document.getElementById('btn-fav'), q = allQuotes[quoteIdx];
+  if (!btn || !q || !document.getElementById('quote-card')) return;
+  const on = isFav(q);
+  if (btn.classList.contains('on') === on) return;
+  btn.innerHTML = favFace(on);
+  btn.classList.toggle('on', on);
+  btn.setAttribute('aria-pressed', on);
+}
+
 // ===== UTILS =====
 // Échappement HTML de tout gabarit : accepte aussi les nombres (0 compris), apostrophe comprise
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -690,7 +704,9 @@ function knownNames() {
   return KNOWN || new Set(PROPRES);
 }
 function titleCase(t) {
-  if (t === t.toUpperCase()) {
+  // tout en capitales, ordinaux mis à part (« LA POÉTIQUE, 2e PARTIE », « 1re », « 3ème ») : leur minuscule ne compte pas
+  const caps = t.replace(/(\d)(er|re|e|ème|nd|nde)(?![\p{L}])/gu, '$1');
+  if (caps === caps.toUpperCase()) {
     const K = knownNames();
     let s = t.toLowerCase();
     s = s.charAt(0).toUpperCase() + s.slice(1);
@@ -812,7 +828,11 @@ function setMast(t) {
   const el = document.getElementById('mast-sub');
   if (!el) return;
   el.dataset.t = t;
-  el.innerHTML = `<span class="mt">${esc(t)}</span>` + (navigator.onLine === false ? ' <span class="off">Hors ligne</span>' : '');
+  const off = navigator.onLine === false;
+  el.classList.remove('tight');
+  el.innerHTML = `<span class="mt">${esc(t)}</span>` + (off ? ` <span class="off">${icon('offline')}<span class="ot">Hors ligne</span></span>` : '');
+  // le grand titre passe avant : s'il ne tient pas à côté de la pastille, elle se réduit à son pictogramme (libellé gardé pour VoiceOver)
+  if (off) { const mt = el.querySelector('.mt'); if (mt.scrollWidth > mt.clientWidth + 1) el.classList.add('tight'); }
   const ct = document.getElementById('mast-ct');
   if (ct) ct.textContent = t;
 }
@@ -989,6 +1009,8 @@ function bindSettings(sheet) {
   sheet.querySelector('#chip-video-only')?.addEventListener('click', () => setMedia('video'));
   sheet.querySelectorAll('[data-order]').forEach(b => b.addEventListener('click', () => {
     inOrder = b.dataset.order === 'seq'; writePref('kaam_in_order', inOrder); nextRand = null;
+    // retour en Aléatoire : la réplique atteinte dans l'ordre entre dans l'historique (« Retour » ramène à la précédente vue)
+    if (!inOrder && randHistory[randPos] !== quoteIdx) pushHistory(quoteIdx);
     refreshAfterSetting(`[data-order="${b.dataset.order}"]`);
   }));
   sheet.querySelectorAll('[data-auto]').forEach(b => b.addEventListener('click', () => {
@@ -1111,12 +1133,14 @@ let firstRender = true;
 // Données de l'écran Répliques (aucun effet sur la page, sauf le compteur de l'aide)
 function citationsModel(q) {
   const P = pool();
-  // le rang n'a de sens que dans l'ordre ; en aléatoire, rien
+  // le rang n'a de sens que dans l'ordre ; en aléatoire, rien. Réplique ouverte exprès hors du parcours (recherche, favoris) :
+  // pas de rang (jamais « 0 sur … »), on dit pourquoi elle n'en a pas
+  const rank = P ? P.indexOf(quoteIdx) : quoteIdx;
   const counter = verifyMode
     ? `${plural(Object.keys(avisFaits).length, 'vérifiée')}${avisFile.length ? ` · ${nf(avisFile.length)} à envoyer` : ''}`
-    : inOrder
-    ? (P ? `${nf(P.indexOf(quoteIdx) + 1)} sur ${nf(P.length)}${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}` : `${nf(quoteIdx + 1)} sur ${nf(allQuotes.length)}`)
-    : '';
+    : !inOrder ? ''
+    : rank < 0 ? (!inSel(q) ? 'Hors sélection' : videoOnly ? 'Sans vidéo' : audioOnly ? 'Sans son' : 'Hors sélection')
+    : P ? `${nf(rank + 1)} sur ${nf(P.length)}${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}` : `${nf(quoteIdx + 1)} sur ${nf(allQuotes.length)}`;
   const summary = verifyMode
     ? [verifyApprox ? 'Sons les moins sûrs' : 'Tout vérifier', plural(verifyIdx.length, 'restante'), selAll() ? '' : esc(scopeLabel())].filter(Boolean).join(SEP)
     : [{ text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : 'Aléatoire', autoPlay ? 'Lecture auto' : '']
@@ -1173,7 +1197,7 @@ function citationsHTML(q, m, dir) {
     <div class="stage ${m.inlineVideo ? 'plain' : 'art'}${photo ? ' photo' : ''} swap-in${dir < 0 ? ' swap-back' : dir > 0 ? '' : ' rand'}" id="quote-card">
       ${photo ? `<span class="bgimg img" aria-hidden="true"><img src="${photo}" alt="" decoding="async"></span>` : ''}
       <div class="qblock">
-        <blockquote class="quote" lang="fr"${m.inlineVideo ? ` style="font-size:${size}px"` : ''}>${quoteHTML(q.quote)}</blockquote>
+        <blockquote class="quote" lang="fr"${m.inlineVideo ? ` style="font-size:${size}px" data-fs0="${size}"` : ''}>${quoteHTML(q.quote)}</blockquote>
       </div>
     </div>
     <div class="meta">
@@ -1269,6 +1293,34 @@ function fitCard(card, q, inlineVideo) {
   }
   firstRender = false;
   requestAnimationFrame(() => fitOverflow(card));
+}
+// La place change sans nouveau rendu (rotation, barre d'adresse d'Android qui apparaît ou disparaît, mini-lecteur, fenêtre) :
+// la carte ou le quiz sont remesurés sur la nouvelle place (hauteur figée par snapLines et « Suite ↓ » retirés)
+let refitT = null, refitWH = '';
+function refitMain() {
+  const main = document.getElementById('main-content');
+  const wh = `${main.clientWidth}x${main.clientHeight}`;
+  if (wh === refitWH) return;
+  refitWH = wh;
+  refreshMast();                                        // « Hors ligne » : pastille réduite ou non selon la largeur
+  const card = document.getElementById('quote-card');
+  if (card && currentView === 'citations') {
+    const q = allQuotes[quoteIdx], qb = card.querySelector('.qblock'), qt = card.querySelector('.quote');
+    if (!q || !qb || !qt) return;
+    fitMemo.clear();
+    qb.style.flex = ''; qb.style.height = ''; qb.style.removeProperty('--lh');
+    qb.nextElementSibling?.classList.contains('more-h') && qb.nextElementSibling.remove();
+    qb.classList.remove('ovf');
+    const inline = !!document.getElementById('qvideo-slot');
+    if (inline && qt.dataset.fs0) qt.style.fontSize = qt.dataset.fs0 + 'px';
+    fitCard(card, q, inline);
+    fitOverflow(card);                                  // tout de suite (fitCard le refait à l'image suivante)
+  } else if (currentView === 'quiz') fitQuiz(document.getElementById('quiz-stage'));
+}
+function watchResize() {
+  const main = document.getElementById('main-content');
+  if (!('ResizeObserver' in window)) { addEventListener('resize', () => { clearTimeout(refitT); refitT = setTimeout(refitMain, 120); }); return; }
+  new ResizeObserver(() => { clearTimeout(refitT); refitT = setTimeout(refitMain, 120); }).observe(main);
 }
 // Toucher la carte = suivante ; glisser horizontalement = suivante / précédente (le défilement vertical reste libre) ;
 // toucher long = écouter (le son part au relâcher, donc dans le geste : iOS l'autorise)
@@ -2060,6 +2112,7 @@ function closeOverlay() {
   document.getElementById('main-content').inert = false;
   if (was) setMast(mastFor(currentView));
   showMastSet();
+  syncCardFav();
   renderMini();
   if (was && overlayFocus?.isConnected) overlayFocus.focus({ preventScroll: true });
   overlayFocus = null;
@@ -2318,7 +2371,10 @@ function renderFavoris() {
   main.innerHTML = `<div class="scroll"><div class="page-h"><h1 class="sr">Favoris</h1><p id="fav-count">${sub()}</p></div>
     ${allQuotes.length ? `<div class="pills"><button class="pill gray" id="fav-play">${icon('play')}Lecture</button><button class="pill gray" id="fav-rand">${icon('shuffle')}Aléatoire</button></div>` : ''}
     <div id="fav-list">${list.map((q, k) => entHTML(q, k, { remove: true })).join('')}</div></div>`;
-  bindEntries(main.querySelector('#fav-list'), k => list[k], { remove: true, onCount: () => { document.getElementById('fav-count').textContent = sub(); } });
+  // plus aucun favori lisible (dernier retiré, ou répliques modifiées depuis) : Lecture et Aléatoire grisés, jamais un bouton qui ne fait rien
+  const pillsState = () => { const none = !playable().length; ['fav-play', 'fav-rand'].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = none; }); };
+  bindEntries(main.querySelector('#fav-list'), k => list[k], { remove: true, onCount: () => { document.getElementById('fav-count').textContent = sub(); pillsState(); } });
+  pillsState();
   // Lecture : la plus récente (avec son, de préférence) ; Aléatoire : une au hasard. Le son part dans le geste.
   const open = q => { if (!q) return; gotoQuote(q); const b = document.getElementById('btn-audio'); if (b && q.audio && !playingBtn) playAudio(q.audio, b, allQuotes[quoteIdx]); };
   document.getElementById('fav-play')?.addEventListener('click', () => { const P = playable(); open(P.find(q => q.audio) || P[0]); });
@@ -2601,6 +2657,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindNav();
   bindMini();
   watchMast();
+  watchResize();
   document.getElementById('mast-set').addEventListener('click', openSettings);
   document.getElementById('mast-scope').addEventListener('click', () => showSelection('scope'));
   boot();
