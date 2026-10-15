@@ -907,6 +907,7 @@ function openSheet(html) {
   const h = sheet.querySelector('h2');
   if (h) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
   bindSheetGestures(sheet);
+  navSoon();
   return sheet;
 }
 function closeSheet() {
@@ -919,6 +920,7 @@ function closeSheet() {
   document.getElementById('app').inert = false;
   if (sheetFocus?.isConnected) sheetFocus.focus({ preventScroll: true });
   sheetFocus = null;
+  navSoon();
 }
 function sheetOpen() { return !document.getElementById('sheet').hidden; }
 // glisser la feuille vers le bas (plus de 80 px) la ferme, depuis n'importe où tant qu'elle n'a pas défilé
@@ -2087,7 +2089,33 @@ function openOverlay(html) {
   // clavier : focus sur « Retour » ; toucher : focus sur la page elle-même (aucun contour visible)
   if (usingKeyboard) overlay.querySelector('#detail-back')?.focus({ preventScroll: true });
   else { overlay.setAttribute('tabindex', '-1'); overlay.focus({ preventScroll: true }); }
+  navSoon();
   return overlay;
+}
+// Retour système (bouton ou geste d'Android, flèche du navigateur) : une seule entrée d'historique « témoin » tant qu'une
+// feuille ou une page superposée est ouverte ; Retour la ferme (scène ouverte depuis une fiche : retour à la fiche).
+// Fermée par l'app (bouton, glisser du bord gauche d'iOS) : le témoin est retiré, jamais de double retour ni d'entrée parasite.
+let navMark = false, navIgnore = 0, navT = null;
+const navOpen = () => sheetOpen() || !document.getElementById('detail-overlay').classList.contains('hidden');
+function navSoon() { clearTimeout(navT); navT = setTimeout(navSync, 0); }   // fermer puis rouvrir dans le même geste : rien ne bouge
+function navSync() {
+  const open = navOpen();
+  if (open && !navMark) { history.pushState({ kaam: 1 }, ''); navMark = true; }
+  else if (!open && navMark) {
+    navMark = false;
+    if (history.state?.kaam) { navIgnore++; history.back(); }       // déjà retiré par le navigateur : rien à faire
+  }
+}
+function bindHistory() {
+  // rechargé sur l'entrée témoin : rien n'est ouvert, on la retire
+  if (history.state?.kaam) { navIgnore++; history.back(); }
+  addEventListener('popstate', () => {
+    if (navIgnore) { navIgnore--; navSoon(); return; }
+    navMark = false;
+    if (sheetOpen()) closeSheet();
+    else if (navOpen()) { const b = document.getElementById('detail-back'); b ? b.click() : closeOverlay(); }
+    navSoon();
+  });
 }
 // glisser depuis le bord gauche = Retour (convention iOS) ; écouteurs posés une seule fois
 let edgeBound = false;
@@ -2116,6 +2144,7 @@ function closeOverlay() {
   renderMini();
   if (was && overlayFocus?.isConnected) overlayFocus.focus({ preventScroll: true });
   overlayFocus = null;
+  navSoon();
 }
 // En-tête d'épisode de la fiche, en clair : « Livre IV · ép. 58 », « Film », « Inédit 3 »
 function epLabel(q) {
@@ -2658,6 +2687,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindMini();
   watchMast();
   watchResize();
+  bindHistory();
   document.getElementById('mast-set').addEventListener('click', openSettings);
   document.getElementById('mast-scope').addEventListener('click', () => showSelection('scope'));
   boot();

@@ -651,6 +651,18 @@ mark { background: none; color: inherit; font-weight: 700; }
   .nav .pill { font-size: 15px; }
   .ent { padding-right: 48px; }
 }
+/* très étroit (Android 360 px avec texte agrandi à 130 %, ~277 px) : rien ne se chevauche ni ne sort de l'écran */
+.gr .k { min-width: min-content; }
+.nav-btn span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 300px) {
+  .nav-btn { font-size: 8.5px; letter-spacing: -.1px; }
+  .vrow { gap: 6px; }
+  .vrow .tp { width: 44px; height: 44px; min-height: 44px; }
+  .vrow .ok, .vrow .ko { min-width: 0; font-size: 13px; padding: 0 6px; }
+  .vrow .ok svg { display: none; }
+  .sh-nav:has(> button.l) { grid-template-columns: auto 1fr auto; gap: 8px; padding: 0 12px; }
+  .sh-nav h2 { text-align: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 /* paysage (iPhone tourné) : on regagne de la hauteur */
 @media (orientation: landscape) and (max-height: 500px) {
   :root { --mh: calc(var(--st) + 36px); --ch: 36px; }

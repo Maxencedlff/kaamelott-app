@@ -1992,6 +1992,95 @@ def scenario_correctifs(w, tag=""):
     w.step("Favoris : Lecture et Aléatoire grisés quand il n'y a plus rien à lire", s_favs_vides)
 
 
+def scenario_android(w, tag=""):
+    """Android (Chromium) : bouton / geste Retour système, écrans très étroits (texte agrandi à 130 %)."""
+    def open_(prefs=None):
+        ctx = w.new_ctx()
+        pg = w.new_page(ctx, prefs); w.goto(pg)
+        return ctx, pg
+    ST = "() => ({ ov: !document.getElementById('detail-overlay').classList.contains('hidden'), sheet: !document.getElementById('sheet').hidden, st: history.state, len: history.length, url: location.href })"
+    def back(pg):
+        pg.evaluate("history.back()"); pg.wait_for_timeout(350)
+        return pg.evaluate(ST)
+
+    def s_back(rec):
+        ctx, pg = open_({"kaam_hint": "9"})
+        try:
+            pg.wait_for_timeout(300)
+            r0 = pg.evaluate(ST)
+            if r0["st"] is not None: raise RuntimeError(f"entrée d'historique au démarrage : {r0}")
+            out = []
+            # fiche ouverte puis Retour système : fiche fermée, toujours dans l'app
+            pg.click("#btn-who"); pg.wait_for_selector("#fiche-list .ent"); pg.wait_for_timeout(100)
+            r = back(pg)
+            if r["ov"] or r["url"] != r0["url"]: w.shot(pg, rec, f"90-retour-fiche{tag}"); raise RuntimeError(f"Retour depuis la fiche : {r}")
+            out.append("fiche")
+            # feuille Réglages
+            pg.click("#mast-set"); pg.wait_for_selector("#sheet:not([hidden])"); pg.wait_for_timeout(100)
+            r = back(pg)
+            if r["sheet"] or r["url"] != r0["url"]: raise RuntimeError(f"Retour depuis Réglages : {r}")
+            out.append("Réglages")
+            # scène depuis une fiche : Retour → fiche, Retour → Répliques
+            pg.click("#btn-who"); pg.wait_for_selector("#fiche-list .ent")
+            ok = pg.evaluate("""() => { const K = __kaam, cur = K.allQuotes[K.quoteIdx], qs = K.allQuotes.filter(q => q.name === cur.name);
+                for (const e of document.querySelectorAll('#fiche-list .ent')) { const q = qs[+e.dataset.k]; if (q && q.video) { e.querySelector('.ent-more').id = 'qa-more'; return true; } } return false; }""")
+            if ok:
+                pg.click("#qa-more"); pg.click("#sheet [data-m=video]"); pg.wait_for_selector("#m-fav"); pg.wait_for_timeout(150)
+                r = back(pg)
+                if not r["ov"] or not pg.is_visible("#fiche-list"): w.shot(pg, rec, f"90-retour-scene{tag}"); raise RuntimeError(f"Retour depuis la scène : la fiche devait revenir : {r}")
+                r = back(pg)
+                if r["ov"] or r["url"] != r0["url"]: raise RuntimeError(f"second Retour : {r}")
+                out.append("scène → fiche → Répliques")
+            # fermé par l'app (bouton Retour) : plus d'entrée témoin, un Retour système de plus ne rouvre rien
+            pg.click("#btn-who"); pg.wait_for_selector("#fiche-list .ent"); pg.wait_for_timeout(100)
+            pg.click("#detail-back"); pg.wait_for_timeout(350)
+            r = pg.evaluate(ST)
+            if r["ov"] or r["st"] is not None: raise RuntimeError(f"fermée par le bouton : entrée témoin restée : {r}")
+            out.append("bouton Retour sans entrée parasite")
+            # rechargement avec une fiche ouverte : pas d'entrée témoin orpheline
+            pg.click("#btn-who"); pg.wait_for_selector("#fiche-list .ent"); pg.wait_for_timeout(100)
+            pg.reload(); pg.wait_for_selector("#quote-card"); pg.wait_for_timeout(500)
+            r = pg.evaluate(ST)
+            if r["ov"] or r["st"] is not None: raise RuntimeError(f"après rechargement : {r}")
+            out.append("rechargement")
+            return "Retour système : " + ", ".join(out)
+        finally: ctx.close()
+    w.step("Android : le Retour système ferme fiche, scène et feuille sans quitter l'app", s_back)
+
+    OVL = """(sel) => { const r = []; document.querySelectorAll(sel).forEach(e => r.push(e.getBoundingClientRect()));
+        let o = -1e9; for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) { const a = r[i], b = r[j];
+          o = Math.max(o, Math.min(Math.min(a.right, b.right) - Math.max(a.left, b.left), Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))); }
+        return { o, right: Math.max(...r.map(x => x.right)), vw: innerWidth }; }"""
+    def s_narrow(rec):
+        bad = []
+        ctx, pg = open_({"kaam_hint": "9"})
+        try:
+            vp = pg.viewport_size; pg.set_viewport_size({"width": 277, "height": vp["height"]}); pg.wait_for_timeout(400)
+            r = pg.evaluate(OVL, ".nav-btn span")
+            if r["o"] > 0 or r["right"] > r["vw"]: bad.append(f"onglets {r}")
+            pg.click("#mast-set"); pg.wait_for_selector("#row-sel"); pg.wait_for_timeout(200)
+            r = pg.evaluate(OVL, "#row-sel .k, #row-sel .v")
+            if r["o"] > -4: bad.append(f"Épisodes / valeur {r}")
+            k = pg.evaluate("(() => { const k = document.querySelector('#row-sel .k'); return [k.scrollWidth, k.clientWidth]; })()")
+            if k[0] > k[1] + 1: bad.append(f"« Épisodes » déborde de sa place {k}")
+            w.shot(pg, rec, f"91-etroit-reglages{tag}")
+            pg.click("#row-sel"); pg.wait_for_selector("#sel-back"); pg.wait_for_timeout(200)
+            r = pg.evaluate(OVL, "#sel-back, #sh-title")
+            if r["o"] > -4: bad.append(f"‹ Réglages / Sélection {r}")
+            w.shot(pg, rec, f"91-etroit-selection{tag}")
+        finally: ctx.close()
+        ctx, pg = open_({"kaam_hint": "9", "kaam_verify": "1"})
+        try:
+            vp = pg.viewport_size; pg.set_viewport_size({"width": 277, "height": vp["height"]}); pg.wait_for_selector("#avis-ok"); pg.wait_for_timeout(400)
+            r = pg.evaluate(OVL, ".vrow > *")
+            if r["o"] > 0 or r["right"] > r["vw"]: bad.append(f"boutons de vérification {r}")
+            w.shot(pg, rec, f"91-etroit-verif{tag}")
+        finally: ctx.close()
+        if bad: raise RuntimeError(" ; ".join(bad))
+        return "277 px : onglets, Réglages › Épisodes, ‹ Réglages / Sélection, boutons de vérification sans chevauchement ni débordement"
+    w.step("Écran très étroit (277 px, texte Android à 130 %) : rien ne chevauche ni ne déborde", s_narrow)
+
+
 def worker_main(kind, base, out):
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
@@ -2032,6 +2121,9 @@ def worker_main(kind, base, out):
             elif kind == "selection-sombre":
                 d = dict(p.devices["iPhone 13"]); d["color_scheme"] = "dark"
                 w.setup(wk, d, ios_policy=True); scenario_selection(w)
+            elif kind in ("android-pixel7", "android-s8"):
+                d = dict(p.devices["Pixel 7" if kind == "android-pixel7" else "Galaxy S8"])
+                w.setup(lambda: p.chromium.launch(args=["--mute-audio"], env=env, timeout=30000), d); scenario_android(w)
             elif kind == "correctifs":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_correctifs(w)
             elif kind == "combos":
@@ -2123,7 +2215,7 @@ def main():
             print("serveur local injoignable"); return 2
         print(f"App : {APP}\nServeur : {base}")
         checks = quick_checks()
-        jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions", "sombre", "mini-lecteur", "portraits", "selection", "correctifs"]
+        jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions", "sombre", "mini-lecteur", "portraits", "selection", "correctifs", "android-pixel7", "android-s8"]
         if not quick:
             jobs += ["iphone13", "combos", "selection-se", "selection-sombre"]
         for kind in jobs:
