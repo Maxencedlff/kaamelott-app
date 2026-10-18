@@ -116,6 +116,11 @@ mark { background: none; color: inherit; font-weight: 700; }
 .mast-sub .off { flex: none; padding: 2px 9px; border-radius: 980px; background: var(--fill); color: var(--ink2); font-size: 13px; line-height: 18px; font-weight: 600; letter-spacing: -.08px; }
 .round { position: relative; width: 44px; height: 44px; margin-right: -10px; border-radius: 50%; background: none; color: var(--accent); display: grid; place-items: center; flex: none; }
 .round svg { width: 24px; height: 24px; }
+/* retour à la recherche (réplique ouverte depuis Rechercher) : à gauche du grand titre, puis dans la barre repliée */
+.round.back-l { margin: 0 -6px 0 -12px; }
+.round.back-l svg { width: 26px; height: 26px; }
+.mast:has(.back-l:not([hidden])) { justify-content: flex-start; }
+.mast:has(.back-l:not([hidden])) .round:not(.back-l) { margin-left: auto; }
 /* réglages autres que ceux par défaut : un point rouge sur le bouton */
 .round.dot::after { content: ""; position: absolute; top: 8px; right: 7px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
 

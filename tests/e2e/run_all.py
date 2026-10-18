@@ -998,6 +998,31 @@ def scenario_vague2(w):
         return f"scène {s['name']!r} ({s['size']} o) au 2e toucher après refus ; son {a['type']} au 1er"
     w.step("Partager : l'extrait part avec le texte", s_extrait)
 
+    def s_retour_recherche(rec):
+        # une réplique ouverte depuis Rechercher : « ‹ » (puis le Retour système) ramène aux résultats, texte et défilement gardés
+        pg = page(); w.nav(pg, "recherche")
+        pg.fill("#search-input", "graal"); pg.wait_for_selector("#res-list [data-act=goto]")
+        pg.evaluate("() => { const r = document.getElementById('search-results'); r.scrollTop = 600; r.dispatchEvent(new Event('scroll')); }")
+        top0 = pg.evaluate("document.getElementById('search-results').scrollTop")
+        # clic sans défilement automatique de Playwright : la liste reste à 600 px
+        pg.evaluate("document.querySelectorAll('#res-list [data-act=goto]')[8].click()"); pg.wait_for_selector("#quote-card")
+        vis = pg.evaluate("!document.getElementById('mast-back').hidden")
+        w.shot(pg, rec, "40-retour-recherche")
+        pg.click("#mast-back"); pg.wait_for_selector("#search-results")
+        r1 = pg.evaluate("({ q: document.getElementById('search-input').value, top: document.getElementById('search-results').scrollTop })")
+        pg.locator("#res-list [data-act=goto]").nth(2).click(); pg.wait_for_selector("#quote-card")
+        pg.go_back(); pg.wait_for_selector("#search-results", timeout=5000)
+        r2 = pg.evaluate("({ q: document.getElementById('search-input').value, view: document.querySelector('.nav-btn.active').dataset.view })")
+        # ouverte autrement (onglet Répliques) : pas de « ‹ »
+        w.nav(pg, "citations"); sans = pg.evaluate("document.getElementById('mast-back').hidden")
+        pg.close()
+        if not vis: raise RuntimeError("pas de bouton Retour après une recherche")
+        if r1["q"] != "graal" or abs(r1["top"] - top0) > 2: raise RuntimeError(f"recherche perdue au retour : {r1} (défilement {top0})")
+        if r2["q"] != "graal": raise RuntimeError(f"Retour système : {r2}")
+        if not sans: raise RuntimeError("bouton Retour affiché hors recherche")
+        return f"retour aux résultats « graal » à {r1['top']} px ; Retour système aussi ; absent sinon"
+    w.step("Rechercher : retour aux résultats après une réplique", s_retour_recherche)
+
 
 # Glisser horizontal sur la carte (WebKit refuse « new Touch » : événement générique portant touches / changedTouches)
 SWIPE_JS = """([dx]) => { const el = document.getElementById('quote-card'); const b = el.getBoundingClientRect();

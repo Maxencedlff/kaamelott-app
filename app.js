@@ -867,7 +867,7 @@ const MAST = { quiz: 'Quiz', personnages: 'Personnages', recherche: 'Rechercher'
 function mastFor(view) { return view === 'citations' ? (verifyMode ? 'Vérification' : 'Répliques') : MAST[view]; }
 function refreshMast() { const el = document.getElementById('mast-sub'); if (el) setMast(el.dataset.t || el.textContent); }
 // bouton rond Réglages de l'en-tête : sur l'écran Répliques seulement
-function showMastSet() { const b = document.getElementById('mast-set'); if (b) b.hidden = !(currentView === 'citations' && allQuotes.length && document.getElementById('detail-overlay').classList.contains('hidden')); refreshSetBtn(); refreshScope(); }
+function showMastSet() { const b = document.getElementById('mast-set'); if (b) b.hidden = !(currentView === 'citations' && allQuotes.length && document.getElementById('detail-overlay').classList.contains('hidden')); refreshSetBtn(); refreshScope(); refreshBack(); }
 // Sélecteur de la sélection sous le grand titre (Répliques hors vérification, Quiz libre) ; #app.has-scope lui fait sa place.
 // Une page superposée (fiche, scène) le cache sans changer la mise en page dessous.
 let quizDaily = false;
@@ -1584,7 +1584,10 @@ function historyForward() {
   else randomQuote();
 }
 // Ouvre une réplique précise (recherche, favoris, fiche) dans la page Répliques
+// Réplique ouverte depuis Rechercher : « ‹ » dans l'en-tête (et Retour système) ramène aux résultats, à leur place
+let backTo = null;
 function gotoQuote(q) {
+  const from = currentView === 'recherche' ? 'recherche' : null;
   let idx = allQuotes.indexOf(q);
   if (idx < 0) idx = allQuotes.findIndex(x => x.quote === q.quote && x.name === q.name);
   if (idx < 0) return;
@@ -1595,7 +1598,15 @@ function gotoQuote(q) {
   showAnyway = true;
   setView('citations');
   showAnyway = false;
+  backTo = from;
+  refreshBack();
+  navSoon();
 }
+function refreshBack() {
+  const b = document.getElementById('mast-back');
+  if (b) b.hidden = !(backTo && currentView === 'citations' && document.getElementById('detail-overlay').classList.contains('hidden'));
+}
+function goBack() { const v = backTo; backTo = null; if (v) setView(v); }
 // Partage : feuille système si elle existe, sinon copie ; la confirmation s'écrit dans le bouton (jamais de fenêtre d'alerte)
 const shareTimers = new WeakMap();   // bouton → { libellé d'origine, minuteur } pendant « Copié » / « Envoyé »
 async function shareText(text, btn) {
@@ -2130,6 +2141,7 @@ function openOverlay(html) {
   overlay.classList.remove('hidden');
   document.getElementById('mast-set').hidden = true;
   document.getElementById('mast-scope').hidden = true;
+  document.getElementById('mast-back').hidden = true;
   // barre de navigation : transparente sur l'aplat, opaque (avec le titre) une fois l'aplat passé
   // (témoin au bas de l'aplat, suivi par IntersectionObserver sous la barre : aucun écouteur de défilement)
   const sc = overlay.querySelector('.scroll'), nb = overlay.querySelector('.back'), hero = overlay.querySelector('.fiche-h');
@@ -2155,7 +2167,7 @@ function openOverlay(html) {
 // feuille ou une page superposée est ouverte ; Retour la ferme (scène ouverte depuis une fiche : retour à la fiche).
 // Fermée par l'app (bouton, glisser du bord gauche d'iOS) : le témoin est retiré, jamais de double retour ni d'entrée parasite.
 let navMark = false, navIgnore = 0, navT = null;
-const navOpen = () => sheetOpen() || !document.getElementById('detail-overlay').classList.contains('hidden');
+const navOpen = () => sheetOpen() || !document.getElementById('detail-overlay').classList.contains('hidden') || (!!backTo && currentView === 'citations');
 function navSoon() { clearTimeout(navT); navT = setTimeout(navSync, 0); }   // fermer puis rouvrir dans le même geste : rien ne bouge
 function navSync() {
   const open = navOpen();
@@ -2172,7 +2184,8 @@ function bindHistory() {
     if (navIgnore) { navIgnore--; navSoon(); return; }
     navMark = false;
     if (sheetOpen()) closeSheet();
-    else if (navOpen()) { const b = document.getElementById('detail-back'); b ? b.click() : closeOverlay(); }
+    else if (!document.getElementById('detail-overlay').classList.contains('hidden')) { const b = document.getElementById('detail-back'); b ? b.click() : closeOverlay(); }
+    else if (backTo && currentView === 'citations') goBack();
     navSoon();
   });
 }
@@ -2552,6 +2565,7 @@ function setView(view) {
   stopVideos();                            // le son continue d'un onglet à l'autre (mini-lecteur) ; Répliques le reprend ou l'arrête
   closeSheet();
   closeOverlay();
+  backTo = null;
   currentView = view;
   if (view !== 'quiz') quizDaily = false;
   refreshScope();
@@ -2748,6 +2762,7 @@ document.addEventListener('DOMContentLoaded', () => {
   watchResize();
   bindHistory();
   document.getElementById('mast-set').addEventListener('click', openSettings);
+  document.getElementById('mast-back').addEventListener('click', goBack);
   document.getElementById('mast-scope').addEventListener('click', () => showSelection('scope'));
   boot();
 });
