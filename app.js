@@ -1614,6 +1614,10 @@ async function shareText(text, btn) {
     }
   }
   document.getElementById('sr-live').textContent = said === 'Copié' ? 'Copié dans le presse-papiers.' : said === 'Envoyé' ? 'Envoyé.' : 'Copie impossible.';
+  sayInButton(btn, said, 1500);
+}
+// Écrit un mot dans le bouton (« Copié », « Préparation… », « Envoyer ») puis remet son libellé après ms (0 : jusqu'au prochain mot)
+function sayInButton(btn, said, ms) {
   if (!btn || !btn.isConnected) return;
   const lab = btn.querySelector('.t') || btn;
   const prev = shareTimers.get(btn);
@@ -1621,11 +1625,66 @@ async function shareText(text, btn) {
   const html = prev ? prev.html : lab.innerHTML;
   lab.textContent = said;
   btn.classList.add('said');
-  shareTimers.set(btn, { html, timer: setTimeout(() => { lab.innerHTML = html; btn.classList.remove('said'); shareTimers.delete(btn); }, 1500) });
+  const reset = () => { lab.innerHTML = html; btn.classList.remove('said'); shareTimers.delete(btn); };
+  shareTimers.set(btn, { html, reset, timer: ms ? setTimeout(reset, ms) : 0 });
+}
+function restoreButton(btn) { const t = btn && shareTimers.get(btn); if (t) { clearTimeout(t.timer); t.reset(); } }
+function shareTextOf(q) {
+  const extra = [q.acteur && `interprété par ${q.acteur}`, q.tr && 'transcription'].filter(Boolean).join(', ');
+  return `« ${q.quote} »\n${nameCase(q.name)}${fmtEp(q) ? ', ' + fmtEp(q) : ''}${extra ? ` (${extra})` : ''}\n\nKaamelott`;
+}
+
+// Partage de l'EXTRAIT (la scène, sinon le son) avec le texte, quand l'appareil sait partager un fichier ;
+// sinon le texte seul, comme avant. La feuille de partage ne s'ouvre que dans le geste (iOS) : un extrait déjà en
+// mémoire part au premier toucher ; sinon il se télécharge (« Préparation… ») et part tout seul si le navigateur
+// le permet encore (Android), ou le bouton propose « Envoyer » pour un second toucher (iOS).
+const shareFiles = new Map();     // url de l'extrait → File prêt (les 4 derniers)
+const sharePending = new Set();   // url en cours de téléchargement : un second toucher ne relance rien
+function extraitURL(q) { return q.video ? videoURL(q) : q.audio ? audioURL(q.audio) : null; }
+function canShareFiles() {
+  try { return !!navigator.canShare && navigator.canShare({ files: [new File([new Blob()], 'x.mp4', { type: 'video/mp4' })] }); }
+  catch { return false; }
+}
+function extraitFile(q, url, blob) {
+  const ext = q.video ? 'mp4' : (/\.(\w+)(\?|$)/.exec(url) || [])[1] || 'm4a';
+  const mots = q.quote.replace(/\([^)]*\)/g, ' ').replace(/[^\p{L}\p{N}' ]+/gu, ' ').trim().split(/\s+/).slice(0, 6).join(' ');
+  const type = q.video ? 'video/mp4' : ext === 'mp3' ? 'audio/mpeg' : 'audio/mp4';
+  return new File([blob], `Kaamelott - ${nameCase(q.name)} - ${mots}.${ext}`.replace(/[\\/:*?"<>|]/g, ''), { type });
+}
+async function fetchExtrait(q, url) {
+  const r = await fetch(mediaReady.get(url) || url);   // copie déjà en mémoire (préchargement) : instantané
+  if (!r.ok) throw new Error(r.status);
+  const f = extraitFile(q, url, await r.blob());
+  shareFiles.set(url, f);
+  while (shareFiles.size > 4) shareFiles.delete(shareFiles.keys().next().value);
+  return f;
+}
+async function shareExtrait(q, f, btn) {
+  try { await navigator.share({ files: [f], text: shareTextOf(q) }); }
+  catch (e) {
+    if (e.name === 'NotAllowedError') {                                  // geste expiré pendant le téléchargement
+      sayInButton(btn, 'Envoyer', 10000);
+      document.getElementById('sr-live').textContent = 'Extrait prêt : touchez Envoyer.';
+      return 'attente';
+    }
+    if (e.name === 'AbortError') { restoreButton(btn); return 'annulé'; }   // feuille fermée sans envoyer
+    await shareText(shareTextOf(q), btn); return 'texte';                    // fichier refusé : le texte
+  }
+  document.getElementById('sr-live').textContent = 'Envoyé.';
+  sayInButton(btn, 'Envoyé', 1500);
+  return 'envoyé';
 }
 function shareQuote(q, btn) {
-  const extra = [q.acteur && `interprété par ${q.acteur}`, q.tr && 'transcription'].filter(Boolean).join(', ');
-  return shareText(`« ${q.quote} »\n${nameCase(q.name)}${fmtEp(q) ? ', ' + fmtEp(q) : ''}${extra ? ` (${extra})` : ''}\n\nKaamelott`, btn);
+  const url = extraitURL(q);
+  if (!url || !navigator.share || !canShareFiles()) return shareText(shareTextOf(q), btn);
+  const f = shareFiles.get(url);
+  if (f) return shareExtrait(q, f, btn);
+  if (sharePending.has(url)) return Promise.resolve();
+  sharePending.add(url);
+  sayInButton(btn, 'Préparation…', 0);
+  return fetchExtrait(q, url)
+    .then(f => shareExtrait(q, f, btn), () => shareText(shareTextOf(q), btn))   // extrait injoignable : le texte
+    .finally(() => sharePending.delete(url));
 }
 
 // ===== QUIZ =====
@@ -1916,7 +1975,7 @@ function openEntryMenu(q, ent, opts, onFav) {
   sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
   sheet.querySelectorAll('[data-m]').forEach(b => b.addEventListener('click', () => {
     const m = b.dataset.m, more = ent.querySelector('.ent-more');
-    if (m === 'share') { shareQuote(q, b).then(() => setTimeout(closeSheet, 700)); return; }
+    if (m === 'share') { shareQuote(q, b).then(r => { if (r !== 'attente') setTimeout(closeSheet, 700); }); return; }
     closeSheet();
     if (m === 'audio') playAudio(q.audio, more, q);
     else if (m === 'video') showVideo(q);

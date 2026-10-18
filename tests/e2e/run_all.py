@@ -973,6 +973,31 @@ def scenario_vague2(w):
         return f"confirmation dans le bouton : {lab.strip()!r}"
     w.step("Partager : confirmation sans alerte", s_copy)
 
+    def s_extrait(rec):
+        # feuille de partage simulée : 1er appel refusé (geste expiré, cas iOS) si demandé, puis on garde ce qui part
+        pg = page()
+        pg.evaluate("""() => { window.__sh = []; window.__refus = 1;
+            navigator.canShare = d => !!(d && d.files);
+            navigator.share = async d => { if (window.__refus-- > 0 && !window.__ok1) { const e = new Error('geste'); e.name = 'NotAllowedError'; throw e; }
+                window.__sh.push({ n: (d.files || []).length, name: d.files?.[0]?.name, type: d.files?.[0]?.type, size: d.files?.[0]?.size, text: d.text }); }; }""")
+        pg.evaluate("quoteIdx = allQuotes.findIndex(q => q.video); renderCitations()")
+        pg.click("#btn-share")
+        pg.wait_for_function("() => document.querySelector('#btn-share').innerText.includes('Envoyer')", timeout=6000)
+        w.shot(pg, rec, "39b-partage-envoyer")
+        pg.click("#btn-share"); pg.wait_for_function("() => window.__sh.length === 1", timeout=3000)
+        v = pg.evaluate("({ s: window.__sh[0], q: allQuotes[quoteIdx].quote })")
+        # son seul (réplique sans vidéo) : partage direct au premier toucher quand le navigateur le permet
+        pg.evaluate("window.__refus = 0; quoteIdx = allQuotes.findIndex(q => q.audio && !q.video); renderCitations()")
+        pg.click("#btn-share"); pg.wait_for_function("() => window.__sh.length === 2", timeout=6000)
+        a = pg.evaluate("window.__sh[1]")
+        pg.close()
+        s = v["s"]
+        if not (s["n"] == 1 and s["type"] == "video/mp4" and s["name"].endswith(".mp4") and s["size"] > 0): raise RuntimeError(f"vidéo : {s}")
+        if v["q"][:20] not in s["text"]: raise RuntimeError(f"texte absent : {s['text']!r}")
+        if not (a["n"] == 1 and a["type"].startswith("audio/") and a["size"] > 0): raise RuntimeError(f"son : {a}")
+        return f"scène {s['name']!r} ({s['size']} o) au 2e toucher après refus ; son {a['type']} au 1er"
+    w.step("Partager : l'extrait part avec le texte", s_extrait)
+
 
 # Glisser horizontal sur la carte (WebKit refuse « new Touch » : événement générique portant touches / changedTouches)
 SWIPE_JS = """([dx]) => { const el = document.getElementById('quote-card'); const b = el.getBoundingClientRect();
