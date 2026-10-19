@@ -2,7 +2,10 @@
 // Chaque lot est rangé dans le dépôt privé Maxencedlff/kaamelott-avis (avis/<jour>/<heure>-<hasard>.json),
 // relu ensuite côté PC (kaam-audio/avis_lire.py) pour corriger les sons et vidéos.
 const REPO = 'Maxencedlff/kaamelott-avis';
-const PROBLEMES = new Set(['son_faux', 'son_coupe', 'son_deborde', 'video_fausse', 'video_coupee', 'texte_faux']);
+// mêmes identifiants que PB_LISTS dans app.js
+const PROBLEMES = new Set(['son_faux', 'son_debut_coupe', 'son_coupe', 'son_deborde_avant', 'son_deborde', 'son_generique', 'son_bruit',
+  'son_absent', 'video_fausse', 'video_debut_coupe', 'video_coupee', 'video_deborde_avant', 'video_deborde', 'video_generique',
+  'video_decalee', 'texte_faux', 'texte_perso']);
 
 const MAX_I = 40000;   // data.json a 33 187 entrées : marge pour les ajouts (l'index i ne change jamais)
 // caractères de contrôle retirés (séquences de terminal dans les notes relues sur le PC)

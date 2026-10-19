@@ -896,6 +896,28 @@ def scenario_vague2(w):
         return "retrait barré sur place, « Remettre » rétablit le favori à sa place (kaam_fav)"
     w.step("Favoris : Retirer puis Remettre", s_fav)
 
+    def s_verify_tout(rec):
+        pg = page({"kaam_verify": "1"})
+        pg.click("#avis-ko"); pg.wait_for_selector("[data-pb]")
+        avec = pg.evaluate("() => [...document.querySelectorAll('[data-pb]')].map(b => b.dataset.pb)")
+        w.shot(pg, rec, "35b-probleme-son")
+        pg.click("#avis-cancel"); pg.wait_for_timeout(150)
+        # sons et scènes tous vus : il reste les répliques sans rien, elles passent aussi
+        pg.evaluate("""() => { const K = __kaam; K.allQuotes.forEach(q => { if (q.audio || q.video) K.avisFaits[q.i] = 1; }); K.rebuildVerify(); K.render(); }""")
+        pg.click("#avis-skip"); pg.wait_for_timeout(250)      # « Passer » : la suivante vient du palier sans son ni vidéo
+        r = pg.evaluate("""() => { const q = __kaam.allQuotes[__kaam.quoteIdx]; return { media: !!(q.audio || q.video), ok: document.getElementById('avis-ok').innerText,
+          sum: document.querySelector('.bar-sum').innerText }; }""")
+        pg.click("#avis-ko"); pg.wait_for_selector("[data-pb]")
+        sans = pg.evaluate("() => [...document.querySelectorAll('[data-pb]')].map(b => b.dataset.pb)")
+        w.shot(pg, rec, "35c-probleme-sans-son")
+        pg.close()
+        need = {"son_debut_coupe", "son_deborde_avant", "son_generique", "texte_perso"}
+        if not need <= set(avec) or "son_absent" in avec: raise RuntimeError(f"cases avec son : {avec}")
+        if r["media"] or "Texte OK" not in r["ok"] or "Sans son" not in r["sum"] or "son_absent" not in sans or "son_faux" in sans:
+            raise RuntimeError(f"réplique sans son : {r} cases {sans}")
+        return f"{len(avec)} cases avec son (début coupé, déborde avant, générique…) ; puis répliques sans son : « Texte OK », « Le son manque »"
+    w.step("Vérifier : toutes les répliques, motifs détaillés", s_verify_tout)
+
     def s_verify(rec):
         pg = page({"kaam_verify": "1"})
         pg.click("#avis-ok"); pg.wait_for_selector(".done-line")
@@ -903,7 +925,7 @@ def scenario_vague2(w):
         w.shot(pg, rec, "35-verifier-signale")
         pg.click("#avis-undo"); pg.wait_for_timeout(200)
         left = pg.evaluate("Object.keys(__kaam.avisFaits).length + __kaam.avisFile.length")
-        pg.evaluate("""() => { const K = __kaam; K.allQuotes.forEach(q => { if (q.audio || q.video) K.avisFaits[q.i] = 1; }); K.rebuildVerify(); K.render(); }""")
+        pg.evaluate("""() => { const K = __kaam; K.allQuotes.forEach(q => { K.avisFaits[q.i] = 1; }); K.rebuildVerify(); K.render(); }""")
         pg.wait_for_selector(".fin")
         fin = pg.evaluate("({ fin: !!document.querySelector('.fin'), ok: !!document.getElementById('avis-ok') })")
         w.shot(pg, rec, "36-verifier-fini")

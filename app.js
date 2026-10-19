@@ -34,7 +34,8 @@ let quizState = null;     // score du quiz libre (session)
 // Vérification (avis son / vidéo envoyés à /api/avis)
 let verifyIdx = [];                                 // positions encore à vérifier dans la sélection
 let verifyApprox = false;                           // vrai si ce sont les sons les moins sûrs (passent en premier)
-let verifyTodo = { approx: 0, others: 0 };
+let verifyTexte = false;                            // vrai s'il ne reste que des répliques sans son ni vidéo (texte seul)
+let verifyTodo = { approx: 0, others: 0, texte: 0 };
 let avisFaits = readJSON('kaam_avis_faits', {});   // q.i → 1 validée, 2 signalée (sur cet appareil)
 let avisFile  = readJSON('kaam_avis_file', []);    // avis pas encore envoyés
 // Lecture
@@ -317,15 +318,16 @@ function readJSON(k, def) {
 }
 // vrai si l'écriture a réussi (stockage plein ou refusé : faux, l'appelant le dit)
 function writeJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } }
-// Les sons estimés (≈), les moins sûrs, passent en premier ; les autres ensuite
+// Toutes les répliques de la sélection (Livres, film, inédits cochés), par paliers : les sons estimés (≈), les moins sûrs,
+// d'abord ; puis les autres répliques avec son ou vidéo ; enfin celles sans rien (texte, ou son manquant à signaler)
 function rebuildVerify() {
-  // dans la sélection (Livres, film, inédits cochés)
-  const todo = allQuotes.reduce((acc, q, i) => ((q.audio || q.video) && !avisFaits[q.i]
-    && inSel(q) && acc.push(i), acc), []);
-  const approx = todo.filter(i => allQuotes[i].approx);
+  const media = [], texte = [];
+  allQuotes.forEach((q, i) => { if (!avisFaits[q.i] && inSel(q)) (q.audio || q.video ? media : texte).push(i); });
+  const approx = media.filter(i => allQuotes[i].approx);
   verifyApprox = approx.length > 0;
-  verifyIdx = verifyApprox ? approx : todo;
-  verifyTodo = { approx: approx.length, others: todo.length - approx.length };
+  verifyTexte = !media.length && texte.length > 0;
+  verifyIdx = verifyApprox ? approx : media.length ? media : texte;
+  verifyTodo = { approx: approx.length, others: media.length - approx.length, texte: texte.length };
 }
 const player = new Audio();   // un seul lecteur de son pour toute l'app
 player.preload = 'auto';
@@ -931,6 +933,20 @@ function bindSheetGestures(sheet) {
   let y0 = null;
   sheet.addEventListener('touchstart', e => { y0 = sheet.scrollTop <= 0 && !e.target.closest('textarea') ? e.touches[0].clientY : null; }, { passive: true });
   sheet.addEventListener('touchend', e => { if (y0 !== null && e.changedTouches[0].clientY - y0 > 80) closeSheet(); y0 = null; }, { passive: true });
+  sheet.addEventListener('scroll', refreshCaret, { passive: true });
+}
+// iOS (WebKit) ne redessine pas le curseur d'un champ qui bouge sous lui (feuille remontée au-dessus du clavier, feuille
+// qui défile, note qui grandit) : le curseur restait à l'ancienne place. Reposer la sélection telle quelle le recalcule.
+let caretFrame = 0;
+function refreshCaret() {
+  if (caretFrame) return;
+  caretFrame = requestAnimationFrame(() => {
+    caretFrame = 0;
+    const el = document.activeElement;
+    if (el && el.tagName === 'TEXTAREA' && el.closest('#sheet')) {
+      try { el.setSelectionRange(el.selectionStart, el.selectionEnd, el.selectionDirection); } catch {}
+    }
+  });
 }
 // Clavier iOS : la feuille (position fixe en bas) remonte au-dessus du clavier tant qu'il est ouvert
 function fitSheetToKeyboard() {
@@ -939,6 +955,7 @@ function fitSheetToKeyboard() {
   const kb = Math.max(0, innerHeight - vv.height - vv.offsetTop);
   sheet.style.bottom = kb > 40 ? kb + 'px' : '';
   sheet.style.maxHeight = kb > 40 ? (vv.height - 12) + 'px' : '';
+  refreshCaret();
 }
 
 // ===== RÉGLAGES =====
@@ -950,12 +967,14 @@ function settingsHTML() {
   // contrôle segmenté d'iOS : un bouton par valeur, coché ou non
   const seg = (lab, opts, off) => `<div class="seg" role="radiogroup" aria-label="${lab}"${off ? ' aria-disabled="true"' : ''}>${opts.map(([on, attrs, label]) =>
     `<button role="radio" class="${on ? 'on' : ''}" aria-checked="${on}" ${attrs}${off ? ' disabled' : ''}>${label}</button>`).join('')}</div>`;
-  const { approx, others } = verifyTodo;
-  const todoTxt = approx + others === 0
+  const { approx, others, texte } = verifyTodo;
+  const todoTxt = approx + others + texte === 0
     ? 'Tout est vérifié sur ce téléphone pour cette sélection.'
     : approx
     ? `On commence par ${plural(approx, 'son')} ${approx > 1 ? 'les' : 'le'} moins sûr${approx > 1 ? 's' : ''}.`
-    : `Il en reste ${nf(others)}.`;
+    : others
+    ? `Il en reste ${nf(others + texte)}, dont ${plural(texte, 'réplique')} sans son ni vidéo à la fin.`
+    : `Il reste ${plural(texte, 'réplique')} sans son ni vidéo : texte à vérifier, son manquant à signaler.`;
   const P = verifyMode ? null : pool();
   const n = P ? P.length : allQuotes.length;
   return `
@@ -1144,7 +1163,7 @@ function citationsModel(q) {
     : rank < 0 ? (!inSel(q) ? 'Hors sélection' : videoOnly ? 'Sans vidéo' : audioOnly ? 'Sans son' : 'Hors sélection')
     : P ? `${nf(rank + 1)} sur ${nf(P.length)}${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}` : `${nf(quoteIdx + 1)} sur ${nf(allQuotes.length)}`;
   const summary = verifyMode
-    ? [verifyApprox ? 'Sons les moins sûrs' : 'Tout vérifier', plural(verifyIdx.length, 'restante'), selAll() ? '' : esc(scopeLabel())].filter(Boolean).join(SEP)
+    ? [verifyApprox ? 'Sons les moins sûrs' : verifyTexte ? 'Sans son ni vidéo' : 'Tout vérifier', plural(verifyIdx.length, 'restante'), selAll() ? '' : esc(scopeLabel())].filter(Boolean).join(SEP)
     : [{ text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : 'Aléatoire', autoPlay ? 'Lecture auto' : '']
         .filter(Boolean).join(SEP);
   const inlineVideo = !!((videoOnly || verifyMode) && q.video);
@@ -1153,9 +1172,9 @@ function citationsModel(q) {
   if (hint) countHint();
   return {
     counter, summary, inlineVideo, hint,
-    reviewable: verifyMode && !!(q.audio || q.video),
+    reviewable: verifyMode,
     fav: isFav(q),
-    what: q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : 'Son OK',
+    what: q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : q.audio ? 'Son OK' : 'Texte OK',
     no: String(q.i + 1).padStart(5, '0').replace(/^(\d{2})/, '$1 '),   // « 03 345 », espace fine
     atStart: !inOrder && randPos <= 0,
     // ce que dit la barre de lecture (vérification seulement) ; une réplique sans son n'a ni barre ni libellé
@@ -1413,14 +1432,20 @@ function renderEmptySel() {
 }
 
 // ===== AVIS DE VÉRIFICATION =====
-// listes à cocher, comme dans Réglages d'iOS : Son, Scène, Texte (identifiants d'avis inchangés)
+// listes à cocher, comme dans Réglages d'iOS : Son, Scène, Texte (identifiants d'avis inchangés ; la liste des
+// identifiants admis est aussi dans api/avis.js). Sans son : une seule case, « Le son manque ».
 const PB_LISTS = [
-  ['audio', 'Son', [['son_faux', 'Pas le bon son'], ['son_coupe', 'Coupé avant la fin'], ['son_deborde', 'Déborde sur la suite']]],
-  ['video', 'Scène', [['video_fausse', 'Pas la bonne scène'], ['video_coupee', 'Coupée avant la fin']]],
-  ['texte', 'Texte', [['texte_faux', 'Le texte ne correspond pas']]],
+  ['audio', 'Son', [['son_faux', 'Pas le bon son'], ['son_debut_coupe', 'Début coupé'], ['son_coupe', 'Coupé avant la fin'],
+    ['son_deborde_avant', 'Déborde sur la réplique d’avant'], ['son_deborde', 'Déborde sur la suite'],
+    ['son_generique', 'Générique dedans (avant ou après)'], ['son_bruit', 'Musique ou bruit par-dessus']]],
+  ['sans_audio', 'Son', [['son_absent', 'Le son manque']]],
+  ['video', 'Scène', [['video_fausse', 'Pas la bonne scène'], ['video_debut_coupe', 'Début coupé'], ['video_coupee', 'Coupée avant la fin'],
+    ['video_deborde_avant', 'Déborde sur la réplique d’avant'], ['video_deborde', 'Déborde sur la suite'],
+    ['video_generique', 'Générique dedans (avant ou après)'], ['video_decalee', 'Son et image décalés']]],
+  ['texte', 'Texte', [['texte_faux', 'Le texte ne correspond pas'], ['texte_perso', 'Pas le bon personnage']]],
 ];
 function openProblem(q) {
-  const has = k => k === 'texte' || !!q[k];
+  const has = k => k === 'texte' || (k === 'sans_audio' ? !q.audio : !!q[k]);
   const ctx = [nameCase(q.name), q.film ? 'Film' : q.inedit ? q.inedit.replace(/ :.*/, '') : q.tr ? coteEp(q) : [q.livre && `Livre ${q.livre}`, q.episode && `Épisode ${q.episode}`].filter(Boolean).join(' · ')].filter(Boolean).join(' · ');
   const sheet = openSheet(`
     <div class="grab" aria-hidden="true"></div>
@@ -1441,8 +1466,8 @@ function openProblem(q) {
     b.classList.toggle('on', picked.has(id)); b.setAttribute('aria-checked', picked.has(id)); upd();
   }));
   // note qui s'agrandit avec le texte (jusqu'à 4 lignes)
-  note.addEventListener('input', () => { upd(); note.style.height = 'auto'; note.style.height = Math.min(Math.max(note.scrollHeight, 88), 120) + 'px'; });
-  note.addEventListener('focus', () => setTimeout(() => note.scrollIntoView({ block: 'center' }), 300));
+  note.addEventListener('input', () => { upd(); note.style.height = 'auto'; note.style.height = Math.min(Math.max(note.scrollHeight, 88), 120) + 'px'; refreshCaret(); });
+  note.addEventListener('focus', () => setTimeout(() => { note.scrollIntoView({ block: 'center' }); refreshCaret(); }, 300));
   sheet.querySelector('#avis-cancel').addEventListener('click', closeSheet);
   const go = () => { closeSheet(); recordAvis(q, false, [...picked], note.value.trim()); };
   send.addEventListener('click', go); send2.addEventListener('click', go);
@@ -1497,7 +1522,7 @@ function undoAvis() {
 function renderVerifyDone() {
   stopAudio();                                   // met aussi la scène de la carte en pause
   setMast('Vérification');
-  const total = allQuotes.reduce((n, q) => n + ((q.audio || q.video) && inSel(q) ? 1 : 0), 0);
+  const total = allQuotes.reduce((n, q) => n + (inSel(q) ? 1 : 0), 0);
   const vals = Object.values(avisFaits);
   document.getElementById('main-content').innerHTML = `
     <button class="bar verify" id="btn-settings"><span class="bar-sum">Terminé</span>${icon('chev', 'chev')}</button>
