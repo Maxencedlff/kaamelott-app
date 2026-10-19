@@ -169,6 +169,7 @@ class Worker:
         self._cur = []                  # erreurs (console, CSP, pageerror) de l'étape en cours
         self.expect_errors = False      # erreurs console attendues (test 403)
         self.avis_posts = []            # corps des POST /api/avis capturés
+        self.avis_tous = {}             # réponse simulée de GET /api/avis : déjà vérifiées par les autres {i: empreinte}
         self.out = None
         self.deadline = float(os.environ.get("QA_DEADLINE", time.time() + GLOBAL_BUDGET))
         self.browser = None; self._ctx = None; self._launch = None; self._ctx_kw = None
@@ -235,6 +236,8 @@ class Worker:
         ctx.route(HF_RE, media)
 
         def avis(route, request):
+            if request.method == "GET":
+                return route.fulfill(status=200, body=json.dumps({"faits": self.avis_tous}), headers={"content-type": "application/json"})
             try: self.avis_posts.append(json.loads(request.post_data or "null"))
             except Exception: self.avis_posts.append(None)
             n = len(((self.avis_posts[-1] or {}).get("avis")) or [])
@@ -1015,10 +1018,10 @@ def scenario_vague2(w):
         pg.close()
         s = v["s"]
         if not (s["n"] == 1 and s["type"] == "video/mp4" and s["name"].endswith(".mp4") and s["size"] > 0): raise RuntimeError(f"vidéo : {s}")
-        if v["q"][:20] not in s["text"]: raise RuntimeError(f"texte absent : {s['text']!r}")
+        if s["text"] or a["text"]: raise RuntimeError(f"texte joint à l'extrait : {s['text']!r} {a['text']!r}")
         if not (a["n"] == 1 and a["type"].startswith("audio/") and a["size"] > 0): raise RuntimeError(f"son : {a}")
         return f"scène {s['name']!r} ({s['size']} o) au 2e toucher après refus ; son {a['type']} au 1er"
-    w.step("Partager : l'extrait part avec le texte", s_extrait)
+    w.step("Partager : l'extrait part seul, sans texte", s_extrait)
 
     def s_retour_recherche(rec):
         # une réplique ouverte depuis Rechercher : « ‹ » (puis le Retour système) ramène aux résultats, texte et défilement gardés
@@ -1109,6 +1112,30 @@ def scenario_fonctions(w):
         if bad or stored: raise RuntimeError(f"avis mal formés {bad[:1]} ou file non vidée ({stored})")
         return f"{len(got)} avis envoyés en 1 lot, index i corrects, file vidée"
     w.step("Avis : lot envoyé à /api/avis (intercepté)", s_avis)
+
+    def s_avis_tous(rec):
+        w.avis_posts.clear(); w.avis_tous = {}
+        pg = w.new_page(w.ctx(), {"kaam_verify": "1"}); w.goto(pg)
+        try:
+            K = "__kaam"
+            avant = pg.evaluate(f"{K}.verifyIdx.length")
+            # un ami a vérifié 3 répliques de la file (même son, même scène), une 4e sur un son changé depuis : elle reste
+            r = pg.evaluate(f"""() => {{ const K = {K}, ids = K.verifyIdx.slice(1, 5).map(p => K.allQuotes[p]);
+              return ids.map((q, k) => [q.i, k < 3 ? K.fpOf(q) : 'zzz']); }}""")
+            w.avis_tous = {str(i): f for i, f in r}
+            pg.evaluate(f"{K}.loadAvisTous(true)")
+            pg.wait_for_function(f"() => {K}.verifyIdx.length === {avant - 3}", timeout=6000)
+            reste = pg.evaluate(f"() => {K}.verifyIdx.map(p => {K}.allQuotes[p].i)")
+            stocke = pg.evaluate("Object.keys(JSON.parse(localStorage.getItem('kaam_avis_tous') || '{}')).length")
+            pg.click("#avis-ok"); pg.wait_for_function(f"() => {K}.avisFile.length === 0", timeout=30000)
+        finally:
+            w.avis_tous = {}
+            pg.close()
+        fp = [a.get("fp") for p in w.avis_posts if p for a in p.get("avis", [])]
+        if any(i in reste for i, _ in r[:3]) or r[3][0] not in reste or stocke != 4 or not fp or not fp[0]:
+            raise RuntimeError(f"avant={avant} reste={len(reste)} stocké={stocke} empreintes envoyées={fp}")
+        return f"3 répliques vérifiées ailleurs retirées de la file ({avant}→{len(reste)}), celle au son changé reste ; l'avis envoyé porte son empreinte"
+    w.step("Avis : ce que les autres ont vérifié sort de la file", s_avis_tous)
 
     def s_offline(rec):
         br = w.p.chromium.launch(args=["--mute-audio"], env={**os.environ, "PULSE_SERVER": "unix:/nonexistent/qa-silence"})

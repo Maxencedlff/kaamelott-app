@@ -38,6 +38,7 @@ let verifyTexte = false;                            // vrai s'il ne reste que de
 let verifyTodo = { approx: 0, others: 0, texte: 0 };
 let avisFaits = readJSON('kaam_avis_faits', {});   // q.i → 1 validée, 2 signalée (sur cet appareil)
 let avisFile  = readJSON('kaam_avis_file', []);    // avis pas encore envoyés
+let avisTous  = readJSON('kaam_avis_tous', {});    // q.i → empreinte : déjà vérifiées par quelqu'un, tous appareils (GET /api/avis)
 // Lecture
 let playingBtn = null;    // bouton dont le son est en cours (chargement ou lecture)
 let announceNext = false; // VoiceOver : annoncer la réplique au prochain rendu (pas au premier affichage)
@@ -318,11 +319,38 @@ function readJSON(k, def) {
 }
 // vrai si l'écriture a réussi (stockage plein ou refusé : faux, l'appelant le dit)
 function writeJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } }
+// Empreinte du son et de la scène vérifiés (FNV-1a 32 bits, base 36 ; même calcul dans kaam-audio/avis_partage.py) :
+// un son recalé ou une scène refaite change d'empreinte, la réplique revient alors à vérifier pour tout le monde
+function fpOf(q) {
+  if (q._fp) return q._fp;
+  const s = `${q.audio || ''}|${q.video || ''}|${q.vv || 0}`;
+  let h = 0x811c9dc5;
+  for (let k = 0; k < s.length; k++) { h ^= s.charCodeAt(k); h = Math.imul(h, 0x01000193) >>> 0; }
+  return (q._fp = h.toString(36));
+}
+// vérifiée sur ce téléphone, ou par quelqu'un d'autre sur ce même son et cette même scène
+const dejaVue = q => !!avisFaits[q.i] || avisTous[q.i] === fpOf(q);
+// Répliques déjà vérifiées par les autres : relues en entrant en vérification, au retour dans l'app, puis toutes les
+// 3 min (cache Vercel d'1 min). Échec (hors ligne, test local sans API) : on garde la dernière liste connue.
+let avisTousT = 0;
+function loadAvisTous(force) {
+  if (!verifyMode || (!force && Date.now() - avisTousT < 120e3)) return;
+  avisTousT = Date.now();
+  fetch('/api/avis').then(r => r.ok ? r.json() : null).then(j => {
+    if (!j || !j.faits || typeof j.faits !== 'object' || Array.isArray(j.faits)) return;
+    avisTous = j.faits; writeJSON('kaam_avis_tous', avisTous);
+    if (!verifyMode || !allQuotes.length) return;
+    rebuildVerify();
+    if (!verifyIdx.length) { renderCitations(); return; }    // les autres ont fini : écran « tout est vérifié »
+    const b = document.querySelector('.bar.verify .bar-sum'), q = allQuotes[quoteIdx];
+    if (b && q) b.innerHTML = citationsModel(q).summary;    // la réplique affichée reste : on ne l'enlève pas sous le doigt
+  }).catch(() => {});
+}
 // Toutes les répliques de la sélection (Livres, film, inédits cochés), par paliers : les sons estimés (≈), les moins sûrs,
 // d'abord ; puis les autres répliques avec son ou vidéo ; enfin celles sans rien (texte, ou son manquant à signaler)
 function rebuildVerify() {
   const media = [], texte = [];
-  allQuotes.forEach((q, i) => { if (!avisFaits[q.i] && inSel(q)) (q.audio || q.video ? media : texte).push(i); });
+  allQuotes.forEach((q, i) => { if (!dejaVue(q) && inSel(q)) (q.audio || q.video ? media : texte).push(i); });
   const approx = media.filter(i => allQuotes[i].approx);
   verifyApprox = approx.length > 0;
   verifyTexte = !media.length && texte.length > 0;
@@ -579,7 +607,7 @@ async function loadData() {
   audioIdx   = allQuotes.reduce((acc, q, i) => (q.audio && acc.push(i), acc), []);
   videoIdx   = allQuotes.reduce((acc, q, i) => (q.video && acc.push(i), acc), []);
   poolCache.clear();
-  rebuildVerify();
+  rebuildVerify(); loadAvisTous(true);
   if (!audioIdx.length) audioOnly = false;
   if (!videoIdx.length) { videoOnly = false; if (media === 'video') media = audioOnly ? 'audio' : 'text'; }   // en mémoire seulement
 }
@@ -969,7 +997,7 @@ function settingsHTML() {
     `<button role="radio" class="${on ? 'on' : ''}" aria-checked="${on}" ${attrs}${off ? ' disabled' : ''}>${label}</button>`).join('')}</div>`;
   const { approx, others, texte } = verifyTodo;
   const todoTxt = approx + others + texte === 0
-    ? 'Tout est vérifié sur ce téléphone pour cette sélection.'
+    ? 'Tout est vérifié pour cette sélection, à vous tous.'
     : approx
     ? `On commence par ${plural(approx, 'son')} ${approx > 1 ? 'les' : 'le'} moins sûr${approx > 1 ? 's' : ''}.`
     : others
@@ -1040,7 +1068,7 @@ function bindSettings(sheet) {
   }));
   sheet.querySelector('#chip-verify').addEventListener('click', () => {
     verifyMode = !verifyMode; writePref('kaam_verify', verifyMode);
-    rebuildVerify(); nextRand = null;
+    rebuildVerify(); nextRand = null; loadAvisTous(true);
     refreshAfterSetting('#chip-verify');
     refreshScope();
   });
@@ -1475,7 +1503,7 @@ function openProblem(q) {
 function recordAvis(q, ok, problemes, note) {
   if (avisFaits[q.i]) return;                   // jamais deux avis pour la même réplique
   avisFaits[q.i] = ok ? 1 : 2;                  // 1 = validée, 2 = signalée
-  avisFile.push({ i: q.i, quote: q.quote, name: q.name, audio: q.audio, video: q.video, approx: q.approx, ok, problemes, note, ts: Date.now() });
+  avisFile.push({ i: q.i, quote: q.quote, name: q.name, audio: q.audio, video: q.video, approx: q.approx, fp: fpOf(q), ok, problemes, note, ts: Date.now() });
   // la file d'abord : si elle ne peut pas être écrite, la réplique n'est pas marquée « vérifiée » (elle reviendra)
   if (writeJSON('kaam_avis_file', avisFile)) writeJSON('kaam_avis_faits', avisFaits);
   if (avisFile.length >= 5) sendAvis(); else scheduleSend();
@@ -1527,7 +1555,8 @@ function renderVerifyDone() {
   document.getElementById('main-content').innerHTML = `
     <button class="bar verify" id="btn-settings"><span class="bar-sum">Terminé</span>${icon('chev', 'chev')}</button>
     <div class="scroll"><div class="fin"><div class="ok-i">${icon('check')}</div><h1>Tout est vérifié.</h1>
-      <p>${nf(total)} sur ${nf(total)}, sur ce téléphone. Merci.</p>
+      <p>${nf(total)} sur ${nf(total)}, à vous tous. Merci.</p>
+      <p class="gh">Sur ce téléphone</p>
       <dl class="grp"><div><dt>Validés</dt><dd>${nf(vals.filter(v => v !== 2).length)}</dd></div><div><dt>Signalés</dt><dd>${nf(vals.filter(v => v === 2).length)}</dd></div><div><dt>En attente d’envoi</dt><dd>${nf(avisFile.length)}</dd></div></dl>
       <button class="pill wide" id="verify-leave">Revenir à la lecture</button></div></div>`;
   document.getElementById('btn-settings').addEventListener('click', openSettings);
@@ -1696,7 +1725,8 @@ async function fetchExtrait(q, url) {
   return f;
 }
 async function shareExtrait(q, f, btn) {
-  try { await navigator.share({ files: [f], text: shareTextOf(q) }); }
+  // la scène seule, sans texte : avec un texte, iOS et WhatsApp envoient deux messages, ou le texte en légende
+  try { await navigator.share({ files: [f] }); }
   catch (e) {
     if (e.name === 'NotAllowedError') {                                  // geste expiré pendant le téléchargement
       sayInButton(btn, 'Envoyer', 10000);
@@ -2428,7 +2458,8 @@ function renderRecherche() {
   // la touche « Rechercher » du clavier et un toucher sur la liste rangent le clavier
   input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
   results.addEventListener('touchstart', () => input.blur(), { passive: true });
-  results.addEventListener('scroll', () => { searchState.top = results.scrollTop; }, { passive: true });
+  // la liste qu'on quitte (réplique ouverte) peut encore émettre un défilement à 0 en se vidant : ignoré, la position est gardée
+  results.addEventListener('scroll', () => { if (currentView === 'recherche' && results.isConnected) searchState.top = results.scrollTop; }, { passive: true });
   clr.addEventListener('click', () => { input.value = ''; searchState.q = ''; searchState.top = 0; searchState.shown = 40; run('', false); input.focus(); });
   if (!searchState.q) input.focus();       // jamais le clavier par-dessus des résultats qu'on venait chercher
 }
@@ -2636,6 +2667,7 @@ function registerSW() {
 // au retour au premier plan, au plus une fois par heure
 let lastUpdateCheck = Date.now();
 function onVisible() {
+  loadAvisTous();
   if (Date.now() - lastUpdateCheck > 3600e3) {
     lastUpdateCheck = Date.now();
     navigator.serviceWorker?.getRegistration().then(r => r && r.update()).catch(() => {});
@@ -2739,6 +2771,7 @@ function showRenderError() {
 // Point d'accès stable pour le banc de test (tests/e2e) : lecture de l'état et fonctions existantes, rien de nouveau.
 // Le banc ne dépend que de ce pont : les noms internes peuvent changer sans le casser.
 window.__kaam = {
+  get avisTous() { return avisTous; }, fpOf, loadAvisTous,
   get allQuotes() { return allQuotes; },
   get quoteIdx() { return quoteIdx; }, set quoteIdx(v) { quoteIdx = v; },
   get verifyIdx() { return verifyIdx; },
@@ -2773,6 +2806,7 @@ function bindGlobalEvents() {
   // réseau : « Hors ligne » dans l'en-tête ; au retour du réseau, envoi des avis en attente
   ['online', 'offline'].forEach(ev => window.addEventListener(ev, refreshMast));
   window.addEventListener('online', sendAvis);
+  setInterval(() => { if (document.visibilityState === 'visible') loadAvisTous(); }, 180e3);   // ce que les autres ont vérifié
   // arrière-plan : envoi des avis ; premier plan : nouvelle version éventuelle
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') sendAvis(); else onVisible(); });
   if (window.visualViewport) ['resize', 'scroll'].forEach(ev => visualViewport.addEventListener(ev, fitSheetToKeyboard));

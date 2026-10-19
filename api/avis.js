@@ -1,6 +1,9 @@
 // Avis de vérification (son / vidéo justes ou non) envoyés depuis l'app.
 // Chaque lot est rangé dans le dépôt privé Maxencedlff/kaamelott-avis (avis/<jour>/<heure>-<hasard>.json),
 // relu ensuite côté PC (kaam-audio/avis_lire.py) pour corriger les sons et vidéos.
+// faits.json, dans le même dépôt : {i: empreinte} des répliques déjà vérifiées par quelqu'un (GET /api/avis), pour que
+// chaque personne qui vérifie fasse avancer le travail de tous. L'empreinte (fpOf dans app.js) est celle du son et de la
+// scène vérifiés : s'ils changent, la réplique revient à vérifier. Amorce et reconstruction : kaam-audio/avis_partage.py.
 const REPO = 'Maxencedlff/kaamelott-avis';
 // mêmes identifiants que PB_LISTS dans app.js
 const PROBLEMES = new Set(['son_faux', 'son_debut_coupe', 'son_coupe', 'son_deborde_avant', 'son_deborde', 'son_generique', 'son_bruit',
@@ -21,6 +24,7 @@ function propre(a, recu) {
     audio: a.audio ? net(a.audio).slice(0, 120) : null,
     video: a.video ? net(a.video).slice(0, 40) : null,
     approx: !!a.approx,
+    fp: typeof a.fp === 'string' && /^[0-9a-z]{1,8}$/.test(a.fp) ? a.fp : null,
     ok: !!a.ok,
     problemes: Array.isArray(a.problemes) ? a.problemes.filter(p => PROBLEMES.has(p)) : [],
     note: net(a.note).slice(0, 500),
@@ -49,8 +53,41 @@ function tropRapide(ip) {
   return t.length > MAX_PAR_HEURE;
 }
 
+const GH = { 'User-Agent': 'kaamelott-app', Accept: 'application/vnd.github+json' };
+const FAITS = `https://api.github.com/repos/${REPO}/contents/faits.json`;
+async function lireFaits(token) {
+  const r = await fetch(FAITS, { headers: { ...GH, Authorization: `token ${token}` } });
+  if (r.status === 404) return { faits: {}, sha: null };
+  if (!r.ok) throw new Error(`GitHub ${r.status}`);
+  const j = await r.json();
+  return { faits: JSON.parse(Buffer.from(j.content, 'base64').toString('utf8') || '{}'), sha: j.sha };
+}
+// ajoute les avis du lot à faits.json ; deux envois en même temps : GitHub refuse le second (409), qui relit et réessaie
+async function ajouterFaits(token, lot) {
+  for (let essai = 0; essai < 4; essai++) {
+    const { faits, sha } = await lireFaits(token);
+    let n = 0;
+    for (const a of lot) if (a.fp && faits[a.i] !== a.fp) { faits[a.i] = a.fp; n++; }
+    if (!n) return;
+    const r = await fetch(FAITS, { method: 'PUT', headers: { ...GH, Authorization: `token ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: `faits : +${n}`, content: Buffer.from(JSON.stringify(faits)).toString('base64'), ...(sha ? { sha } : {}) }) });
+    if (r.ok) return;
+    if (r.status !== 409 && r.status !== 422) throw new Error(`GitHub ${r.status}`);
+    await new Promise(ok => setTimeout(ok, 300 + Math.random() * 700));
+  }
+}
+
 module.exports = async (req, res) => {
-  if (req.method !== 'POST') return res.status(405).json({ erreur: 'POST uniquement' });
+  if (req.method === 'GET') {          // déjà vérifiées par quelqu'un : mis en cache 1 min par Vercel, sans rien de personnel
+    const token = process.env.KAAM_AVIS_TOKEN;
+    if (!token) return res.status(500).json({ erreur: 'jeton absent' });
+    try {
+      const { faits } = await lireFaits(token);
+      res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=600');
+      return res.status(200).json({ faits });
+    } catch { return res.status(502).json({ erreur: 'GitHub injoignable' }); }
+  }
+  if (req.method !== 'POST') return res.status(405).json({ erreur: 'GET ou POST uniquement' });
   if (!ORIGINES.has(req.headers.origin || '')) return res.status(403).json({ erreur: 'origine refusée' });
   if (!String(req.headers['content-type'] || '').startsWith('application/json')) return res.status(415).json({ erreur: 'JSON attendu' });
   const ip = String(req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'inconnue';
@@ -78,5 +115,7 @@ module.exports = async (req, res) => {
     return res.status(502).json({ erreur: 'GitHub injoignable' });   // le client garde ses avis et réessaiera
   }
   if (!r.ok) return res.status(502).json({ erreur: `GitHub ${r.status}` });
+  // avis rangés : le partage ne doit jamais faire échouer l'envoi (avis_partage.py sait reconstruire faits.json)
+  try { await ajouterFaits(token, lot); } catch {}
   res.status(200).json({ recus: lot.length });
 };

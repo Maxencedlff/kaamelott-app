@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v58';
+const CACHE = 'kaamelott-v59';
 const DATA_CACHE = 'kaamelott-data';
 // Portraits des personnages (img/perso/, ~200 × 3 petits JPEG) : noms à empreinte, donc immuables. Cache à part, jamais
 // vidé par une mise à jour ; servis depuis le cache dès la première vue, plafonné à IMG_MAX fichiers (les plus anciens sortent).
@@ -102,6 +102,9 @@ self.addEventListener('fetch', e => {
 
   // Requêtes externes (sons et scènes sur Hugging Face) : laissées au navigateur (requêtes Range, URL signées)
   if (url.origin !== self.location.origin) return;
+
+  // API (répliques déjà vérifiées par tous) : toujours le réseau, jamais le cache
+  if (url.pathname.startsWith('/api/')) return;
 
   // Sons manuels : laissés au navigateur (requêtes Range / réponses 206 non stockables dans le cache)
   if (url.pathname.startsWith('/sons/')) return;
