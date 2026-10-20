@@ -227,3 +227,13 @@ test('pilotes et Dies Iræ : partie, source, transcription, interprète', () => 
   const s1 = t.parseQuote({ character: 'PERCEVAL, livre I, tome 1, épisode 1: Heat', quote: 'C’est pas faux.' }, 99004);
   assert.equal(s1.part, 'L1'); assert.equal(t.get('epHTML')(s1).includes('Transcription'), false);
 });
+test('extraitURL : coupe en attente → extrait coupé en ligne ; finie ou d’une autre version → extrait normal', () => {
+  const q = { i: 7, quote: 'x', audio: 'sons/auto/a1b2c3d4e5f6.m4a', video: 'a1b2c3d4e5f6', vv: 2, cx: [3, 1.45, 3] };
+  t.set('avisCoupes', { 7: { fp: t.get('fpOf')(q), ds: 0.38, de: -0.09 } });
+  assert.equal(t.get('extraitURL')(q), '/api/extrait?k=a1b2c3d4e5f6&v=2&a=3.38&b=4.36');
+  t.set('avisCoupes', { 7: { fp: t.get('fpOf')(q), ds: 0.38, de: -0.09, fini: 1 } });
+  assert.match(t.get('extraitURL')(q), /\/v\/a1\/a1b2c3d4e5f6\.mp4\?v=2$/);
+  t.set('avisCoupes', { 7: { fp: 'autre', ds: 0.38, de: -0.09 } });
+  assert.match(t.get('extraitURL')(q), /\/v\/a1\/a1b2c3d4e5f6\.mp4\?v=2$/);
+  t.set('avisCoupes', {});
+});

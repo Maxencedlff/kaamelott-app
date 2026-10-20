@@ -21,7 +21,7 @@ for i, it in enumerate(d):
     for k, v in it.items():
         if k not in ALLOWED: err.append(f"{i}: champ inconnu {k!r}")
         elif not isinstance(v, ALLOWED[k]): err.append(f"{i}: {k} de type {type(v).__name__}")
-        elif k == "cx" and not (len(v) == 3 and all(isinstance(x, (int, float)) and 0 <= x <= 120 for x in v) and it.get("video")):
+        elif k == "cx" and not (len(v) == 3 and all(isinstance(x, (int, float)) for x in v) and 0 <= v[0] <= 5 and 0 <= v[2] <= 5 and 0 < v[1] <= 300 and it.get("video")):
             err.append(f"{i}: cx invalide {v!r}")
     q, c, a = it.get("quote", ""), it.get("character", ""), it.get("audio")
     if not q.strip() or not c.strip(): err.append(f"{i}: quote/character vide")

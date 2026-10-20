@@ -1924,7 +1924,12 @@ function shareTextOf(q) {
 // le permet encore (Android), ou le bouton propose « Envoyer » pour un second toucher (iOS).
 const shareFiles = new Map();     // url de l'extrait → File prêt (les 4 derniers)
 const sharePending = new Set();   // url en cours de téléchargement : un second toucher ne relance rien
-function extraitURL(q) { return q.video ? videoURL(q) : q.audio ? audioURL(q.audio) : null; }
+// coupe en attente : l'extrait coupé est fabriqué en ligne (api/extrait.js), sans attendre le PC
+function extraitURL(q) {
+  const w = fenetre(q);
+  if (w) return `/api/extrait?k=${q.video}&v=${q.vv || 1}&a=${w[0].toFixed(2)}&b=${w[1].toFixed(2)}`;
+  return q.video ? videoURL(q) : q.audio ? audioURL(q.audio) : null;
+}
 function canShareFiles() {
   try { return !!navigator.canShare && navigator.canShare({ files: [new File([new Blob()], 'x.mp4', { type: 'video/mp4' })] }); }
   catch { return false; }

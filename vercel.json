@@ -47,5 +47,12 @@
         }
       ]
     }
-  ]
+  ],
+  "functions": {
+    "api/extrait.js": {
+      "includeFiles": "node_modules/ffmpeg-static/ffmpeg",
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  }
 }
