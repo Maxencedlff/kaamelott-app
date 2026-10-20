@@ -255,6 +255,10 @@ mark { background: none; color: inherit; font-weight: 700; }
 .vrow .ok span { overflow: hidden; text-overflow: ellipsis; }
 .vrow .ko { flex: 1; background: var(--fill); color: var(--accent-t); }
 .vrow button:active { opacity: .7; }
+/* réplique déjà classée (ouverte depuis Rechercher) : l'état à la place de « OK » */
+.vrow .vdone { flex: 1.45; min-height: 52px; border-radius: 980px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; background: var(--fill); color: var(--ok); font-size: 16px; font-weight: 600; letter-spacing: -.32px; white-space: nowrap; min-width: 0; }
+.vrow .vdone svg { width: 20px; height: 20px; flex: none; }
+.vrow .vdone span { overflow: hidden; text-overflow: ellipsis; }
 .vfoot { flex: none; min-height: 44px; margin: 4px 0 2px; display: flex; flex-direction: column; justify-content: center; }
 .vfoot .stage-foot { margin: 0 var(--pad); min-height: 44px; }
 .done-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 var(--pad); min-height: 40px; padding: 0 4px 0 14px; border-radius: 980px; background: var(--fill); font-size: 14px; color: var(--ink); }
@@ -683,3 +687,27 @@ mark { background: none; color: inherit; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition: none !important; }
 }
+
+/* ---------- Ajuster la coupe (façon Photos) : vidéo élargie, poignées de début et de fin ---------- */
+.sheet .scene.cz { margin: 4px 16px 0; }
+.scene.cz[data-s="pret"] .prog, .scene.cz[data-s="pret"] .leg .st:empty { visibility: hidden; }
+.tl { position: relative; height: 64px; margin: 12px 16px 0; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: pointer; }
+.tl-track { position: absolute; left: 22px; right: 22px; top: 12px; bottom: 12px; border-radius: 8px; background: var(--fill2); }
+.tl-orig { position: absolute; top: 3px; bottom: 3px; left: var(--o0); right: calc(100% - var(--o1)); border: 1.5px dashed var(--ink3); border-radius: 5px; }
+.tl-sel { position: absolute; top: -4px; bottom: -4px; left: var(--a); right: calc(100% - var(--b)); border: 3px solid var(--accent); border-radius: 8px; background: rgba(250, 36, 60, .14); }
+.tl-head { position: absolute; top: -10px; bottom: -10px; left: var(--h); width: 2px; margin-left: -1px; border-radius: 1px; background: var(--ink); }
+/* poignée : 44 px de large au doigt, une barre rouge de 14 px au milieu */
+.tl-h { position: absolute; top: -12px; bottom: -12px; width: 44px; margin-left: -22px; background: none; touch-action: none; }
+.tl-h::after { content: ""; position: absolute; top: 8px; bottom: 8px; left: 15px; width: 14px; border-radius: 5px; background: var(--accent); box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+.tl-h::before { content: ""; position: absolute; z-index: 1; top: 50%; left: 21px; width: 2px; height: 14px; margin-top: -7px; border-radius: 1px; background: rgba(255, 255, 255, .85); }
+#cz-a { left: var(--a); }
+#cz-b { left: var(--b); }
+.tl.drag .tl-head { visibility: hidden; }
+.tl-h:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px; }
+.cz-t { margin: 8px 24px 0; text-align: center; font-size: 15px; line-height: 20px; color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: -.24px; }
+.cz-row { display: flex; gap: 10px; margin: 12px 16px 0; }
+.cz-row .pill { flex: 1; min-height: 46px; border-radius: 12px; gap: 6px; background: var(--cell); }   /* gris sur gris de la feuille : la cellule */
+#cz-play .i-pa, #cz-play .ls { display: none; }
+#cz-play.playing .i-pa, #cz-play.playing .ls { display: inline; }
+#cz-play.playing .i-pl, #cz-play.playing .lp { display: none; }
+

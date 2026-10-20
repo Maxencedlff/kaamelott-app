@@ -23,7 +23,7 @@ git commit -qm "$MSG
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 SHA=$(git rev-parse HEAD); S8=${SHA:0:8}
-git -c http.extraHeader="Authorization: Basic $(printf 'x-access-token:%s' "$T" | base64 -w0)" push -q https://github.com/Maxencedlff/kaamelott-app.git main
+git -c http.extraHeader="Authorization: Basic $(printf 'x-access-token:%s' "$T" | base64 -w0)" push -q https://github.com/Maxencedlff/kaamelott-app.git HEAD:main
 ok "poussé $S8"
 
 # déploiement Vercel de CE commit (relance manuelle si le push ne l'a pas déclenché)

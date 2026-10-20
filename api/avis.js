@@ -4,11 +4,21 @@
 // faits.json, dans le même dépôt : {i: empreinte} des répliques déjà vérifiées par quelqu'un (GET /api/avis), pour que
 // chaque personne qui vérifie fasse avancer le travail de tous. L'empreinte (fpOf dans app.js) est celle du son et de la
 // scène vérifiés : s'ils changent, la réplique revient à vérifier. Amorce et reconstruction : kaam-audio/avis_partage.py.
+// coupes.json, même dépôt : {coupes: {i: {fp, ds, de}}, demandes: {i: 1}}. Une coupe réglée dans l'appli (« Ajuster la
+// coupe ») décale début et fin de ds / de secondes ; la première fait foi (plus de nouvelle coupe ensuite). Une demande
+// (« Coupe ratée, la refaire ») attend kaam-audio/coupes.py, qui finalise les coupes (fini: 1) et traite les demandes.
 const REPO = 'Maxencedlff/kaamelott-avis';
 // mêmes identifiants que PB_LISTS dans app.js
 const PROBLEMES = new Set(['son_faux', 'son_debut_coupe', 'son_coupe', 'son_deborde_avant', 'son_deborde', 'son_generique', 'son_bruit',
   'son_absent', 'video_fausse', 'video_debut_coupe', 'video_coupee', 'video_deborde_avant', 'video_deborde', 'video_generique',
   'video_decalee', 'texte_faux', 'texte_perso']);
+
+// décalages de début et de fin : la vidéo élargie a 3 s de chaque côté (kaam-audio/contexte.py)
+const MAX_DECALAGE = 3.5;
+function coupeValide(c) {
+  if (!Array.isArray(c) || c.length !== 2 || !c.every(x => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= MAX_DECALAGE)) return null;
+  return c.map(x => Math.round(x * 100) / 100);
+}
 
 const MAX_I = 40000;   // data.json a 33 187 entrées : marge pour les ajouts (l'index i ne change jamais)
 // caractères de contrôle retirés (séquences de terminal dans les notes relues sur le PC)
@@ -28,6 +38,8 @@ function propre(a, recu) {
     ok: !!a.ok,
     problemes: Array.isArray(a.problemes) ? a.problemes.filter(p => PROBLEMES.has(p)) : [],
     note: net(a.note).slice(0, 500),
+    coupe: coupeValide(a.coupe),
+    demande: a.demande === 'recoupe' ? 'recoupe' : null,
     tc: Number.isFinite(+a.ts) ? +a.ts : null,   // heure de l'appareil, pour information
     ts: recu,                                     // heure du serveur : la seule qui fait foi (avis_lire.py garde le dernier par ts)
   };
@@ -54,37 +66,55 @@ function tropRapide(ip) {
 }
 
 const GH = { 'User-Agent': 'kaamelott-app', Accept: 'application/vnd.github+json' };
-const FAITS = `https://api.github.com/repos/${REPO}/contents/faits.json`;
-async function lireFaits(token) {
-  const r = await fetch(FAITS, { headers: { ...GH, Authorization: `token ${token}` } });
-  if (r.status === 404) return { faits: {}, sha: null };
+const URL_DEPOT = f => `https://api.github.com/repos/${REPO}/contents/${f}`;
+async function lire(token, f, vide) {
+  const r = await fetch(URL_DEPOT(f), { headers: { ...GH, Authorization: `token ${token}` } });
+  if (r.status === 404) return { val: vide(), sha: null };
   if (!r.ok) throw new Error(`GitHub ${r.status}`);
   const j = await r.json();
-  return { faits: JSON.parse(Buffer.from(j.content, 'base64').toString('utf8') || '{}'), sha: j.sha };
+  return { val: JSON.parse(Buffer.from(j.content, 'base64').toString('utf8') || 'null') || vide(), sha: j.sha };
 }
-// ajoute les avis du lot à faits.json ; deux envois en même temps : GitHub refuse le second (409), qui relit et réessaie
-async function ajouterFaits(token, lot) {
+const videCoupes = () => ({ coupes: {}, demandes: {} });
+// lit le fichier, applique change(val) (nombre de modifications), réécrit ; deux envois en même temps : GitHub refuse
+// le second (409), qui relit et réessaie
+async function modifier(token, f, vide, change, message) {
   for (let essai = 0; essai < 4; essai++) {
-    const { faits, sha } = await lireFaits(token);
-    let n = 0;
-    for (const a of lot) if (a.fp && faits[a.i] !== a.fp) { faits[a.i] = a.fp; n++; }
+    const { val, sha } = await lire(token, f, vide);
+    const n = change(val);
     if (!n) return;
-    const r = await fetch(FAITS, { method: 'PUT', headers: { ...GH, Authorization: `token ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: `faits : +${n}`, content: Buffer.from(JSON.stringify(faits)).toString('base64'), ...(sha ? { sha } : {}) }) });
+    const r = await fetch(URL_DEPOT(f), { method: 'PUT', headers: { ...GH, Authorization: `token ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: message(n), content: Buffer.from(JSON.stringify(val)).toString('base64'), ...(sha ? { sha } : {}) }) });
     if (r.ok) return;
     if (r.status !== 409 && r.status !== 422) throw new Error(`GitHub ${r.status}`);
     await new Promise(ok => setTimeout(ok, 300 + Math.random() * 700));
   }
+  throw new Error('GitHub : conflits répétés');
 }
+// avis du lot → faits.json (une demande de recoupe ne vaut pas vérification)
+const ajouterFaits = (token, lot) => modifier(token, 'faits.json', () => ({}), faits => {
+  let n = 0;
+  for (const a of lot) if (a.fp && !a.demande && faits[a.i] !== a.fp) { faits[a.i] = a.fp; n++; }
+  return n;
+}, n => `faits : +${n}`);
+// coupes et demandes du lot → coupes.json (la première coupe d'une réplique fait foi)
+const ajouterCoupes = (token, lot) => modifier(token, 'coupes.json', videCoupes, v => {
+  let n = 0;
+  v.coupes ||= {}; v.demandes ||= {};
+  for (const a of lot) {
+    if (a.coupe && a.fp && !v.coupes[a.i] && !v.demandes[a.i]) { v.coupes[a.i] = { fp: a.fp, ds: a.coupe[0], de: a.coupe[1] }; n++; }
+    if (a.demande && !v.demandes[a.i]) { v.demandes[a.i] = 1; n++; }
+  }
+  return n;
+}, n => `coupes : +${n}`);
 
 module.exports = async (req, res) => {
   if (req.method === 'GET') {          // déjà vérifiées par quelqu'un : mis en cache 1 min par Vercel, sans rien de personnel
     const token = process.env.KAAM_AVIS_TOKEN;
     if (!token) return res.status(500).json({ erreur: 'jeton absent' });
     try {
-      const { faits } = await lireFaits(token);
+      const [{ val: faits }, { val: c }] = await Promise.all([lire(token, 'faits.json', () => ({})), lire(token, 'coupes.json', videCoupes)]);
       res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=600');
-      return res.status(200).json({ faits });
+      return res.status(200).json({ faits, coupes: c.coupes || {}, demandes: c.demandes || {} });
     } catch { return res.status(502).json({ erreur: 'GitHub injoignable' }); }
   }
   if (req.method !== 'POST') return res.status(405).json({ erreur: 'GET ou POST uniquement' });
@@ -117,5 +147,8 @@ module.exports = async (req, res) => {
   if (!r.ok) return res.status(502).json({ erreur: `GitHub ${r.status}` });
   // avis rangés : le partage ne doit jamais faire échouer l'envoi (avis_partage.py sait reconstruire faits.json)
   try { await ajouterFaits(token, lot); } catch {}
+  if (lot.some(a => a.coupe || a.demande)) {
+    try { await ajouterCoupes(token, lot); } catch { return res.status(502).json({ erreur: 'coupe non enregistrée, réessayez' }); }
+  }
   res.status(200).json({ recus: lot.length });
 };

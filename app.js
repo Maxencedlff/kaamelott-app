@@ -33,12 +33,16 @@ let nextRand = null;      // prochaine réplique aléatoire, tirée à l'avance 
 let quizState = null;     // score du quiz libre (session)
 // Vérification (avis son / vidéo envoyés à /api/avis)
 let verifyIdx = [];                                 // positions encore à vérifier dans la sélection
-let verifyApprox = false;                           // vrai si ce sont les sons les moins sûrs (passent en premier)
-let verifyTexte = false;                            // vrai s'il ne reste que des répliques sans son ni vidéo (texte seul)
 let verifyTodo = { approx: 0, others: 0, texte: 0 };
 let avisFaits = readJSON('kaam_avis_faits', {});   // q.i → 1 validée, 2 signalée (sur cet appareil)
 let avisFile  = readJSON('kaam_avis_file', []);    // avis pas encore envoyés
 let avisTous  = readJSON('kaam_avis_tous', {});    // q.i → empreinte : déjà vérifiées par quelqu'un, tous appareils (GET /api/avis)
+// Coupes refaites dans l'appli (écran « Ajuster la coupe ») : celles de tous (GET /api/avis) et celles de ce téléphone pas
+// encore vues dans la liste commune. q.i → { fp, ds, de [, fini] } (décalages du début et de la fin, en secondes).
+let avisCoupes   = readJSON('kaam_avis_coupes', {});
+let avisDemandes = readJSON('kaam_avis_demandes', {});   // q.i → 1 : « coupe ratée, la refaire », pas encore traitée
+let mesCoupes    = readJSON('kaam_coupes', {});          // q.i → { fp, ds, de, ts } faites ici
+let mesDemandes  = readJSON('kaam_demandes', {});        // q.i → { fp, ts } demandées ici
 // Lecture
 let playingBtn = null;    // bouton dont le son est en cours (chargement ou lecture)
 let announceNext = false; // VoiceOver : annoncer la réplique au prochain rendu (pas au premier affichage)
@@ -54,6 +58,48 @@ function audioURL(src) {
   return m ? `${AUDIO_BASE}${m[1].slice(0, 2)}/${m[1]}${m[2] || ''}` : src;
 }
 function videoURL(q) { return q.video ? `${VIDEO_BASE}${q.video.slice(0, 2)}/${q.video}.mp4${q.vv ? `?v=${q.vv}` : ''}` : null; }
+// Vidéo élargie (champ "cx" : [secondes avant, durée de l'extrait, secondes après]) : sert à refaire la coupe dans l'appli
+const CX_BASE = VIDEO_BASE.replace(/v\/$/, 'cx/');
+function cxURL(q) { return q.cx && q.video ? `${CX_BASE}${q.video.slice(0, 2)}/${q.video}.mp4?v=${q.vv || 1}` : null; }
+
+// ===== COUPE EN ATTENTE : validée dans l'appli, pas encore refaite sur le serveur (≤ 1 h) =====
+// La réplique joue alors la vidéo élargie, limitée à la fenêtre choisie (son compris) : partout, carte, scène, son.
+const coupeDe = q => { const c = avisCoupes[q.i] || mesCoupes[q.i]; return c && c.fp === fpOf(q) ? c : null; };   // coupe de CETTE version
+const demandeDe = q => !!(avisDemandes[q.i] || mesDemandes[q.i]);
+const peutCouper = q => !!cxURL(q) && !coupeDe(q) && !demandeDe(q);
+function fenetre(q) {
+  const c = coupeDe(q);
+  return c && !c.fini && cxURL(q) ? [q.cx[0] + c.ds, q.cx[0] + q.cx[1] + c.de] : null;
+}
+const winByURL = new Map();   // adresse de la vidéo élargie → fenêtre
+const srcWin = new Map();     // source donnée au lecteur (adresse ou copie en mémoire) → fenêtre
+// adresse à lire pour la scène : la vidéo élargie fenêtrée si une coupe attend, sinon l'extrait
+function playURL(q) {
+  const w = fenetre(q);
+  if (!w) return videoURL(q);
+  const u = cxURL(q); winByURL.set(u, w); return u;
+}
+const winOf = el => srcWin.get(el.currentSrc || el.src) || null;
+// position et durée affichées : relatives à la fenêtre quand il y en a une
+function span(el) {
+  const w = winOf(el);
+  return w ? [Math.max(0, Math.min(el.currentTime, w[1]) - w[0]), w[1] - w[0]] : [el.currentTime || 0, el.duration];
+}
+function seekStart(el) { el.currentTime = winOf(el)?.[0] || 0; }
+// lecteur fenêtré : départ au début de la fenêtre, arrêt (et « fin ») à sa fin
+function watchWin(el) {
+  let raf = 0;
+  const tick = () => {
+    const w = winOf(el);
+    if (!w || el.paused) return;
+    if (el.currentTime >= w[1]) { el.pause(); el.dispatchEvent(new Event('ended')); return; }
+    raf = requestAnimationFrame(tick);
+  };
+  const clamp = () => { const w = winOf(el); if (w && (el.currentTime < w[0] - 0.05 || el.currentTime >= w[1] - 0.02)) el.currentTime = w[0]; };
+  el.addEventListener('loadedmetadata', clamp);
+  el.addEventListener('play', clamp);
+  el.addEventListener('playing', () => { cancelAnimationFrame(raf); tick(); });
+}
 
 // ===== SÉLECTION : Livres I à VI, film, inédits 1 à 3 (cases de la feuille « Sélection ») =====
 function loadSel() {
@@ -171,6 +217,8 @@ function cachedMedia(url) {
 // Reste synchrone : sur iOS, play() doit partir dans le geste de l'utilisateur.
 function mediaSrc(url) {
   const u = mediaReady.get(url);
+  const w = winByURL.get(url);
+  if (w) srcWin.set(u || url, w);
   if (u) return u;
   if (mediaAbort.has(url)) { mediaAbort.get(url).abort(); mediaCache.delete(url); }
   streamed.add(url);
@@ -192,7 +240,7 @@ function prefetchAround() {
   if (randPos < randHistory.length - 1) next.push(randHistory[randPos + 1]);
   next.filter(i => i != null && allQuotes[i]).forEach(i => {
     const q = allQuotes[i];
-    if ((videoOnly || verifyMode) && q.video) cachedMedia(videoURL(q));
+    if ((videoOnly || verifyMode) && q.video) cachedMedia(playURL(q));
     if (q.audio && (autoPlay || verifyMode || audioOnly)) cachedMedia(audioURL(q.audio));
   });
 }
@@ -206,6 +254,7 @@ cardVideo.id = 'qvideo';
 cardVideo.playsInline = true;
 cardVideo.setAttribute('playsinline', '');
 cardVideo.preload = 'auto';
+watchWin(cardVideo);
 ['touchstart', 'touchend'].forEach(ev => cardVideo.addEventListener(ev, e => e.stopPropagation()));   // les gestes sur le lecteur ne changent pas de réplique
 
 // ===== SCÈNE : figure du registre (image 16:9, repères de coupe, filet d'avancement, légende d'état) =====
@@ -229,7 +278,7 @@ function setScene(v, st) {
   const T = {
     loading: ['', 'Chargement…'],
     muted:   ['red', '<i aria-hidden="true"></i>Touchez l’image pour le son'],
-    playing: ['num', `${mmss(v.currentTime)} / ${mmss(v.duration)}`],
+    playing: ['num', `${mmss(span(v)[0])} / ${mmss(span(v)[1])}`],
     ended:   ['ink', '<span aria-hidden="true">↻</span> Revoir'],
     error:   ['red', navigator.onLine === false ? 'Hors ligne · Réessayer' : 'Scène indisponible · Réessayer'],
   }[st];
@@ -239,9 +288,10 @@ function setScene(v, st) {
 function tickScene(v) {
   const f = v.closest('.scene');
   if (!f) return;
-  const p = v.duration ? Math.min(100, v.currentTime / v.duration * 100) : 0;
+  const [t, d] = span(v);
+  const p = d ? Math.min(100, t / d * 100) : 0;
   f.style.setProperty('--p', p.toFixed(1) + '%');
-  if (f.dataset.s === 'playing') { const el = f.querySelector('.st'); if (el) el.textContent = `${mmss(v.currentTime)} / ${mmss(v.duration)}`; }
+  if (f.dataset.s === 'playing') { const el = f.querySelector('.st'); if (el) el.textContent = `${mmss(t)} / ${mmss(d)}`; }
   if (!v.paused && !v.ended) requestAnimationFrame(() => tickScene(v));
 }
 function wireScene(v) {
@@ -283,14 +333,14 @@ function unlockSound() {
   player.muted = false;
 }
 function playCardVideo(q, fig) {
-  const url = videoURL(q);
+  const url = playURL(q);
   const src = mediaSrc(url);
   const frame = fig.querySelector('.frame');
   frame.prepend(cardVideo);
   fig.dataset.src = url;   // « Réessayer » relance ce fichier
   if (offlineMiss(url)) { cardVideo.pause(); cardVideo.removeAttribute('src'); setScene(cardVideo, 'error'); return; }
   if (cardVideo.src !== src) { cardVideo.src = src; setScene(cardVideo, 'loading'); }
-  cardVideo.currentTime = 0;
+  seekStart(cardVideo);
   // son activé par défaut ; si le navigateur refuse (aucun toucher encore), lecture sans son, signalée
   cardVideo.muted = false;
   cardVideo.play().catch(e => {
@@ -339,6 +389,10 @@ function loadAvisTous(force) {
   fetch('/api/avis').then(r => r.ok ? r.json() : null).then(j => {
     if (!j || !j.faits || typeof j.faits !== 'object' || Array.isArray(j.faits)) return;
     avisTous = j.faits; writeJSON('kaam_avis_tous', avisTous);
+    const obj = v => v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+    avisCoupes = obj(j.coupes); avisDemandes = obj(j.demandes);
+    writeJSON('kaam_avis_coupes', avisCoupes); writeJSON('kaam_avis_demandes', avisDemandes);
+    oublieMesCoupes();
     if (!verifyMode || !allQuotes.length) return;
     rebuildVerify();
     if (!verifyIdx.length) { renderCitations(); return; }    // les autres ont fini : écran « tout est vérifié »
@@ -346,19 +400,30 @@ function loadAvisTous(force) {
     if (b && q) b.innerHTML = citationsModel(q).summary;    // la réplique affichée reste : on ne l'enlève pas sous le doigt
   }).catch(() => {});
 }
-// Toutes les répliques de la sélection (Livres, film, inédits cochés), par paliers : les sons estimés (≈), les moins sûrs,
-// d'abord ; puis les autres répliques avec son ou vidéo ; enfin celles sans rien (texte, ou son manquant à signaler)
+// Coupes et demandes de ce téléphone : oubliées dès que la liste commune les connaît, que la réplique a changé (nouveau
+// son ou nouvelle scène), ou au bout de 2 jours si elles ne sont plus en attente d'envoi
+function oublieMesCoupes() {
+  const enFile = new Set(avisFile.map(a => a.i));
+  const garde = (m, k) => {
+    const q = parI(k), x = m[k];
+    return !!q && !!x && !(k in (m === mesCoupes ? avisCoupes : avisDemandes)) && x.fp === fpOf(q) && (enFile.has(+k) || Date.now() - x.ts < 2 * 864e5);
+  };
+  for (const k of Object.keys(mesCoupes)) if (!garde(mesCoupes, k)) delete mesCoupes[k];
+  for (const k of Object.keys(mesDemandes)) if (!garde(mesDemandes, k)) delete mesDemandes[k];
+  writeJSON('kaam_coupes', mesCoupes); writeJSON('kaam_demandes', mesDemandes);
+}
+// Toutes les répliques de la sélection (Livres, film, inédits cochés) pas encore classées, en une seule file : dans
+// l'ordre, les sons estimés (≈, les moins sûrs) d'abord, puis les autres répliques avec son ou vidéo, enfin celles sans
+// rien (texte, ou son manquant à signaler) ; au hasard, tirage dans toute la file
 function rebuildVerify() {
-  const media = [], texte = [];
-  allQuotes.forEach((q, i) => { if (!dejaVue(q) && inSel(q)) (q.audio || q.video ? media : texte).push(i); });
-  const approx = media.filter(i => allQuotes[i].approx);
-  verifyApprox = approx.length > 0;
-  verifyTexte = !media.length && texte.length > 0;
-  verifyIdx = verifyApprox ? approx : media.length ? media : texte;
-  verifyTodo = { approx: approx.length, others: media.length - approx.length, texte: texte.length };
+  const approx = [], media = [], texte = [];
+  allQuotes.forEach((q, i) => { if (!dejaVue(q) && inSel(q)) (!(q.audio || q.video) ? texte : q.approx ? approx : media).push(i); });
+  verifyIdx = approx.concat(media, texte);
+  verifyTodo = { approx: approx.length, others: media.length, texte: texte.length };
 }
 const player = new Audio();   // un seul lecteur de son pour toute l'app
 player.preload = 'auto';
+watchWin(player);
 
 // Accès au stockage local : toujours par ces fonctions (stockage refusé ou plein : valeur par défaut, jamais d'exception)
 function readPref(k) { try { return localStorage.getItem(k) === '1'; } catch { return false; } }
@@ -386,7 +451,8 @@ function setPlayingBtn(btn) {
 }
 function tickAudio() {
   const r = rowOf(playingBtn);
-  if (r && player.duration) r.style.setProperty('--p', Math.min(1, player.currentTime / player.duration).toFixed(3));
+  const [t, d] = span(player);
+  if (r && d) r.style.setProperty('--p', Math.min(1, t / d).toFixed(3));
   if (playingBtn && !player.paused) requestAnimationFrame(tickAudio);
 }
 // échec : « Réessayer » 2,5 s dans le bouton (ou « Hors ligne » quand l'appareil n'a pas de réseau)
@@ -420,14 +486,14 @@ function stopAudio() {
 function playAudio(src, btn, q) {
   if (!src) return;
   if (btn && btn === playingBtn) { stopAudio(); return; }   // toucher pendant le chargement ou la lecture = arrêter
-  const url = audioURL(src);
+  const url = q && fenetre(q) ? playURL(q) : audioURL(src);   // coupe en attente : le son de la vidéo élargie, fenêtré
   if (offlineMiss(url)) { player.pause(); setPlayingBtn(btn || null); audioFailed('Hors ligne'); return; }
   // jamais deux sons à la fois : la scène (carte ou fenêtre) s'arrête
   cardVideo.pause();
   document.getElementById('mvideo')?.pause();
   switching = true;
   player.src = mediaSrc(url);
-  player.currentTime = 0;
+  seekStart(player);
   audioQ = q || null;
   setPlayingBtn(btn || null);
   clearTimeout(audioGuard);
@@ -450,7 +516,7 @@ function tickScrub() {
   const q = allQuotes[quoteIdx];
   const inline = cardVideo.closest('#qvideo-slot');
   const m = playingBtn?.id === 'btn-audio' || (audioQ && q && audioQ.i === q.i && !inline) ? player : inline ? cardVideo : null;
-  const d = m ? m.duration : NaN, t = m ? m.currentTime || 0 : 0;
+  const [t, d] = m ? span(m) : [0, NaN];
   sc.style.setProperty('--p', (isFinite(d) && d > 0 ? Math.min(100, t / d * 100) : 0).toFixed(2) + '%');
   sc.classList.toggle('on', !!m && !m.paused && !m.ended);
   const bd = sc.querySelector('.badge');
@@ -487,7 +553,7 @@ function bindMini() {
     if (!b || !audioQ) return;
     if (b.id === 'mini-play') {
       if (!player.paused && !player.ended) player.pause();
-      else { if (player.ended) player.currentTime = 0; cardVideo.pause(); player.play().catch(() => {}); }
+      else { if (player.ended) seekStart(player); cardVideo.pause(); player.play().catch(() => {}); }
     } else if (b.id === 'mini-close') stopAudio();
     else if (b.id === 'mini-open') gotoQuote(audioQ);
   });
@@ -545,6 +611,8 @@ function parseQuote(item, i) {
   return { i, quote: stripDid(item.quote), name: c.name, livre: c.livre, episode: c.episode, title: c.title, film: c.film,
     inedit: item.inedit ? c.inedTxt : '', tourne: !!item.tourne, hide: !!item.hide, part: partOf(c, item.inedit),
     audio: item.audio ? item.audio + (item.v ? `?v=${item.v}` : '') : null, video: item.video || null, vv: item.vv || 0, approx: !!item.approx,
+    // vidéo élargie pour refaire la coupe : [secondes avant, durée de l'extrait, secondes après]
+    cx: item.video && Array.isArray(item.cx) && item.cx.length === 3 && item.cx.every(x => typeof x === 'number' && x >= 0) ? item.cx : null,
     // pilotes et Dies Iræ : pas de script, répliques transcrites à l'écoute ; acteur = interprète s'il n'est pas celui de la série
     tr: !!item.transcription, acteur: item.acteur || '' };
 }
@@ -945,6 +1013,7 @@ function closeSheet() {
   if (sheet.hidden) return;
   sheet.hidden = true;
   document.getElementById('sheet-back').hidden = true;
+  sheet.querySelectorAll('video').forEach(v => { v.pause(); v.removeAttribute('src'); v.load(); });   // la vidéo de la coupe se tait
   sheet.innerHTML = '';
   sheet.style.bottom = ''; sheet.style.maxHeight = '';
   document.getElementById('app').inert = false;
@@ -959,7 +1028,7 @@ function bindSheetGestures(sheet) {
   if (sheetSwipe) return;                         // écouteurs posés une seule fois (la feuille est réutilisée)
   sheetSwipe = true;
   let y0 = null;
-  sheet.addEventListener('touchstart', e => { y0 = sheet.scrollTop <= 0 && !e.target.closest('textarea') ? e.touches[0].clientY : null; }, { passive: true });
+  sheet.addEventListener('touchstart', e => { y0 = sheet.scrollTop <= 0 && !e.target.closest('textarea, .tl') ? e.touches[0].clientY : null; }, { passive: true });
   sheet.addEventListener('touchend', e => { if (y0 !== null && e.changedTouches[0].clientY - y0 > 80) closeSheet(); y0 = null; }, { passive: true });
   sheet.addEventListener('scroll', refreshCaret, { passive: true });
 }
@@ -996,13 +1065,10 @@ function settingsHTML() {
   const seg = (lab, opts, off) => `<div class="seg" role="radiogroup" aria-label="${lab}"${off ? ' aria-disabled="true"' : ''}>${opts.map(([on, attrs, label]) =>
     `<button role="radio" class="${on ? 'on' : ''}" aria-checked="${on}" ${attrs}${off ? ' disabled' : ''}>${label}</button>`).join('')}</div>`;
   const { approx, others, texte } = verifyTodo;
-  const todoTxt = approx + others + texte === 0
+  const tot = approx + others + texte;
+  const todoTxt = !tot
     ? 'Tout est vérifié pour cette sélection, à vous tous.'
-    : approx
-    ? `On commence par ${plural(approx, 'son')} ${approx > 1 ? 'les' : 'le'} moins sûr${approx > 1 ? 's' : ''}.`
-    : others
-    ? `Il en reste ${nf(others + texte)}, dont ${plural(texte, 'réplique')} sans son ni vidéo à la fin.`
-    : `Il reste ${plural(texte, 'réplique')} sans son ni vidéo : texte à vérifier, son manquant à signaler.`;
+    : `Il en reste ${nf(tot)}${approx ? `, en commençant par ${plural(approx, 'son')} ${approx > 1 ? 'les' : 'le'} moins sûr${approx > 1 ? 's' : ''}` : ''}${texte ? `, et ${plural(texte, 'réplique')} sans son ni vidéo à la fin` : ''}.`;
   const P = verifyMode ? null : pool();
   const n = P ? P.length : allQuotes.length;
   return `
@@ -1191,7 +1257,7 @@ function citationsModel(q) {
     : rank < 0 ? (!inSel(q) ? 'Hors sélection' : videoOnly ? 'Sans vidéo' : audioOnly ? 'Sans son' : 'Hors sélection')
     : P ? `${nf(rank + 1)} sur ${nf(P.length)}${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}` : `${nf(quoteIdx + 1)} sur ${nf(allQuotes.length)}`;
   const summary = verifyMode
-    ? [verifyApprox ? 'Sons les moins sûrs' : verifyTexte ? 'Sans son ni vidéo' : 'Tout vérifier', plural(verifyIdx.length, 'restante'), selAll() ? '' : esc(scopeLabel())].filter(Boolean).join(SEP)
+    ? ['Tout vérifier', plural(verifyIdx.length, 'restante'), selAll() ? '' : esc(scopeLabel())].filter(Boolean).join(SEP)
     : [{ text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : 'Aléatoire', autoPlay ? 'Lecture auto' : '']
         .filter(Boolean).join(SEP);
   const inlineVideo = !!((videoOnly || verifyMode) && q.video);
@@ -1201,6 +1267,9 @@ function citationsModel(q) {
   return {
     counter, summary, inlineVideo, hint,
     reviewable: verifyMode,
+    // réplique déjà classée (ouverte depuis Rechercher, ou par un autre pendant qu'on la regarde) : on le dit, plus de OK
+    deja: verifyMode && dejaVue(q),
+    couper: verifyMode && peutCouper(q),
     fav: isFav(q),
     what: q.audio && q.video ? 'Son et vidéo OK' : q.video ? 'Vidéo OK' : q.audio ? 'Son OK' : 'Texte OK',
     no: String(q.i + 1).padStart(5, '0').replace(/^(\d{2})/, '$1 '),   // « 03 345 », espace fine
@@ -1252,12 +1321,12 @@ function citationsHTML(q, m, dir) {
     <div class="meta">
       <div class="who-b"><button class="who" id="btn-who" aria-label="${esc(nameCase(q.name))}, voir la fiche du personnage">${esc(nameCase(q.name))}</button>
         ${fmtEp(q) ? `<p class="src">${epHTML(q)}</p>` : ''}${byHTML(q)}</div>
-      ${verifyMode ? `${q.video ? `<button class="ic" id="btn-video" aria-label="Scène en grand">${icon('film')}</button>` : ''}<button class="ic" id="btn-share" aria-label="Partager">${icon('share')}<span class="t lab">Partager</span></button>` : ''}
+      ${verifyMode ? `${m.couper ? `<button class="ic" id="btn-coupe" aria-label="Ajuster la coupe">${icon('cut')}</button>` : ''}${q.video ? `<button class="ic" id="btn-video" aria-label="Scène en grand">${icon('film')}</button>` : ''}<button class="ic" id="btn-share" aria-label="Partager">${icon('share')}<span class="t lab">Partager</span></button>` : ''}
       ${favCellHTML(q, m.fav)}
     </div>
     <div class="scrub${playable ? '' : ' none'}" id="scrub" aria-hidden="true"><div class="track"><i></i></div><span class="badge" data-t="${m.badge}"${m.badge ? '' : ' hidden'}>${m.badge}</span></div>
     ${verifyMode ? `
-      ${m.reviewable ? `<div class="vrow">${listenHTML(q, 'tp sm')}<button class="ok" id="avis-ok">${icon('check')}<span>${m.what}</span></button><button class="ko" id="avis-ko">Problème</button></div>` : ''}
+      ${m.reviewable ? `<div class="vrow">${listenHTML(q, 'tp sm')}${m.deja ? `<span class="vdone" id="avis-deja" role="img" aria-label="${dejaLabel(q)[1]}">${icon('check')}<span>${dejaLabel(q)[0]}</span></span>` : `<button class="ok" id="avis-ok">${icon('check')}<span>${m.what}</span></button>`}<button class="ko" id="avis-ko">Problème</button></div>` : ''}
       <div class="vfoot"><div class="stage-foot vf"><span class="quote-counter">${m.counter}</span>${m.reviewable ? `<button class="skip" id="avis-skip">Passer</button>` : ''}</div><div class="done-slot"></div></div>`
     : `
       <div class="transport">
@@ -1276,7 +1345,8 @@ function bindCitations(q, m, keep) {
   $('btn-fav').addEventListener('click', () => favButton($('btn-fav'), q));
   $('btn-share').addEventListener('click', () => shareQuote(q, $('btn-share')));
   if (m.reviewable) {
-    $('avis-ok').addEventListener('click', () => recordAvis(q, true, [], ''));
+    $('avis-ok')?.addEventListener('click', () => recordAvis(q, true, [], ''));
+    $('btn-coupe')?.addEventListener('click', () => openCoupe(q));
     $('avis-ko').addEventListener('click', () => openProblem(q));
     $('avis-skip')?.addEventListener('click', () => { if (inOrder) stepQuote(1); else randomQuote(); });
   } else if (!verifyMode) {
@@ -1414,7 +1484,7 @@ function renderCitations(dir = 0) {
   if (!allQuotes.length) return;
   refreshScope();                                                      // avant le rendu : la carte se mesure à sa vraie place
   const forced = showAnyway; showAnyway = false;
-  if (verifyMode && !verifyIdx.length) { renderVerifyDone(); return; }   // tout est vérifié : on s'arrête
+  if (verifyMode && !verifyIdx.length && !forced) { renderVerifyDone(); return; }   // tout est vérifié : on s'arrête (sauf réplique cherchée)
   if (!verifyMode && !forced && poolEmpty()) { renderEmptySel(); return; }
   const fid = main.contains(document.activeElement) ? document.activeElement.id : '';
   if (!allQuotes[quoteIdx]) quoteIdx = pickRandom();          // index périmé (filtres, données changées)
@@ -1479,6 +1549,7 @@ function openProblem(q) {
     <div class="grab" aria-hidden="true"></div>
     <div class="sh-nav"><button class="l" id="avis-cancel">Annuler</button><h2 id="sh-title">Problème</h2><button class="r" id="avis-send2" disabled>Envoyer</button></div>
     <p class="gf ctr">${esc(ctx)}</p>
+    ${coupeHTML(q)}
     ${PB_LISTS.filter(([k]) => has(k)).map(([, lab, rows]) => `<p class="gh">${lab}</p><div class="g">${rows.map(([id, l]) =>
       `<button class="gr" data-pb="${id}" role="checkbox" aria-checked="false"><span class="k">${l}</span>${icon('check', 'ck')}</button>`).join('')}</div>`).join('')}
     <p class="gh"><label for="avis-note">Précision (facultatif)</label></p>
@@ -1497,19 +1568,164 @@ function openProblem(q) {
   note.addEventListener('input', () => { upd(); note.style.height = 'auto'; note.style.height = Math.min(Math.max(note.scrollHeight, 88), 120) + 'px'; refreshCaret(); });
   note.addEventListener('focus', () => setTimeout(() => { note.scrollIntoView({ block: 'center' }); refreshCaret(); }, 300));
   sheet.querySelector('#avis-cancel').addEventListener('click', closeSheet);
-  const go = () => { closeSheet(); recordAvis(q, false, [...picked], note.value.trim()); };
+  sheet.querySelector('#pb-coupe')?.addEventListener('click', () => { closeSheet(); openCoupe(q); });
+  sheet.querySelector('#pb-recoupe')?.addEventListener('click', () => { closeSheet(); demanderRecoupe(q); });
+  // réplique déjà classée (par soi ou un autre) : le signalement part quand même, c'est un nouvel avis voulu
+  const go = () => { closeSheet(); recordAvis(q, false, [...picked], note.value.trim(), {}, dejaVue(q)); };
   send.addEventListener('click', go); send2.addEventListener('click', go);
 }
-function recordAvis(q, ok, problemes, note) {
-  if (avisFaits[q.i]) return;                   // jamais deux avis pour la même réplique
+// État d'une réplique déjà classée, dans la carte Vérifier (à la place de « OK ») : [court, à l'écran ; long, pour VoiceOver]
+function dejaLabel(q) {
+  const c = coupeDe(q);
+  if (demandeDe(q)) return ['À recouper', 'Nouvelle coupe demandée : la réplique reviendra à vérifier'];
+  if (c && !c.fini) return ['Coupée', 'Coupe envoyée : elle remplace l’extrait d’ici une heure'];
+  return avisFaits[q.i] === 2 ? ['Déjà signalée', 'Déjà signalée'] : ['Déjà vérifiée', 'Déjà vérifiée'];
+}
+// En tête de la feuille Problème : refaire la coupe soi-même, ou demander qu'elle soit refaite (coupe ratée)
+function coupeHTML(q) {
+  if (!q.audio && !q.video) return '';
+  if (peutCouper(q)) return `<div class="g"><button class="gr act" id="pb-coupe"><span class="k">Ajuster la coupe<small>Reprendre le début ou la fin sur la vidéo, comme dans Photos</small></span>${icon('chev', 'chev')}</button></div>`;
+  if (demandeDe(q)) return `<p class="gf">Nouvelle coupe demandée : la réplique reviendra à vérifier, avec une vidéo à recouper.</p>`;
+  if (coupeDe(q) || dejaVue(q)) return `<div class="g"><button class="gr act" id="pb-recoupe"><span class="k">La coupe est ratée : la refaire<small>La réplique reviendra à vérifier, avec une vidéo à recouper</small></span>${icon('chev', 'chev')}</button></div>`;
+  return '';
+}
+// « Coupe ratée » : la demande part dans la file des avis ; la réplique reste affichée, avec son nouvel état
+function demanderRecoupe(q) {
+  const ts = Date.now(), fp = fpOf(q);
+  avisFile.push({ i: q.i, quote: q.quote, name: q.name, audio: q.audio, video: q.video, approx: q.approx, fp, ok: false, problemes: [], note: '', demande: 'recoupe', ts });
+  if (!writeJSON('kaam_avis_file', avisFile)) { avisFile.pop(); document.getElementById('sr-live').textContent = 'Demande impossible : le stockage du téléphone est plein.'; return; }
+  mesDemandes[q.i] = { fp, ts }; writeJSON('kaam_demandes', mesDemandes);
+  scheduleSend();
+  lastAvis = { i: q.i, idx: quoteIdx, ts, t: Date.now(), what: 'Recoupe demandée', demande: true, label: nameCase(q.name) };
+  showAnyway = true; showQuote(quoteIdx, 0);
+}
+
+// ===== AJUSTER LA COUPE (façon Photos) : la vidéo élargie, une poignée de début et une de fin =====
+// La vidéo élargie contient cx[0] s avant l'extrait, l'extrait (cx[1] s) et cx[2] s après ; les poignées partent sur l'extrait.
+// Valider envoie les décalages [début, fin] : la coupe vaut validation, et joue tout de suite (fenêtre) en attendant le serveur.
+const CUT_MIN = 0.2;                       // durée minimale d'un extrait
+const secFR = t => `${(Math.round(t * 100) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} s`;
+const ecart = (t, fem) => Math.abs(t) < 0.005 ? (fem ? 'inchangée' : 'inchangé') : `${t < 0 ? '−' : '+'}${secFR(Math.abs(t))}`;
+function openCoupe(q) {
+  if (!peutCouper(q)) return;
+  stopAudio();
+  const [pre, d, post] = q.cx, T = pre + d + post;
+  let a = pre, b = pre + d;
+  const ctx = [nameCase(q.name), q.tr ? coteEp(q) : q.film ? 'Film' : [q.livre && `Livre ${q.livre}`, q.episode && `Épisode ${q.episode}`].filter(Boolean).join(' · ')].filter(Boolean).join(' · ');
+  const pc = t => `${(t / T * 100).toFixed(3)}%`;
+  const sheet = openSheet(`
+    <div class="grab" aria-hidden="true"></div>
+    <div class="sh-nav"><button class="l" id="cz-cancel">Annuler</button><h2 id="sh-title">Ajuster la coupe</h2><button class="r" id="cz-ok2">Valider</button></div>
+    <p class="gf ctr">${esc(ctx)}</p>
+    ${sceneHTML(q, 'cz-fig').replace('class="scene"', 'class="scene cz"')}
+    <div class="tl" id="cz-tl" style="--o0:${pc(pre)};--o1:${pc(pre + d)}">
+      <div class="tl-track"><i class="tl-orig" aria-hidden="true"></i><i class="tl-sel" aria-hidden="true"></i><i class="tl-head" aria-hidden="true"></i>
+        <button class="tl-h" id="cz-a" role="slider" aria-label="Début de l’extrait" aria-valuemin="0" aria-valuemax="${T.toFixed(2)}"></button>
+        <button class="tl-h" id="cz-b" role="slider" aria-label="Fin de l’extrait" aria-valuemin="0" aria-valuemax="${T.toFixed(2)}"></button></div>
+    </div>
+    <p class="cz-t" id="cz-t" role="status"></p>
+    <div class="cz-row"><button class="pill gray" id="cz-play">${icon('play', 'i-pl')}${icon('pause', 'i-pa')}<span class="lp">Lecture</span><span class="ls">Pause</span></button><button class="pill gray" id="cz-reset">Réinitialiser</button></div>
+    <p class="gf">Glissez les poignées pour reprendre un début coupé ou retirer ce qui déborde (la réplique d’avant, le générique). Le pointillé marque la coupe actuelle. Votre coupe remplace l’extrait pour tout le monde.</p>
+    <div class="sh-foot"><button class="pill wide" id="cz-ok">Valider la coupe</button><p class="sh-help" id="cz-help" hidden></p></div>`);
+  sheet.classList.add('coupe');
+  const fig = sheet.querySelector('#cz-fig'), tl = sheet.querySelector('#cz-tl'), track = tl.querySelector('.tl-track');
+  const ha = sheet.querySelector('#cz-a'), hb = sheet.querySelector('#cz-b'), play = sheet.querySelector('#cz-play');
+  const v = document.createElement('video');
+  v.className = 'quote-video'; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
+  wireScene(v);
+  fig.querySelector('.frame').prepend(v);
+  const url = cxURL(q);
+  fig.dataset.src = url;
+  if (offlineMiss(url)) setScene(v, 'error'); else { v.src = mediaSrc(url); setScene(v, 'loading'); }
+  // prête : l'image du début de l'extrait, sans légende (la lecture se commande sous la barre)
+  v.addEventListener('loadeddata', () => {
+    if (fig.dataset.s !== 'loading') return;
+    clearTimeout(sceneGuards.get(v)); v.currentTime = a;
+    fig.dataset.s = 'pret'; fig.querySelector('.st').textContent = '';
+  });
+  let raf = 0;
+  const draw = () => {
+    tl.style.setProperty('--a', pc(a)); tl.style.setProperty('--b', pc(b));
+    tl.style.setProperty('--h', pc(Math.min(T, Math.max(0, v.currentTime || a))));
+    ha.setAttribute('aria-valuenow', a.toFixed(2)); ha.setAttribute('aria-valuetext', `Début ${ecart(a - pre)}`);
+    hb.setAttribute('aria-valuenow', b.toFixed(2)); hb.setAttribute('aria-valuetext', `Fin ${ecart(b - pre - d, true)}`);
+    sheet.querySelector('#cz-t').textContent = `Début ${ecart(a - pre)} · Fin ${ecart(b - pre - d, true)} · ${secFR(b - a)}`;
+  };
+  const playing = on => { play.classList.toggle('playing', on); };
+  const tick = () => {
+    cancelAnimationFrame(raf);
+    if (v.paused) { playing(false); draw(); return; }
+    if (v.currentTime >= b) { v.pause(); v.currentTime = b; playing(false); draw(); return; }
+    draw(); raf = requestAnimationFrame(tick);
+  };
+  v.addEventListener('playing', () => { playing(true); tick(); });
+  v.addEventListener('pause', () => playing(false));
+  // aperçu image : la vidéo se cale sur la poignée glissée (une demande de position par image affichée, pas plus)
+  let seekTo = null, seekRaf = 0;
+  const seek = t => { seekTo = t; if (!seekRaf) seekRaf = requestAnimationFrame(() => { seekRaf = 0; if (seekTo !== null && v.readyState) v.currentTime = Math.min(seekTo, (v.duration || T) - 0.01); seekTo = null; draw(); }); };
+  const tAt = x => { const r = track.getBoundingClientRect(); return Math.min(T, Math.max(0, (x - r.left) / r.width * T)); };
+  let drag = null;
+  const move = e => {
+    const t = tAt(e.clientX);
+    if (drag === 'a') { a = Math.min(Math.max(0, t), b - CUT_MIN); seek(a); }
+    else if (drag === 'b') { b = Math.max(Math.min(T, t), a + CUT_MIN); seek(b); }
+    else seek(Math.min(Math.max(t, 0), T));
+    draw();
+  };
+  tl.addEventListener('pointerdown', e => {
+    if (e.button > 0) return;
+    v.pause();
+    drag = e.target === ha ? 'a' : e.target === hb ? 'b' : 'scrub';
+    try { tl.setPointerCapture(e.pointerId); } catch {}
+    tl.classList.toggle('drag', drag !== 'scrub');
+    move(e); e.preventDefault();
+  });
+  tl.addEventListener('pointermove', e => { if (drag) { move(e); e.preventDefault(); } });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => tl.addEventListener(ev, () => { drag = null; tl.classList.remove('drag'); }));
+  tl.addEventListener('touchmove', e => e.preventDefault(), { passive: false });   // jamais de défilement pendant le glisser (iOS)
+  // clavier, VoiceOver : flèches ±0,05 s (Maj : ±0,5 s)
+  [[ha, 'a'], [hb, 'b']].forEach(([h, k]) => h.addEventListener('keydown', e => {
+    const st = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[e.key];
+    if (!st) return;
+    e.preventDefault();
+    const dt = st * (e.shiftKey ? 0.5 : 0.05);
+    if (k === 'a') { a = Math.min(Math.max(0, a + dt), b - CUT_MIN); seek(a); } else { b = Math.max(Math.min(T, b + dt), a + CUT_MIN); seek(b); }
+    draw();
+  }));
+  play.addEventListener('click', () => {
+    if (!v.paused) { v.pause(); return; }
+    if (fig.dataset.s === 'error') { if (!v.getAttribute('src') && !offlineMiss(url)) v.src = mediaSrc(url); v.load(); }
+    v.currentTime = a; v.muted = false;
+    v.play().catch(() => {});
+  });
+  fig.addEventListener('click', () => play.click());
+  sheet.querySelector('#cz-reset').addEventListener('click', () => { v.pause(); a = pre; b = pre + d; seek(a); draw(); });
+  sheet.querySelector('#cz-cancel').addEventListener('click', closeSheet);
+  const valider = () => {
+    const ds = Math.round((a - pre) * 100) / 100, de = Math.round((b - pre - d) * 100) / 100;
+    closeSheet();
+    if (!ds && !de) { recordAvis(q, true, [], ''); return; }          // rien de changé : c'est un « OK »
+    recordAvis(q, true, [], '', { coupe: [ds, de] }, true);
+  };
+  sheet.querySelector('#cz-ok').addEventListener('click', valider);
+  sheet.querySelector('#cz-ok2').addEventListener('click', valider);
+  draw();
+}
+
+// extra : { coupe: [ds, de] } (coupe refaite, vaut validation) ; force : nouvel avis sur une réplique déjà classée
+function recordAvis(q, ok, problemes, note, extra = {}, force = false) {
+  if (avisFaits[q.i] && !force) return;         // jamais deux avis pour la même réplique (double toucher)
   avisFaits[q.i] = ok ? 1 : 2;                  // 1 = validée, 2 = signalée
-  avisFile.push({ i: q.i, quote: q.quote, name: q.name, audio: q.audio, video: q.video, approx: q.approx, fp: fpOf(q), ok, problemes, note, ts: Date.now() });
+  const fp = fpOf(q);
+  avisFile.push({ i: q.i, quote: q.quote, name: q.name, audio: q.audio, video: q.video, approx: q.approx, fp, ok, problemes, note, ...extra, ts: Date.now() });
   // la file d'abord : si elle ne peut pas être écrite, la réplique n'est pas marquée « vérifiée » (elle reviendra)
   if (writeJSON('kaam_avis_file', avisFile)) writeJSON('kaam_avis_faits', avisFaits);
+  // la coupe joue tout de suite sur ce téléphone, sans attendre la liste commune
+  if (extra.coupe) { mesCoupes[q.i] = { fp, ds: extra.coupe[0], de: extra.coupe[1], ts: avisFile[avisFile.length - 1].ts }; writeJSON('kaam_coupes', mesCoupes); }
   if (avisFile.length >= 5) sendAvis(); else scheduleSend();
   // « Validé · Annuler » ou « Signalé · Annuler » pendant 5 s : un pouce qui glisse ne valide rien pour de bon
   const ts = avisFile[avisFile.length - 1].ts;
-  lastAvis = { i: q.i, idx: quoteIdx, ts, t: Date.now(), ok,
+  lastAvis = { i: q.i, idx: quoteIdx, ts, t: Date.now(), what: extra.coupe ? 'Coupé' : ok ? 'Validé' : 'Signalé',
     label: `${nameCase(q.name)}${q.film ? ', film' : q.tr ? `, ${coteEp(q)}` : q.livre ? `, Livre ${q.livre}${q.episode ? `, ép. ${q.episode}` : ''}` : ''}` };
   rebuildVerify();
   if (!verifyIdx.length) { renderCitations(); return; }
@@ -1523,7 +1739,7 @@ function showDoneLine() {
   const left = 5000 - (Date.now() - lastAvis.t);
   if (left <= 0) { lastAvis = null; return; }
   const sent = !avisFile.some(a => a.ts === lastAvis.ts);
-  slot.outerHTML = `<div class="done-line done-slot" role="status"><span><b>${lastAvis.ok ? 'Validé' : 'Signalé'}</b> · ${esc(lastAvis.label)}</span><button id="avis-undo"${sent ? ' disabled' : ''}>${sent ? 'Déjà envoyé' : 'Annuler'}</button></div>`;
+  slot.outerHTML = `<div class="done-line done-slot" role="status"><span><b>${lastAvis.what}</b> · ${esc(lastAvis.label)}</span><button id="avis-undo"${sent ? ' disabled' : ''}>${sent ? 'Déjà envoyé' : 'Annuler'}</button></div>`;
   document.getElementById('avis-undo').addEventListener('click', undoAvis);
   // la ligne d'annulation prend la place du compteur le temps de ses 5 s (même hauteur : rien ne bouge sous le pouce)
   const foot = document.querySelector('.stage-foot.vf');
@@ -1537,14 +1753,17 @@ function showDoneLine() {
 function undoAvis() {
   const last = lastAvis;
   if (!last || !avisFile.some(a => a.ts === last.ts)) return;
-  delete avisFaits[last.i];
+  if (!last.demande) delete avisFaits[last.i];
+  if (mesCoupes[last.i]?.ts === last.ts) { delete mesCoupes[last.i]; writeJSON('kaam_coupes', mesCoupes); }
+  if (mesDemandes[last.i]?.ts === last.ts) { delete mesDemandes[last.i]; writeJSON('kaam_demandes', mesDemandes); }
   avisFile = avisFile.filter(a => a.ts !== last.ts);
   writeJSON('kaam_avis_faits', avisFaits);   // ordre inverse de recordAvis : jamais un avis en file pour une réplique non marquée
   writeJSON('kaam_avis_file', avisFile);
   lastAvis = null; clearTimeout(doneTimer);
   rebuildVerify();
-  showQuote(last.idx, -1);
-  document.getElementById('sr-live').textContent = 'Avis annulé.';
+  showAnyway = true;                         // la réplique revient, même si elle était la dernière à vérifier
+  showQuote(last.idx, last.demande ? 0 : -1);
+  document.getElementById('sr-live').textContent = last.demande ? 'Demande annulée.' : 'Avis annulé.';
 }
 // Écran de fin : plus rien à vérifier dans cette sélection
 function renderVerifyDone() {
@@ -1882,7 +2101,7 @@ function quizShowScene(q, replay) {
   const fig = document.getElementById('quiz-fig');
   bindScene(fig, cardVideo);
   if (!replay) playCardVideo(q, fig);
-  else { fig.querySelector('.frame').prepend(cardVideo); cardVideo.src = mediaSrc(videoURL(q)); setScene(cardVideo, 'loading'); cardVideo.muted = true; cardVideo.play().catch(() => {}); }
+  else { fig.querySelector('.frame').prepend(cardVideo); cardVideo.src = mediaSrc(playURL(q)); setScene(cardVideo, 'loading'); cardVideo.muted = true; cardVideo.play().catch(() => {}); }
 }
 // rangée du pouce après la réponse : Partager / Quiz libre (question du jour) ou Question suivante
 function quizNavAfter(daily) {
@@ -1963,7 +2182,7 @@ function renderQuiz(daily = false) {
   }
   quizState.current = q;
   quizState.answered = false;
-  cachedMedia(videoURL(q));                  // la scène se télécharge pendant que l'on réfléchit
+  cachedMedia(playURL(q));                   // la scène se télécharge pendant que l'on réfléchit
   const short = innerHeight < 620;
   const fs = Math.round(Math.min(quoteSize(q.quote), short ? Q_MAX.quizSE : Q_MAX.quiz) * textScale());
   const done = dailyState();
@@ -2504,10 +2723,13 @@ function doSearch(query, container, keep) {
 // ===== FAVORIS =====
 // Les favoris sont gardés tels qu'enregistrés ; on retrouve la réplique à jour (son, scène) par son index stable i, puis par texte et nom
 let byI = null;
+function parI(i) {
+  if (!byI || byI.src !== allQuotes) byI = { src: allQuotes, m: new Map(allQuotes.map(q => [q.i, q])) };
+  return byI.m.get(+i) || null;
+}
 function liveQuote(f) {
   if (!allQuotes.length) return { ...f, live: true };
-  if (!byI || byI.src !== allQuotes) byI = { src: allQuotes, m: new Map(allQuotes.map(q => [q.i, q])) };
-  const hit = (f.i != null && byI.m.get(f.i)) || null;
+  const hit = (f.i != null && parI(f.i)) || null;
   if (hit && hit.quote === f.quote) return { ...hit, live: true };
   const t = allQuotes.find(x => sameQuote(f, x));
   return t ? { ...t, live: true } : { ...f, live: false };
@@ -2541,7 +2763,7 @@ function renderFavoris() {
 // Lecteur sans commandes : toucher la vidéo la rejoue depuis le début, son activé
 function replayVideo(v) {
   player.pause(); setPlayingBtn(null);          // jamais deux sons à la fois
-  v.muted = false; v.currentTime = 0;
+  v.muted = false; seekStart(v);
   v.play().catch(() => {});
 }
 
@@ -2569,9 +2791,9 @@ function showVideo(q) {
   const v = document.createElement('video');
   v.className = 'quote-video'; v.id = 'mvideo';
   v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
-  wireScene(v);
+  wireScene(v); watchWin(v);
   fig.querySelector('.frame').prepend(v);
-  fig.dataset.src = videoURL(q);
+  fig.dataset.src = playURL(q);
   if (offlineMiss(fig.dataset.src)) setScene(v, 'error');
   else { v.src = mediaSrc(fig.dataset.src); setScene(v, 'loading'); }
   bindScene(fig, v);
@@ -2772,6 +2994,10 @@ function showRenderError() {
 // Le banc ne dépend que de ce pont : les noms internes peuvent changer sans le casser.
 window.__kaam = {
   get avisTous() { return avisTous; }, fpOf, loadAvisTous,
+  get avisCoupes() { return avisCoupes; }, set avisCoupes(v) { avisCoupes = v; },
+  get avisDemandes() { return avisDemandes; }, set avisDemandes(v) { avisDemandes = v; },
+  get mesCoupes() { return mesCoupes; }, get mesDemandes() { return mesDemandes; },
+  fenetre, openCoupe, get cardVideo() { return cardVideo; },
   get allQuotes() { return allQuotes; },
   get quoteIdx() { return quoteIdx; }, set quoteIdx(v) { quoteIdx = v; },
   get verifyIdx() { return verifyIdx; },

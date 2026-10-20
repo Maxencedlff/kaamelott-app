@@ -170,6 +170,8 @@ class Worker:
         self.expect_errors = False      # erreurs console attendues (test 403)
         self.avis_posts = []            # corps des POST /api/avis capturés
         self.avis_tous = {}             # réponse simulée de GET /api/avis : déjà vérifiées par les autres {i: empreinte}
+        self.avis_coupes = {}           # … coupes refaites dans l'appli {i: {fp, ds, de[, fini]}}
+        self.avis_demandes = {}         # … recoupes demandées {i: 1}
         self.out = None
         self.deadline = float(os.environ.get("QA_DEADLINE", time.time() + GLOBAL_BUDGET))
         self.browser = None; self._ctx = None; self._launch = None; self._ctx_kw = None
@@ -227,9 +229,16 @@ class Worker:
             if REAL_MEDIA:
                 return route.continue_()
             isv = ".mp4" in request.url.split("?")[0]
-            body = _stub("stub.mp4" if isv else "stub.m4a")
+            # vidéo élargie (coupe dans l'appli) : 8 s de mire muette, pour glisser les poignées
+            body = _stub("cx.mp4" if "/cx/" in request.url else "stub.mp4" if isv else "stub.m4a")
             if body is None:
                 return route.abort()
+            rg = re.match(r"bytes=(\d+)-(\d*)", request.headers.get("range", ""))
+            if rg and "/cx/" in request.url:        # WebKit ne cale une vidéo (poignées) que sur un serveur qui sert des plages
+                a0 = int(rg.group(1)); a1 = min(int(rg.group(2) or len(body) - 1), len(body) - 1)
+                return route.fulfill(status=206, body=body[a0:a1 + 1], headers={
+                    "content-type": "video/mp4", "content-range": f"bytes {a0}-{a1}/{len(body)}", "accept-ranges": "bytes",
+                    "access-control-allow-origin": "*", "cache-control": "no-store"})
             return route.fulfill(status=200, body=body, headers={
                 "content-type": "video/mp4" if isv else "audio/mp4",
                 "access-control-allow-origin": "*", "cache-control": "no-store"})
@@ -237,7 +246,8 @@ class Worker:
 
         def avis(route, request):
             if request.method == "GET":
-                return route.fulfill(status=200, body=json.dumps({"faits": self.avis_tous}), headers={"content-type": "application/json"})
+                return route.fulfill(status=200, body=json.dumps({"faits": self.avis_tous, "coupes": self.avis_coupes, "demandes": self.avis_demandes}),
+                                     headers={"content-type": "application/json"})
             try: self.avis_posts.append(json.loads(request.post_data or "null"))
             except Exception: self.avis_posts.append(None)
             n = len(((self.avis_posts[-1] or {}).get("avis")) or [])
@@ -762,6 +772,143 @@ def scenario_video_sound(w):
         w.step(f"Vidéo suivante {k + 1} : reste avec le son", s_next)
 
 
+def scenario_coupe(w, tag="", full=True):
+    """Ajuster la coupe dans l'appli (vidéo élargie simulée, cx = [3, 2, 3]) ; full=False : écran seul (captures)."""
+    K = "__kaam"
+    def page(prefs=None):
+        pg = w.new_page(w.ctx(), {"kaam_verify": "1", **(prefs or {})}); w.goto(pg); return pg
+
+    # une réplique avec scène dans la file, dotée d'une vidéo élargie : 3 s avant, extrait de 2 s, 3 s après
+    PREP = f"""() => {{ const K = {K}; const p = K.verifyIdx.find(k => K.allQuotes[k].video && K.allQuotes[k].audio);
+      const q = K.allQuotes[p]; q.cx = [3, 2, 3]; K.quoteIdx = p; K.render(); return q.i; }}"""
+
+    def ouvre(pg):
+        i = pg.evaluate(PREP)
+        pg.wait_for_selector("#btn-coupe")
+        pg.click("#btn-coupe"); pg.wait_for_selector("#cz-tl")
+        pg.wait_for_function("() => document.getElementById('cz-fig')?.dataset.s === 'pret'", timeout=10000)
+        pg.wait_for_function("() => !document.getElementById('sheet').getAnimations().length", timeout=3000)   # feuille montée
+        return i
+
+    def glisse(pg, sel, dt):
+        """Glisse une poignée de dt secondes (8 s sur toute la piste), au doigt (événements de pointeur)."""
+        r = pg.evaluate(f"""() => {{ const t = document.querySelector('.tl-track').getBoundingClientRect(), h = document.querySelector('{sel}').getBoundingClientRect();
+          return {{ x: h.left + h.width / 2, y: h.top + h.height / 2, w: t.width }}; }}""")
+        pg.mouse.move(r["x"], r["y"]); pg.mouse.down()
+        for k in range(1, 7): pg.mouse.move(r["x"] + dt / 8 * r["w"] * k / 6, r["y"] + (k % 2)); pg.wait_for_timeout(16)
+        pg.mouse.up(); pg.wait_for_timeout(120)
+
+    def s_ecran(rec):
+        pg = page()
+        try:
+            ouvre(pg)
+            glisse(pg, "#cz-a", -0.5)
+            w.shot(pg, rec, f"80-coupe{tag}")
+            pg.emulate_media(color_scheme="dark"); pg.wait_for_timeout(150)
+            w.shot(pg, rec, f"80b-coupe-sombre{tag}")
+            r = pg.evaluate("""() => { const s = document.getElementById('sheet'), b = document.getElementById('cz-ok').getBoundingClientRect();
+              return { txt: document.getElementById('cz-t').textContent, sh: s.scrollHeight, ch: s.clientHeight, ok: b.height,
+                scroll: document.scrollingElement.scrollTop }; }""")
+        finally:
+            pg.close()
+        if "Début −0,5" not in r["txt"] or r["scroll"]: raise RuntimeError(f"poignée début : {r}")
+        return f"« {r['txt']} » ; feuille {r['ch']} px ({'défile' if r['sh'] > r['ch'] + 1 else 'tient'})"
+    w.step(f"Coupe : écran façon Photos, clair et sombre{tag}", s_ecran)
+    if not full: return
+
+    def s_regles(rec):
+        pg = page()
+        try:
+            i = pg.evaluate(PREP)
+            r = {"libre": pg.evaluate("!!document.getElementById('btn-coupe')")}
+            w.shot(pg, rec, f"79-carte-ciseaux{tag}")
+            pg.evaluate(f"() => {{ const K = {K}, q = K.allQuotes[K.quoteIdx]; K.avisCoupes = {{ [q.i]: {{ fp: K.fpOf(q), ds: 0, de: 0 }} }}; K.render(); }}")
+            r["coupee"] = pg.evaluate("!!document.getElementById('btn-coupe')")
+            pg.evaluate(f"() => {{ const K = {K}; K.avisCoupes = {{ [{i}]: {{ fp: 'autre', ds: 0, de: 0, fini: 1 }} }}; K.render(); }}")
+            r["ancienne"] = pg.evaluate("!!document.getElementById('btn-coupe')")
+            pg.evaluate(f"() => {{ const K = {K}; K.avisCoupes = {{}}; K.avisDemandes = {{ [{i}]: 1 }}; K.render(); }}")
+            r["demandee"] = pg.evaluate("!!document.getElementById('btn-coupe')")
+            pg.evaluate(f"() => {{ const K = {K}; K.avisDemandes = {{}}; K.allQuotes[K.quoteIdx].cx = null; K.render(); }}")
+            r["sans_cx"] = pg.evaluate("!!document.getElementById('btn-coupe')")
+            pg.evaluate(f"() => {{ const K = {K}; K.allQuotes[K.quoteIdx].cx = [3, 2, 3]; K.render(); }}")
+            pg.click("#avis-ko"); pg.wait_for_selector("[data-pb]")
+            r["feuille"] = pg.evaluate("!!document.getElementById('pb-coupe')")
+        finally:
+            pg.close()
+        if r != {"libre": True, "coupee": False, "ancienne": True, "demandee": False, "sans_cx": False, "feuille": True}: raise RuntimeError(str(r))
+        return "bouton : oui si vidéo élargie, non si coupée (même version) ou recoupe demandée ; aussi dans la feuille Problème"
+    w.step(f"Coupe : bouton visible selon les règles{tag}", s_regles)
+
+    def s_valide(rec):
+        w.avis_posts.clear()
+        pg = page()
+        try:
+            i = ouvre(pg)
+            glisse(pg, "#cz-a", -0.5); glisse(pg, "#cz-b", 0.3)
+            txt = pg.evaluate("document.getElementById('cz-t').textContent")
+            pg.click("#cz-ok"); pg.wait_for_selector("#sheet", state="hidden")
+            r = pg.evaluate(f"""() => {{ const K = {K}; return {{ next: K.allQuotes[K.quoteIdx].i, faite: K.avisFaits[{i}], mine: K.mesCoupes[{i}], line: document.querySelector('.done-line')?.innerText }}; }}""")
+            pg.evaluate(f"{K}.sendAvis()")
+            pg.wait_for_function(f"() => {K}.avisFile.length === 0", timeout=8000)
+            # la coupe joue tout de suite : vidéo élargie, de 2,5 s à 5,3 s
+            pg.evaluate(f"() => {{ const K = {K}; K.quoteIdx = K.allQuotes.findIndex(q => q.i === {i}); K.render(); }}")
+            pg.wait_for_function("() => { const v = document.getElementById('qvideo'); return v && /\\/cx\\//.test(v.src) && !v.paused && v.currentTime > 2.4; }", timeout=8000)
+            pg.wait_for_function("() => { const v = document.getElementById('qvideo'); return v.paused; }", timeout=8000)
+            fin = pg.evaluate("""() => { const v = document.getElementById('qvideo'); return { t: v.currentTime, st: document.querySelector('#qvideo-slot').dataset.s,
+              deja: document.getElementById('avis-deja')?.innerText, ok: !!document.getElementById('avis-ok'), coupe: !!document.getElementById('btn-coupe') }; }""")
+            w.shot(pg, rec, f"81-coupe-envoyee{tag}")
+        finally:
+            pg.close()
+        sent = [a for p in w.avis_posts if p for a in p.get("avis", []) if a.get("i") == i]
+        c = (sent[0].get("coupe") if sent else None) or [9, 9]
+        if not sent or sent[0].get("ok") is not True or abs(c[0] + 0.5) > 0.08 or abs(c[1] - 0.3) > 0.08: raise RuntimeError(f"envoyé : {sent[:1]} ({txt})")
+        if r["next"] == i or r["faite"] != 1 or not r["mine"] or "Coupé" not in (r["line"] or ""): raise RuntimeError(f"après Valider : {r}")
+        if not (5.15 <= fin["t"] <= 5.5) or fin["st"] != "ended" or fin["ok"] or fin["coupe"] or "Coupée" not in (fin["deja"] or ""): raise RuntimeError(f"lecture fenêtrée : {fin}")
+        return f"« {txt} » → coupe {c} envoyée (vaut OK), réplique suivante ; relue : vidéo élargie de 2,5 à {fin['t']:.2f} s, « {fin['deja']} »"
+    w.step(f"Coupe : glisser, Valider, lecture fenêtrée{tag}", s_valide)
+
+    def s_recoupe(rec):
+        w.avis_posts.clear()
+        pg = page()
+        try:
+            i = pg.evaluate(PREP)
+            pg.evaluate(f"() => {{ const K = {K}, q = K.allQuotes[K.quoteIdx]; K.avisCoupes = {{ [q.i]: {{ fp: K.fpOf(q), ds: -0.2, de: 0, fini: 1 }} }}; K.avisFaits[q.i] = 1; K.render(); }}")
+            deja = pg.evaluate("document.getElementById('avis-deja')?.innerText")
+            pg.click("#avis-ko"); pg.wait_for_selector("#pb-recoupe")
+            w.shot(pg, rec, f"82-recoupe{tag}")
+            pg.click("#pb-recoupe"); pg.wait_for_selector("#sheet", state="hidden")
+            apres = pg.evaluate("document.getElementById('avis-deja')?.innerText")
+            pg.evaluate(f"{K}.sendAvis()"); pg.wait_for_function(f"() => {K}.avisFile.length === 0", timeout=8000)
+            src = pg.evaluate("document.getElementById('qvideo').src")
+        finally:
+            pg.close()
+        sent = [a for p in w.avis_posts if p for a in p.get("avis", []) if a.get("i") == i]
+        if "Déjà vérifiée" not in (deja or "") or "À recouper" not in (apres or "") or not sent or sent[0].get("demande") != "recoupe" or "/cx/" in src:
+            raise RuntimeError(f"déjà={deja!r} après={apres!r} envoyé={sent[:1]} src={src}")
+        return f"« {deja} » → « La coupe est ratée : la refaire » → demande envoyée, « {apres} » ; coupe finie : lecture normale"
+    w.step(f"Coupe : demande de recoupe{tag}", s_recoupe)
+
+    def s_cherche(rec):
+        pg = page()
+        try:
+            w.nav(pg, "recherche")
+            pg.fill("#search-input", "c est pas faux")
+            pg.wait_for_selector("#search-results .ent-q[data-act=goto]")
+            q0 = pg.evaluate("document.querySelector('#search-results .ent-q').textContent")
+            pg.locator("#search-results .ent-q[data-act=goto]").first.click()
+            pg.wait_for_selector(".bar.verify")
+            r = pg.evaluate(f"""() => {{ const q = {K}.allQuotes[{K}.quoteIdx]; return {{ q: q.quote, ok: !!document.getElementById('avis-ok'), ko: !!document.getElementById('avis-ko') }}; }}""")
+            # déjà vérifiée par un autre : l'état est dit, plus de OK, Problème reste
+            pg.evaluate(f"() => {{ const K = {K}, q = K.allQuotes[K.quoteIdx]; K.avisTous[q.i] = K.fpOf(q); K.render(); }}")
+            d = pg.evaluate("({ deja: document.getElementById('avis-deja')?.innerText, ok: !!document.getElementById('avis-ok') })")
+            w.shot(pg, rec, f"83-verifier-recherche{tag}")
+        finally:
+            pg.close()
+        if not r["ok"] or not r["ko"] or "faux" not in r["q"].lower() or "Déjà vérifiée" not in (d["deja"] or "") or d["ok"]: raise RuntimeError(f"{q0!r} {r} {d}")
+        return f"résultat ouvert dans la carte Vérifier (OK / Problème) ; déjà vérifiée ailleurs : « {d['deja']} »"
+    w.step(f"Vérifier : la recherche ouvre la réplique à vérifier{tag}", s_cherche)
+
+
 def scenario_vague2(w):
     """Comportements fins (iPhone SE, le plus contraint)."""
     def page(prefs=None, extra=None):
@@ -901,13 +1048,23 @@ def scenario_vague2(w):
 
     def s_verify_tout(rec):
         pg = page({"kaam_verify": "1"})
+        # au hasard, la carte vient de toute la file : on se place sur une réplique avec son
+        pg.evaluate("() => { const K = __kaam; K.quoteIdx = K.verifyIdx.find(p => K.allQuotes[p].audio); K.render(); }")
         pg.click("#avis-ko"); pg.wait_for_selector("[data-pb]")
         avec = pg.evaluate("() => [...document.querySelectorAll('[data-pb]')].map(b => b.dataset.pb)")
         w.shot(pg, rec, "35b-probleme-son")
         pg.click("#avis-cancel"); pg.wait_for_timeout(150)
+        # une seule file, un seul compteur : toute la sélection non classée, sons estimés d'abord, sans son ni vidéo à la fin
+        f = pg.evaluate("""() => { const K = __kaam, Q = K.verifyIdx.map(p => K.allQuotes[p]);
+          const tot = K.allQuotes.filter(q => !K.avisFaits[q.i]).length, med = q => !!(q.audio || q.video), rang = q => !med(q) ? 2 : q.approx ? 0 : 1;
+          return { n: Q.length, tot, first: Q[0].approx, last: !med(Q[Q.length - 1]), ordre: Q.every((q, k, A) => !k || rang(A[k - 1]) <= rang(q)),
+            sum: document.querySelector('.bar-sum').innerText }; }""")
+        m = re.search(r"([\d\u202f\u00a0 ]+) restante", f["sum"])
+        if f["n"] < 0.9 * f["tot"] or not f["first"] or not f["last"] or not f["ordre"] or "Tout vérifier" not in f["sum"] or not m or re.sub(r"\D", "", m.group(1)) != str(f["n"]):
+            raise RuntimeError(f"file unique : {f}")
         # sons et scènes tous vus : il reste les répliques sans rien, elles passent aussi
         pg.evaluate("""() => { const K = __kaam; K.allQuotes.forEach(q => { if (q.audio || q.video) K.avisFaits[q.i] = 1; }); K.rebuildVerify(); K.render(); }""")
-        pg.click("#avis-skip"); pg.wait_for_timeout(250)      # « Passer » : la suivante vient du palier sans son ni vidéo
+        pg.click("#avis-skip"); pg.wait_for_timeout(250)      # « Passer » : la suivante est une réplique sans son ni vidéo
         r = pg.evaluate("""() => { const q = __kaam.allQuotes[__kaam.quoteIdx]; return { media: !!(q.audio || q.video), ok: document.getElementById('avis-ok').innerText,
           sum: document.querySelector('.bar-sum').innerText }; }""")
         pg.click("#avis-ko"); pg.wait_for_selector("[data-pb]")
@@ -916,10 +1073,11 @@ def scenario_vague2(w):
         pg.close()
         need = {"son_debut_coupe", "son_deborde_avant", "son_generique", "texte_perso"}
         if not need <= set(avec) or "son_absent" in avec: raise RuntimeError(f"cases avec son : {avec}")
-        if r["media"] or "Texte OK" not in r["ok"] or "Sans son" not in r["sum"] or "son_absent" not in sans or "son_faux" in sans:
+        if r["media"] or "Texte OK" not in r["ok"] or "Tout vérifier" not in r["sum"] or "son_absent" not in sans or "son_faux" in sans:
             raise RuntimeError(f"réplique sans son : {r} cases {sans}")
-        return f"{len(avec)} cases avec son (début coupé, déborde avant, générique…) ; puis répliques sans son : « Texte OK », « Le son manque »"
-    w.step("Vérifier : toutes les répliques, motifs détaillés", s_verify_tout)
+        return (f"une seule file de {f['n']} répliques (« {f['sum']} »), sons estimés d'abord, sans son ni vidéo à la fin ; "
+                f"{len(avec)} cases avec son ; puis répliques sans son : « Texte OK », « Le son manque »")
+    w.step("Vérifier : toutes les répliques en une file, motifs détaillés", s_verify_tout)
 
     def s_verify(rec):
         pg = page({"kaam_verify": "1"})
@@ -2201,11 +2359,11 @@ def worker_main(kind, base, out):
             elif kind == "iphoneSE":
                 w.setup(wk, dict(p.devices["iPhone SE"]), ios_policy=True); scenario_screens(w)
             elif kind == "vague2":
-                w.setup(wk, dict(p.devices["iPhone SE"]), ios_policy=True); scenario_vague2(w)
+                w.setup(wk, dict(p.devices["iPhone SE"]), ios_policy=True); scenario_vague2(w); scenario_coupe(w, " (SE)", full=False)
             elif kind == "video-sound":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_video_sound(w)
             elif kind == "fonctions":
-                w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_fonctions(w)
+                w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_fonctions(w); scenario_coupe(w)
             elif kind == "sombre":
                 d = dict(p.devices["iPhone 13"]); d["color_scheme"] = "dark"
                 w.setup(wk, d, ios_policy=True); scenario_sombre(w)
@@ -2223,6 +2381,11 @@ def worker_main(kind, base, out):
             elif kind in ("android-pixel7", "android-s8"):
                 d = dict(p.devices["Pixel 7" if kind == "android-pixel7" else "Galaxy S8"])
                 w.setup(lambda: p.chromium.launch(args=["--mute-audio"], env=env, timeout=30000), d); scenario_android(w)
+                if kind == "android-pixel7": scenario_coupe(w, " (Android)")
+            elif kind in ("coupe", "coupe-android"):     # mise au point seule (hors banc complet)
+                if kind == "coupe": w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True)
+                else: w.setup(lambda: p.chromium.launch(args=["--mute-audio"], env=env, timeout=30000), dict(p.devices["Pixel 7"]))
+                scenario_coupe(w)
             elif kind == "correctifs":
                 w.setup(wk, dict(p.devices["iPhone 13"]), ios_policy=True); scenario_correctifs(w)
             elif kind == "combos":

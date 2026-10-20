@@ -8,18 +8,21 @@ const handler = require(path.join(APP, 'api', 'avis.js'));
 const ORIGIN = 'https://kaamelott-app.vercel.app';
 let ipN = 0;
 
-// faux GitHub : avis/… rangés dans puts ; faits.json gardé dans `faits` (sha qui change à chaque écriture, `conflits`
-// premières écritures refusées en 409 comme lors de deux envois simultanés)
-function call({ method = 'POST', origin = ORIGIN, type = 'application/json', body = {}, ip, token = 'factice', github = 201, faits = null, conflits = 0 } = {}) {
-  const puts = [], store = { faits, sha: faits ? 's0' : null, n: 0 };
+// faux GitHub : avis/… rangés dans puts ; faits.json et coupes.json gardés dans store (sha qui change à chaque écriture,
+// `conflits` premières écritures refusées en 409 comme lors de deux envois simultanés)
+function call({ method = 'POST', origin = ORIGIN, type = 'application/json', body = {}, ip, token = 'factice', github = 201, faits = null, coupes = null, conflits = 0 } = {}) {
+  const puts = [], n = { v: 0 };
+  const store = { 'faits.json': { val: faits, sha: faits ? 's0' : null }, 'coupes.json': { val: coupes, sha: coupes ? 's0' : null },
+    get faits() { return this['faits.json'].val; }, get coupes() { return this['coupes.json'].val; } };
   globalThis.fetch = async (url, opt = {}) => {
     if (github === 'down') throw new Error('réseau');
-    if (url.endsWith('/faits.json')) {
-      if ((opt.method || 'GET') === 'GET') return store.faits ? { ok: true, status: 200, json: async () => ({ sha: store.sha,
-        content: Buffer.from(JSON.stringify(store.faits)).toString('base64') }) } : { ok: false, status: 404 };
+    const f = store[url.split('/').pop()];
+    if (f && url.includes('/contents/') && !url.includes('/avis/')) {
+      if ((opt.method || 'GET') === 'GET') return f.val ? { ok: true, status: 200, json: async () => ({ sha: f.sha,
+        content: Buffer.from(JSON.stringify(f.val)).toString('base64') }) } : { ok: false, status: 404 };
       const b = JSON.parse(opt.body);
-      if (conflits-- > 0 || (b.sha || null) !== store.sha) return { ok: false, status: 409 };
-      store.faits = JSON.parse(Buffer.from(b.content, 'base64').toString()); store.sha = `s${++store.n}`;
+      if (conflits-- > 0 || (b.sha || null) !== f.sha) return { ok: false, status: 409 };
+      f.val = JSON.parse(Buffer.from(b.content, 'base64').toString()); f.sha = `s${++n.v}`;
       return { ok: true, status: 200 };
     }
     puts.push({ url, body: JSON.parse(opt.body) }); return { ok: github < 300, status: github };
@@ -69,9 +72,9 @@ test('GitHub injoignable : 502 maîtrisé', async () => {
 test('GET : déjà vérifiées par tous, en cache 1 min', async () => {
   const { res } = await call({ method: 'GET', origin: '', type: '', faits: { 5: 'abc' } });
   assert.equal(res.code, 200);
-  assert.deepEqual(res.body, { faits: { 5: 'abc' } });
+  assert.deepEqual(res.body, { faits: { 5: 'abc' }, coupes: {}, demandes: {} });
   assert.match(res.headers['Cache-Control'], /s-maxage=60/);
-  assert.deepEqual((await call({ method: 'GET' })).res.body, { faits: {} });          // pas encore de faits.json
+  assert.deepEqual((await call({ method: 'GET' })).res.body, { faits: {}, coupes: {}, demandes: {} });          // pas encore de faits.json
   assert.equal((await call({ method: 'GET', github: 'down' })).res.code, 502);
 });
 test('POST : faits.json complété avec les empreintes valides seulement', async () => {
@@ -88,4 +91,34 @@ test('POST : partage en panne, les avis restent acceptés', async () => {
   const { res, lot } = await call({ conflits: 99, body: { avis: [avis({ fp: 'k3x9' })] } });
   assert.equal(res.code, 200);
   assert.equal(lot.length, 1);
+});
+test('GET : coupes et demandes partagées', async () => {
+  const { res } = await call({ method: 'GET', origin: '', type: '', coupes: { coupes: { 5: { fp: 'a', ds: -0.5, de: 0.2 } }, demandes: { 9: 1 } } });
+  assert.deepEqual(res.body, { faits: {}, coupes: { 5: { fp: 'a', ds: -0.5, de: 0.2 } }, demandes: { 9: 1 } });
+});
+test('POST : coupe enregistrée (arrondie), vaut vérification ; la première fait foi', async () => {
+  const { res, store, lot } = await call({ coupes: { coupes: { 7: { fp: 'z', ds: 0, de: 0 } }, demandes: {} },
+    body: { avis: [avis({ fp: 'k3x9', coupe: [-0.4567, 1.2] }), avis({ i: 7, fp: 'k3', coupe: [1, 1] })] } });
+  assert.equal(res.code, 200);
+  assert.deepEqual(lot[0].coupe, [-0.46, 1.2]);
+  assert.deepEqual(store.coupes.coupes, { 5: { fp: 'k3x9', ds: -0.46, de: 1.2 }, 7: { fp: 'z', ds: 0, de: 0 } });
+  assert.equal(store.faits[5], 'k3x9');
+});
+test('POST : coupe invalide ignorée (hors marge, pas un nombre, sans empreinte)', async () => {
+  const { store, lot } = await call({ body: { avis: [avis({ fp: 'a', coupe: [-4, 0] }), avis({ i: 6, fp: 'b', coupe: ['1', 0] }),
+    avis({ i: 8, coupe: [0.5, 0] }), avis({ i: 9, fp: 'c', coupe: [0.5] })] } });
+  assert.deepEqual(lot.map(a => a.coupe), [null, null, [0.5, 0], null]);
+  assert.equal(store.coupes, null);                                            // rien de valable : fichier jamais écrit
+});
+test('POST : demande de recoupe enregistrée, ne vaut pas vérification ; bloque une nouvelle coupe', async () => {
+  const { res, store } = await call({ body: { avis: [avis({ fp: 'k3x9', demande: 'recoupe', ok: false })] } });
+  assert.equal(res.code, 200);
+  assert.deepEqual(store.coupes, { coupes: {}, demandes: { 5: 1 } });
+  assert.equal(store.faits, null);
+  const r2 = await call({ coupes: { coupes: {}, demandes: { 5: 1 } }, body: { avis: [avis({ fp: 'k3x9', coupe: [0.1, 0] })] } });
+  assert.deepEqual(r2.store.coupes.coupes, {});
+});
+test('POST : coupes en panne → 502 (le client réessaie)', async () => {
+  const { res } = await call({ conflits: 99, body: { avis: [avis({ fp: 'k3x9', coupe: [0, 0.3] })] } });
+  assert.equal(res.code, 502);
 });

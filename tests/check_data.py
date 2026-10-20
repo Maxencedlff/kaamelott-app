@@ -11,7 +11,8 @@ OLD = sys.argv[2] if len(sys.argv) > 2 else None
 d = json.load(open(os.path.join(APP, "data.json"), encoding="utf-8"))
 err, warn = [], []
 ALLOWED = {"character": str, "quote": str, "audio": str, "video": str, "v": int, "vv": int, "approx": int, "inedit": int, "tourne": int, "hide": (int, bool),
-           "transcription": int, "acteur": str}   # transcription / acteur : pilotes et Dies Iræ (14/10/2026)
+           "transcription": int, "acteur": str,   # transcription / acteur : pilotes et Dies Iræ (14/10/2026)
+           "cx": list}                            # [pre, d, post] : vidéo élargie pour la coupe dans l'appli (20/10/2026)
 SRC = re.compile(r"livre\s+(I{1,3}V?|VI?)|épisode\s+\d+|premier volet|inédit|court métrage", re.I)
 TRANS = re.compile(r",\s*(pilote, épisode ([1-9]|10): \S.*|Dies Iræ \(court métrage, 2003\))$")
 if not isinstance(d, list) or not d:
@@ -20,6 +21,8 @@ for i, it in enumerate(d):
     for k, v in it.items():
         if k not in ALLOWED: err.append(f"{i}: champ inconnu {k!r}")
         elif not isinstance(v, ALLOWED[k]): err.append(f"{i}: {k} de type {type(v).__name__}")
+        elif k == "cx" and not (len(v) == 3 and all(isinstance(x, (int, float)) and 0 <= x <= 120 for x in v) and it.get("video")):
+            err.append(f"{i}: cx invalide {v!r}")
     q, c, a = it.get("quote", ""), it.get("character", ""), it.get("audio")
     if not q.strip() or not c.strip(): err.append(f"{i}: quote/character vide")
     if q != q.strip() or re.search(r"[\x00-\x1f<>]", q): warn.append(f"{i}: espaces de bord, contrôle ou < >")
