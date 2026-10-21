@@ -3242,6 +3242,7 @@ function setView(view) {
     return;
   }
   if (reloadIfIdle(view)) return;          // nouvelle version : rechargée, la vue demandée s'ouvrira après
+  if (!monCompte()) { renderComptes(); return; }   // pas encore de prénom sur ce téléphone : « Qui es-tu ? » d'abord
   stopVideos();                            // le son continue d'un onglet à l'autre (mini-lecteur) ; Répliques le reprend ou l'arrête
   closeSheet();
   closeOverlay();
@@ -3358,7 +3359,9 @@ function registerSW() {
 let lastUpdateCheck = Date.now();
 function onVisible() {
   loadAvisTous();
-  if (Date.now() - lastUpdateCheck > 3600e3) {
+  // appli gardée en mémoire par iOS (pas de redémarrage) : le prénom est demandé au retour aussi
+  if (allQuotes.length && !monCompte() && !document.querySelector('.compte')) renderComptes();
+  if (Date.now() - lastUpdateCheck > 60e3) {             // nouvelle version cherchée à chaque retour (au plus une fois par minute)
     lastUpdateCheck = Date.now();
     navigator.serviceWorker?.getRegistration().then(r => r && r.update()).catch(() => {});
   }
