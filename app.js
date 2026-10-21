@@ -194,8 +194,9 @@ const blobInUse = u => !!u && [cardVideo.src, player.src, document.getElementByI
 function releaseBlob(u) { if (!u) return; if (blobInUse(u)) orphanBlobs.add(u); else URL.revokeObjectURL(u); }
 function sweepBlobs() { for (const u of orphanBlobs) if (!blobInUse(u)) { URL.revokeObjectURL(u); orphanBlobs.delete(u); } }
 const streamed = new Set();     // fichiers déjà lus directement depuis le réseau : pas de second téléchargement pour « Retour »
-function cachedMedia(url) {
-  if (!url || mediaCache.has(url) || streamed.has(url)) return;
+// force : même une scène déjà lue en direct (la précédente : un retour doit être instantané, sans nouveau chargement)
+function cachedMedia(url, force = false) {
+  if (!url || mediaCache.has(url) || (streamed.has(url) && !force)) return;
   sweepBlobs();
   const ac = new AbortController();
   mediaAbort.set(url, ac);
@@ -224,6 +225,14 @@ function mediaSrc(url) {
   streamed.add(url);
   if (streamed.size > 50) streamed.delete(streamed.values().next().value);
   return url;
+}
+// dernière mesure de démarrage, en clair (« répliques lues sur l'appareil, répliques prêtes 0,6 s · scène qui joue 1,2 s »)
+function demarrageHTML() {
+  const d = readJSON('kaam_demarrage', null);
+  if (!d || !Array.isArray(d.etapes)) return '';
+  const s = ms => (ms / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' s';
+  const txt = d.etapes.filter(([n]) => n !== 'début').map(([n, ms]) => `${n} ${s(ms)}`).join(' · ');
+  return `<p class="gh">Dernier démarrage</p><p class="gf">${esc(txt.charAt(0).toUpperCase() + txt.slice(1))}.</p>`;
 }
 // ===== LANCEMENT INSTANTANÉ =====
 // L'appli rouvre sur une réplique choisie la fois d'avant (la suivante de celle qu'on regardait), dont la scène est déjà
@@ -268,6 +277,7 @@ async function reprendreLancement() {
   } catch { return null; }
 }
 // Répliques probables après celle-ci : on précharge leur vidéo (modes vidéo / vérification) et leur son
+let precT = null;
 function prefetchAround() {
   if (navigator.connection?.saveData) return;      // économie de données (Android) : seule la carte affichée se télécharge
   const P = pool();
@@ -278,7 +288,12 @@ function prefetchAround() {
     if (P) { const pos = P.indexOf(quoteIdx); if (pos !== -1) next.push(P[(pos + 1) % P.length], P[(pos + 2) % P.length]); }
     else next.push((quoteIdx + 1) % allQuotes.length);
   } else { if (nextRand === null) nextRand = pickRandom(); next.push(nextRand); }
-  if (randPos > 0) next.push(randHistory[randPos - 1]);
+  // la voisine d'un retour, gardée en mémoire même si elle avait été lue en direct (retour sans nouveau chargement) ;
+  // seulement après 1,5 s sur la réplique : en défilement rapide, rien n'est retéléchargé pour rien
+  const prec = inOrder && !verifyMode ? pasDe(-1) : randPos > 0 ? randHistory[randPos - 1] : null, ici = quoteIdx;
+  clearTimeout(precT);
+  if (prec != null && allQuotes[prec]?.video && (videoOnly || verifyMode))
+    precT = setTimeout(() => { if (quoteIdx === ici) cachedMedia(playURL(allQuotes[prec]), true); }, 1500);
   if (randPos < randHistory.length - 1) next.push(randHistory[randPos + 1]);
   next.filter(i => i != null && allQuotes[i]).forEach(i => {
     const q = allQuotes[i];
@@ -695,10 +710,27 @@ function bootProgress(got, total) {
     ? `Premier lancement · ${mo(got)} Mo sur ${mo(Math.max(got, total))} Mo`
     : `<span>${mo(got)} Mo sur ${mo(Math.max(got, total))} Mo</span><span>${pc} %</span>`;
 }
+// Chronométrage du démarrage (affiché en bas des Réglages) : où passe le temps sur l'appareil, mesuré, pas supposé
+const demarrage = { t0: 0, etapes: [] };   // temps comptés depuis l'ouverture de la page
+const jalon = nom => demarrage.etapes.push([nom, Math.round(performance.now() - demarrage.t0)]);
+// Copie des répliques déjà sur l'appareil, lue DIRECTEMENT dans le Cache Storage : sur iPhone, 7,7 Mo à travers le service
+// worker coûtent plusieurs secondes. Le service worker vérifie ensuite s'il y a du nouveau (fetch en arrière-plan).
+async function copieLocale() {
+  try {
+    if (!window.caches || !navigator.serviceWorker?.controller) return null;
+    const r = await (await caches.open('kaamelott-data')).match('/data.json');
+    if (!r) return null;
+    const raw = await r.json();
+    return Array.isArray(raw) && raw.length ? raw : null;
+  } catch { return null; }
+}
 async function loadData() {
   const perso = loadPerso();   // en parallèle des répliques ; jamais bloquant (sans liste : les initiales)
+  jalon('début');
   // jusqu'à 3 essais : le premier peut tomber sur la page de contrôle anti-robot de Vercel (403), qui se lève seule
-  let raw = null, detail = '';
+  let raw = await copieLocale(), detail = '';
+  demarrage.source = raw ? 'appareil' : 'réseau';
+  if (raw) { jalon('répliques lues sur l’appareil'); setTimeout(() => fetch('data.json').catch(() => {}), 4000); }   // le SW revalide (ETag)
   for (let essai = 0; essai < 3 && !raw; essai++) {
     if (essai) await new Promise(r => setTimeout(r, 2500));
     try {
@@ -736,8 +768,10 @@ async function loadData() {
   }
   if (!raw) throw new Error(`data.json : ${detail}`);
   if (!Array.isArray(raw) || !raw.length) throw new Error('data.json vide');   // jamais une app vide rechargée en boucle
+  if (demarrage.source === 'réseau') jalon('répliques téléchargées');
   await Promise.race([perso, new Promise(r => setTimeout(r, 1500))]);
   allQuotes  = raw.map(parseQuote).filter(q => q.quote && q.name && !q.hide);   // hide : doublon masqué (index i conservé)
+  jalon('répliques prêtes');
   audioIdx   = allQuotes.reduce((acc, q, i) => (q.audio && acc.push(i), acc), []);
   videoIdx   = allQuotes.reduce((acc, q, i) => (q.video && acc.push(i), acc), []);
   poolCache.clear();
@@ -1165,6 +1199,7 @@ function settingsHTML() {
     <p class="gh">Contribuer</p>
     <div class="g"><button class="gr act${verifyMode ? ' on' : ''}" id="chip-verify"><span class="k">${verifyMode ? 'Quitter la vérification' : 'Vérifier les sons et les scènes'}</span>${icon('chev', 'chev')}</button></div>
     <p class="gf">Écouter, regarder, signaler ce qui cloche. ${todoTxt}</p>
+    ${demarrageHTML()}
     <p class="gh">Confidentialité</p>
     <p class="gf">Favoris et réglages restent sur cet appareil. Les avis de vérification partent sans nom ni adresse, seulement pour corriger les extraits. Les sons et les scènes viennent de Hugging Face, qui voit l’adresse IP de l’appareil, comme tout site.</p>`;
 }
@@ -3179,6 +3214,7 @@ function setView(view) {
   closeOverlay();
   backTo = null;
   currentView = view;
+  document.getElementById('main-content').classList.toggle('cit', view === 'citations');   // gestes natifs coupés (style.css)
   if (view !== 'quiz') quizDaily = false;
   refreshScope();
   document.querySelectorAll('.nav-btn').forEach(b => {
@@ -3242,10 +3278,16 @@ function registerSW() {
   const hadCtrl = !!navigator.serviceWorker.controller;   // une version tournait déjà
   navigator.serviceWorker.register('sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('message', e => {
-    // code changé ou absent : les répliques en cache sont retirées, la page recharge une seule fois (jamais de boucle)
+    // le service worker a reçu « code requis » en revérifiant les répliques : la page vérifie elle-même (HEAD, hors SW, avec
+    // son cookie) avant d'effacer quoi que ce soit ; code vraiment changé : copie retirée et une seule recharge (écran du code)
     if (e.data?.type === 'ACCES') {
-      try { if (sessionStorage.getItem('kaam_acces_recharge')) return; sessionStorage.setItem('kaam_acces_recharge', '1'); } catch { return; }
-      location.reload(); return;
+      fetch('/data.json', { method: 'HEAD', cache: 'no-store' }).then(async r => {
+        if (r.status !== 401) return;
+        try { if (sessionStorage.getItem('kaam_acces_recharge')) return; sessionStorage.setItem('kaam_acces_recharge', '1'); } catch { return; }
+        await caches.open('kaamelott-data').then(c => c.delete('/data.json')).catch(() => {});
+        location.reload();
+      }).catch(() => {});
+      return;
     }
     if (e.data?.type === 'DATA_UPDATED') { updatePending = true; return; }   // nouvelles répliques : rechargement au moment neutre
     if (e.data?.type !== 'SW_UPDATED' || !hadCtrl) return;
@@ -3327,6 +3369,13 @@ async function boot() {
     showRenderError();
   }
   endLaunch();
+  jalon('écran');
+  // première scène qui joue (affichage Vidéo ou vérification) : fin du chronométrage, gardé pour les Réglages
+  const garder = () => writeJSON('kaam_demarrage', { source: demarrage.source, etapes: demarrage.etapes, le: Date.now() });
+  if (document.getElementById('qvideo-slot')) {
+    cardVideo.addEventListener('playing', () => { jalon('scène qui joue'); garder(); }, { once: true });
+    setTimeout(garder, 15000);
+  } else garder();
   sendAvis();
   buildIndexSoon();
 }

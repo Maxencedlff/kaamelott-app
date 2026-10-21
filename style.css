@@ -63,6 +63,12 @@
 html { font-size: 17px; font: -apple-system-body; }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; background: var(--bg); color: var(--ink); }
+/* ni rebond ni « tirer pour recharger » d'iOS : ils voleraient le glisser vertical de l'écran Répliques */
+html, body { overscroll-behavior: none; }
+/* écran Répliques : aucun geste natif (défilement, zoom) n'y démarre, le glisser vertical est à l'appli, partout, même
+   depuis les boutons du bas ; une réplique longue garde son propre défilement (.qblock, son conteneur de défilement) */
+#main-content.cit, #main-content.cit .stage { touch-action: none; }
+#main-content.cit .qblock { touch-action: pan-y; }
 body {
   font-family: var(--f); font-size: 17px; line-height: 1.3; letter-spacing: -.374px;
   -webkit-font-smoothing: antialiased; overflow-x: hidden;

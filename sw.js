@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v78';
+const CACHE = 'kaamelott-v79';
 const DATA_CACHE = 'kaamelott-data';
 // Portraits des personnages (img/perso/, ~200 × 3 petits JPEG) : noms à empreinte, donc immuables. Cache à part, jamais
 // vidé par une mise à jour ; servis depuis le cache dès la première vue, plafonné à IMG_MAX fichiers (les plus anciens sortent).
@@ -147,7 +147,7 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.open(DATA_CACHE).then(async c => {
       const hit = await c.match('/data.json');
       const etag = hit && hit.headers.get('etag');
-      const reseau = (etag ? fetch('/data.json', { cache: 'no-store', headers: { 'If-None-Match': etag } }) : fetch(e.request)).then(r => {
+      const reseau = (etag ? fetch('/data.json', { cache: 'no-store', credentials: 'include', headers: { 'If-None-Match': etag } }) : fetch(e.request)).then(r => {
         // nouvelle version rangée alors qu'une copie était déjà servie : la page rechargera à un moment neutre (DATA_UPDATED),
         // sinon la nouvelle coquille tournerait avec les anciennes répliques jusqu'au lancement suivant
         if (r.status === 200 && isJSON(r)) return c.put('/data.json', r.clone())
@@ -156,7 +156,9 @@ self.addEventListener('fetch', e => {
         // code d'accès refusé (middleware.js) : la copie en cache ne doit pas ouvrir l'app sans code ; la page recharge
         // seulement si une copie venait d'être servie (sinon la page reçoit déjà ce 401 et affiche l'écran du code : prévenir
         // ici la faisait recharger, recevoir le même 401, recharger… et rester bloquée sur le K)
-        if (r.status === 401 && hit) return c.delete('/data.json').then(() => self.clients.matchAll()).then(cl => { cl.forEach(x => x.postMessage({ type: 'ACCES' })); return r; });
+        // jamais d'effacement ici (un 401 vu par le service worker peut venir d'un cookie qu'il n'a pas reçu, sur iOS) :
+        // la page vérifie elle-même avec son cookie et décide (message ACCES, app.js)
+        if (r.status === 401 && hit) return self.clients.matchAll().then(cl => { cl.forEach(x => x.postMessage({ type: 'ACCES' })); return r; });
         return r;
       });
       if (hit) { e.waitUntil(reseau.catch(() => {})); return hit; }

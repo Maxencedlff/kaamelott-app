@@ -1619,7 +1619,9 @@ def scenario_fonctions(w):
         st = pg.evaluate("() => ({ ix: typeof IX !== 'undefined' && !!IX, quiz: typeof quizByChar !== 'undefined' && !!quizByChar })")
         pg.close()
         if n > 16: raise RuntimeError(f"mode vidéo aléatoire : {n} fichiers téléchargés pour 11 répliques vues")
-        if dups(log): raise RuntimeError(f"vidéo : fichiers téléchargés deux fois : {dups(log)[:3]}")
+        # une seule exception permise : la scène précédente, regardée en direct puis gardée en mémoire après 1,5 s sur la
+        # réplique (un retour doit être instantané) ; en défilement rapide, aucune
+        if len(dups(log)) > 1: raise RuntimeError(f"vidéo : fichiers téléchargés deux fois : {dups(log)[:3]}")
         if not (st["ix"] and st["quiz"]): raise RuntimeError(f"index de recherche / pool du quiz pas prêts en arrière-plan : {st}")
         return f"aucun double téléchargement ; vidéo aléatoire : {n} fichiers pour 11 répliques ; index et quiz prêts"
     w.step("Médias : ni double téléchargement ni préchargement inutile", s_media)
