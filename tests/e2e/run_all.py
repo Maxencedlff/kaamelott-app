@@ -1229,6 +1229,31 @@ def scenario_vague2(w):
         return f"scène {s['name']!r} ({s['size']} o) au 2e toucher après refus ; son {a['type']} au 1er"
     w.step("Partager : l'extrait part seul, sans texte", s_extrait)
 
+    def s_partage_mode(rec):
+        # réglage Partage : « Texte » n'envoie que la réplique écrite, « Les deux » la scène et le texte ensemble
+        pg = page()
+        pg.evaluate("""() => { window.__sh = [];
+            navigator.canShare = d => !!(d && d.files);
+            navigator.share = async d => { window.__sh.push({ n: (d.files || []).length, text: d.text || '' }); }; }""")
+        out = {}
+        for mode in ("texte", "deux"):
+            pg.click("#mast-set"); pg.wait_for_selector("#sheet:not([hidden])")
+            pg.click(f'#sheet [data-share="{mode}"]'); pg.wait_for_timeout(80)
+            pg.click("#sheet-close"); pg.wait_for_selector("#sheet", state="hidden")
+            pg.evaluate("quoteIdx = allQuotes.findIndex(q => q.video); shareFiles.clear(); renderCitations()")
+            n0 = pg.evaluate("window.__sh.length")
+            pg.click("#btn-share")
+            try: pg.wait_for_function(f"() => window.__sh.length > {n0}", timeout=6000)
+            except Exception:                                   # geste expiré pendant le téléchargement : second toucher
+                pg.click("#btn-share"); pg.wait_for_function(f"() => window.__sh.length > {n0}", timeout=6000)
+            out[mode] = pg.evaluate("window.__sh[window.__sh.length - 1]")
+        if pg.evaluate("localStorage.getItem('kaam_share')") != "deux": raise RuntimeError("réglage non mémorisé")
+        pg.close()
+        if out["texte"]["n"] != 0 or "Kaamelott" not in out["texte"]["text"]: raise RuntimeError(f"Texte : {out['texte']}")
+        if out["deux"]["n"] != 1 or "Kaamelott" not in out["deux"]["text"]: raise RuntimeError(f"Les deux : {out['deux']}")
+        return "Texte : réplique écrite seule ; Les deux : scène + texte ; réglage mémorisé"
+    w.step("Partager : réglage Extrait / Texte / Les deux", s_partage_mode)
+
     def s_extrait_coupe(rec):
         # coupe réglée, pas encore finie sur le PC : l'extrait partagé est le coupé (api/extrait.js) ; téléchargement
         # bloqué (réseau coupé en route) : le bouton sort de « Préparation… » au lieu d'y rester

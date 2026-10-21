@@ -22,6 +22,7 @@ let media = loadMedia();
 let videoOnly = media === 'video';   // mode vidéo : seulement les répliques avec scène, scène jouée dans la carte
 let audioOnly = media === 'audio';   // n'afficher que les répliques avec son
 let autoPlay  = readPref('kaam_autoplay');     // jouer le son dès qu'on tombe sur la réplique
+let shareMode = ['extrait', 'texte', 'deux'].includes(readStr('kaam_share', '')) ? readStr('kaam_share', '') : 'extrait';   // Partager : extrait, texte ou les deux
 let inOrder   = readPref('kaam_in_order');     // toucher / glisser : réplique suivante dans l'ordre au lieu d'aléatoire
 let verifyMode = readPref('kaam_verify');      // ne montrer que les répliques avec son/vidéo pas encore vérifiées
 // Navigation
@@ -1120,6 +1121,11 @@ function settingsHTML() {
     <div class="g"><button class="gr${verifyMode ? ' dis' : ''}" id="sw-auto" role="switch" aria-checked="${autoPlay}" data-auto="${autoPlay ? 0 : 1}"${verifyMode ? ' disabled' : ''}><span class="k">Lecture auto<small>Le son part dès qu’une réplique s’affiche</small></span><span class="sw" aria-hidden="true"></span></button></div>
     <p class="gf" role="status">${verifyMode ? 'Affichage et lecture auto sont suspendus pendant la vérification.'
       : n ? `<b>${unitPlural(n)}</b> ${n > 1 ? 'correspondent' : 'correspond'}.` : 'Aucune réplique ne correspond.'}</p>
+    <p class="gh">Partage</p>
+    <div class="g"><div class="gr">${seg('Partager', [[shareMode === 'extrait', 'data-share="extrait"', 'Extrait'], [shareMode === 'texte', 'data-share="texte"', 'Texte'], [shareMode === 'deux', 'data-share="deux"', 'Les deux']])}</div></div>
+    <p class="gf">${shareMode === 'texte' ? 'Partager envoie la réplique écrite, avec le personnage et l’épisode.'
+      : shareMode === 'deux' ? 'Partager envoie la scène (ou le son) et la réplique écrite. Certaines messageries en font deux messages.'
+      : 'Partager envoie la scène, ou le son pour une réplique sans scène. Sans fichier possible, la réplique écrite part à la place.'}</p>
     <p class="gh">Contribuer</p>
     <div class="g"><button class="gr act${verifyMode ? ' on' : ''}" id="chip-verify"><span class="k">${verifyMode ? 'Quitter la vérification' : 'Vérifier les sons et les scènes'}</span>${icon('chev', 'chev')}</button></div>
     <p class="gf">Écouter, regarder, signaler ce qui cloche. ${todoTxt}</p>
@@ -1159,6 +1165,10 @@ function bindSettings(sheet) {
   sheet.querySelector('#chip-text').addEventListener('click', () => setMedia('text'));
   sheet.querySelector('#chip-audio-only').addEventListener('click', () => setMedia('audio'));
   sheet.querySelector('#chip-video-only')?.addEventListener('click', () => setMedia('video'));
+  sheet.querySelectorAll('[data-share]').forEach(b => b.addEventListener('click', () => {
+    shareMode = b.dataset.share; writeStr('kaam_share', shareMode);
+    refreshAfterSetting(`[data-share="${shareMode}"]`);
+  }));
   sheet.querySelectorAll('[data-auto]').forEach(b => b.addEventListener('click', () => {
     autoPlay = b.dataset.auto === '1'; writePref('kaam_autoplay', autoPlay);
     refreshAfterSetting('#sw-auto');
@@ -2050,8 +2060,9 @@ async function fetchExtrait(q, url) {
   return f;
 }
 async function shareExtrait(q, f, btn) {
-  // la scène seule, sans texte : avec un texte, iOS et WhatsApp envoient deux messages, ou le texte en légende
-  try { await navigator.share({ files: [f] }); }
+  // la scène seule par défaut : avec un texte, iOS et WhatsApp envoient deux messages, ou le texte en légende (« Les deux »)
+  const avec = shareMode === 'deux' ? { text: shareTextOf(q) } : {};
+  try { await navigator.share({ files: [f], ...avec }); }
   catch (e) {
     if (e.name === 'NotAllowedError') {                                  // geste expiré pendant le téléchargement
       sayInButton(btn, 'Envoyer', 10000);
@@ -2067,7 +2078,7 @@ async function shareExtrait(q, f, btn) {
 }
 function shareQuote(q, btn) {
   const url = extraitURL(q);
-  if (!url || !navigator.share || !canShareFiles() || shareTexteSeul.has(url)) return shareText(shareTextOf(q), btn);
+  if (shareMode === 'texte' || !url || !navigator.share || !canShareFiles() || shareTexteSeul.has(url)) return shareText(shareTextOf(q), btn);
   const f = shareFiles.get(url);
   if (f) return shareExtrait(q, f, btn);
   if (sharePending.has(url)) return Promise.resolve();
