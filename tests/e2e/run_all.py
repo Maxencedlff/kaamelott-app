@@ -462,8 +462,10 @@ def scenario_screens(w):
         q0 = pg.evaluate("__kaam.quoteIdx"); pg.click("#avis-skip"); pg.wait_for_timeout(400)
         i0, i1 = pg.evaluate(f"[__kaam.verifyIdx.indexOf({q0}), __kaam.verifyIdx.indexOf(__kaam.quoteIdx)]")
         if i1 != i0 + 1: raise RuntimeError(f"Passer dans l'ordre : rang {i0} → {i1}")
+        pg.click("#v-back"); pg.wait_for_timeout(400)
+        if pg.evaluate("__kaam.quoteIdx") != q0: raise RuntimeError("« ‹ » ne revient pas à la réplique d'avant")
         w.shot(pg, rec, "05b-verifier-ordre")
-        return "basculé sur place, mémorisé ; Passer → réplique suivante de la file"
+        return "basculé sur place, mémorisé ; Passer → réplique suivante de la file ; ‹ → retour"
     w.step("Vérifier : ordre basculé sur l'écran", s_verify_order)
 
     def s_problem(rec):

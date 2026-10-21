@@ -243,6 +243,11 @@ mark { background: none; color: inherit; font-weight: 700; }
 .stage-foot:not(.vf) { justify-content: center; min-height: 22px; margin-bottom: 4px; }
 .quote-counter { font-size: 13px; line-height: 17px; color: var(--ink3); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .skip { flex: none; height: 44px; padding: 0 2px 0 12px; color: var(--accent-t); font-size: 17px; }
+/* vérification : « ‹ » revient à la réplique vue juste avant (historique), le compteur se resserre */
+.vf .vback { flex: none; width: 36px; height: 44px; margin-left: -10px; margin-right: -10px; display: grid; place-items: center; color: var(--accent-t); }
+.vf .vback svg { width: 22px; height: 22px; }
+.vf .vback:disabled { color: var(--ink3); opacity: .35; }
+.vf .quote-counter { flex: 1; min-width: 0; }
 /* Aléatoire / Dans l'ordre, basculé sur place : outils de l'écran Répliques, ou à gauche de « Passer » en vérification */
 .vgo { flex: none; display: flex; align-items: center; gap: 4px; }
 .vord { height: 32px; display: flex; align-items: center; gap: 5px; padding: 0 11px 0 9px; border-radius: 980px; background: var(--fill); color: var(--ink2); font-size: 14px; font-weight: 600; white-space: nowrap; }

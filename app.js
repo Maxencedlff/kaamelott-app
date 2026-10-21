@@ -1328,7 +1328,7 @@ function citationsHTML(q, m, dir) {
     <div class="scrub${playable ? '' : ' none'}" id="scrub" aria-hidden="true"><div class="track"><i></i></div><span class="badge" data-t="${m.badge}"${m.badge ? '' : ' hidden'}>${m.badge}</span></div>
     ${verifyMode ? `
       ${m.reviewable ? `<div class="vrow">${listenHTML(q, 'tp sm')}${m.deja ? `<span class="vdone" id="avis-deja" role="img" aria-label="${dejaLabel(q)[1]}">${icon('check')}<span>${dejaLabel(q)[0]}</span></span>` : `<button class="ok" id="avis-ok">${icon('check')}<span>${m.what}</span></button>`}<button class="ko" id="avis-ko">Problème</button></div>` : ''}
-      <div class="vfoot"><div class="stage-foot vf"><span class="quote-counter">${m.counter}</span><span class="vgo">${orderBtnHTML()}${m.reviewable ? `<button class="skip" id="avis-skip">Passer</button>` : ''}</span></div><div class="done-slot"></div></div>`
+      <div class="vfoot"><div class="stage-foot vf"><button class="vback" id="v-back" aria-label="Revenir à la réplique précédente"${randPos > 0 ? '' : ' disabled'}>${icon('chev-l')}</button><span class="quote-counter">${m.counter}</span><span class="vgo">${orderBtnHTML()}${m.reviewable ? `<button class="skip" id="avis-skip">Passer</button>` : ''}</span></div><div class="done-slot"></div></div>`
     : `
       <div class="transport">
         <button class="ts" id="btn-prev" aria-label="${inOrder ? 'Réplique précédente' : 'Revenir à la réplique précédente'}"${m.atStart ? ' disabled' : ''}>${icon('chev-l')}<span>${inOrder ? 'Précédente' : 'Retour'}</span></button>
@@ -1355,6 +1355,7 @@ function bindCitations(q, m, keep) {
     $('btn-prev').addEventListener('click', () => swipeBack());
     $('btn-next').addEventListener('click', () => swipeForward());
   }
+  $('v-back')?.addEventListener('click', () => historyBack());
   $('btn-order').addEventListener('click', () => { setOrder(!inOrder); renderCitations(); });
   refreshSetBtn();
   const fig = $('qvideo-slot');
@@ -1837,6 +1838,7 @@ function stepQuote(dir) {
   } else {
     idx = (quoteIdx + dir + allQuotes.length) % allQuotes.length;
   }
+  if (verifyMode) pushHistory(idx);   // vérification : « ‹ » revient aux répliques vues, même dans l'ordre (les classées quittent la file)
   showQuote(idx, dir);
 }
 function randomQuote() {
