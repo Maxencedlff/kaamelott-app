@@ -451,6 +451,34 @@ def scenario_screens(w):
         w.shot(pg, rec, "05-verifier")
     w.step("Vérifier", s_verify)
 
+    def s_acces(rec):
+        # code d'accès : data.json refusé (401, middleware.js) → écran du code ; mauvais code dit, bon code → l'app s'ouvre
+        ctx = w.ctx(); pg = w.new_page(ctx)
+        w.expect_errors = True             # le 401 de data.json et du mauvais code s'écrivent dans la console : attendus
+        try:
+            etat = {"ok": False, "essais": []}
+            def data(route):
+                if etat["ok"]: route.continue_()
+                else: route.fulfill(status=401, body='{"erreur":"code"}', headers={"content-type": "application/json"})
+            def acces(route):
+                code = json.loads(route.request.post_data or "{}").get("code"); etat["essais"].append(code)
+                etat["ok"] = code == "sloubi"
+                route.fulfill(status=204 if etat["ok"] else 401, body="" if etat["ok"] else '{"erreur":"code incorrect"}')
+            pg.route("**/data.json*", data); pg.route("**/api/acces", acces)
+            pg.goto(w.base)
+            pg.wait_for_selector("#acces-code", timeout=15000)
+            if pg.evaluate("document.activeElement && document.activeElement.id === 'acces-code'"): raise RuntimeError("focus imposé (clavier iOS)")
+            w.shot(pg, rec, "02b-code-acces")
+            pg.fill("#acces-code", "perceval"); pg.click("#acces-f button")
+            pg.wait_for_function("() => document.getElementById('acces-msg')?.textContent.includes('incorrect')", timeout=5000)
+            pg.fill("#acces-code", "sloubi"); pg.click("#acces-f button")
+            pg.wait_for_function("() => window.__kaam && __kaam.allQuotes.length > 0 && !!document.getElementById('btn-order')", timeout=20000)
+            pg.close()
+            return f"écran du code, refus dit, ouverture après le bon code (essais {etat['essais']})"
+        finally:
+            w.expect_errors = False
+    w.step("Code d'accès : écran, refus, ouverture", s_acces)
+
     def s_verify_order(rec):
         # Aléatoire ↔ Dans l'ordre directement sur l'écran de vérification ; « Passer » suit ensuite la file dans l'ordre
         pg = fresh({"kaam_verify": "1"})
@@ -732,7 +760,7 @@ def scenario_combos(w):
                         else: pg.click("#btn-next")
                     elif key == "random":
                         if verify: pg.locator("#quote-card .quote").click(position={"x": 8, "y": 8})
-                        else: pg.click("#btn-random" if pg.locator("#btn-random").count() else "#btn-next")
+                        else: pg.click("#btn-next")
                     elif key == "prev" and not verify:
                         if pg.locator("#btn-prev:not([disabled])").count(): pg.click("#btn-prev")
                     if key != "start":
@@ -1210,11 +1238,11 @@ def scenario_vague2(w):
         pg.evaluate("""() => { const i = allQuotes.findIndex(q => q.cx && q.video); quoteIdx = i; const q = allQuotes[i];
             __kaam.avisCoupes = { [q.i]: { fp: __kaam.fpOf(q), ds: 0.2, de: -0.1 } }; renderCitations(); }""")
         pg.click("#btn-share"); pg.wait_for_function("() => window.__sh.length === 1", timeout=6000)
-        if not (len(demandes) == 1 and "/api/extrait?k=" in demandes[0]): raise RuntimeError(f"extrait coupé non demandé : {demandes}")
+        if not (len(demandes) == 1 and re.search(r"/api/extrait\?i=\d+&fp=[0-9a-z]+$", demandes[0])): raise RuntimeError(f"extrait coupé non demandé : {demandes}")
         pg.unroute("**/api/extrait*")
         pg.route("**/api/extrait*", lambda r: None)          # jamais de réponse
-        pg.evaluate("""() => { SHARE_DELAI = 800; const q = allQuotes[quoteIdx];
-            __kaam.avisCoupes = { [q.i]: { fp: __kaam.fpOf(q), ds: 0.3, de: -0.1 } }; renderCitations(); }""")
+        # même coupe, même adresse : l'extrait déjà prêt est oublié pour forcer un nouveau téléchargement
+        pg.evaluate("""() => { shareDelai = 800; shareFiles.clear(); renderCitations(); }""")
         pg.click("#btn-share")
         pg.wait_for_function("() => document.querySelector('#btn-share').innerText.includes('Réseau trop lent')", timeout=5000)
         pg.wait_for_function("() => !document.querySelector('#btn-share').classList.contains('said')", timeout=6000)

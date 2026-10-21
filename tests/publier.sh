@@ -49,11 +49,14 @@ done
 
 # contrôle en ligne (navigateur, pas de curl en boucle sur le site)
 python3 - <<'EOF'
+import subprocess
 from playwright.sync_api import sync_playwright
 with sync_playwright() as p:
     b=p.webkit.launch(); bad=[]
     for scheme in ("light","dark"):
         c=b.new_context(**p.devices["iPhone 13"], color_scheme=scheme, bypass_csp=True)
+        n,v=subprocess.run(["python3","/home/maxdevops/kaam-audio/kaam_secrets.py","acces-cookie"],capture_output=True,text=True,check=True).stdout.strip().split("=",1)
+        c.add_cookies([{"name":n,"value":v,"url":"https://kaamelott-app.vercel.app/","httpOnly":True,"secure":True,"sameSite":"Lax"}])   # code d'accès
         c.add_init_script("Object.defineProperty(HTMLMediaElement.prototype,'muted',{get(){return true},set(){}})")
         pg=c.new_page(); errs=[]; pg.on("pageerror", lambda e: errs.append(str(e)))
         pg.goto("https://kaamelott-app.vercel.app/")

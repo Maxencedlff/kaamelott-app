@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v69';
+const CACHE = 'kaamelott-v70';
 const DATA_CACHE = 'kaamelott-data';
 // Portraits des personnages (img/perso/, ~200 × 3 petits JPEG) : noms à empreinte, donc immuables. Cache à part, jamais
 // vidé par une mise à jour ; servis depuis le cache dès la première vue, plafonné à IMG_MAX fichiers (les plus anciens sortent).
@@ -148,6 +148,8 @@ self.addEventListener('fetch', e => {
       const etag = hit && hit.headers.get('etag');
       const reseau = (etag ? fetch('/data.json', { cache: 'no-store', headers: { 'If-None-Match': etag } }) : fetch(e.request)).then(r => {
         if (r.status === 200 && isJSON(r)) return c.put('/data.json', r.clone()).then(() => r, () => r);
+        // code d'accès refusé (middleware.js) : la copie en cache ne doit pas ouvrir l'app sans code ; la page recharge
+        if (r.status === 401) return c.delete('/data.json').then(() => self.clients.matchAll()).then(cl => { cl.forEach(x => x.postMessage({ type: 'ACCES' })); return r; });
         return r;
       });
       if (hit) { e.waitUntil(reseau.catch(() => {})); return hit; }

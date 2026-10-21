@@ -639,6 +639,7 @@ async function loadData() {
     if (essai) await new Promise(r => setTimeout(r, 2500));
     try {
       const res = await fetch('data.json', { cache: essai ? 'reload' : 'default' });
+      if (res.status === 401) throw Object.assign(new Error('code d’accès requis'), { acces: true });   // middleware.js
       detail = `HTTP ${res.status} ${res.headers.get('content-type') || ''} ${res.headers.get('x-vercel-mitigated') || ''}`;
       const json = /json/.test(res.headers.get('content-type') || '');   // un portail Wi-Fi renvoie du HTML en 200
       if (res.ok && !json) throw new Error('réponse qui n’est pas du JSON');
@@ -667,9 +668,10 @@ async function loadData() {
         }
         raw = await res.json();
       }
-    } catch (e) { detail += ` · ${e.name}: ${e.message}`; }
+    } catch (e) { if (e.acces) throw e; detail += ` · ${e.name}: ${e.message}`; }
   }
   if (!raw) throw new Error(`data.json : ${detail}`);
+  if (!Array.isArray(raw) || !raw.length) throw new Error('data.json vide');   // jamais une app vide rechargée en boucle
   await Promise.race([perso, new Promise(r => setTimeout(r, 1500))]);
   allQuotes  = raw.map(parseQuote).filter(q => q.quote && q.name && !q.hide);   // hide : doublon masqué (index i conservé)
   audioIdx   = allQuotes.reduce((acc, q, i) => (q.audio && acc.push(i), acc), []);
@@ -1127,7 +1129,7 @@ function bindSettings(sheet) {
   }));
   sheet.querySelector('#chip-verify').addEventListener('click', () => {
     verifyMode = !verifyMode; writePref('kaam_verify', verifyMode);
-    rebuildVerify(); nextRand = null; loadAvisTous(true);
+    rebuildVerify(); nextRand = null; loadAvisTous(true); resetHistory();
     refreshAfterSetting('#chip-verify');
     refreshScope();
   });
@@ -1251,7 +1253,7 @@ function citationsModel(q) {
   // (recherche, favoris) : pas de rang (jamais « 0 sur … »), on dit pourquoi elle n'en a pas
   const rank = P ? P.indexOf(quoteIdx) : quoteIdx;
   const counter = verifyMode
-    ? `${plural(Object.keys(avisFaits).length, 'vérifiée')}${avisFile.length ? ` · ${nf(avisFile.length)} à envoyer` : ''}`
+    ? verifyCounter()
     : rank < 0 ? (!inSel(q) ? 'Hors sélection' : videoOnly ? 'Sans vidéo' : audioOnly ? 'Sans son' : 'Hors sélection')
     : P ? `${nf(rank + 1)} sur ${nf(P.length)}${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}` : `${nf(quoteIdx + 1)} sur ${nf(allQuotes.length)}`;
   const summary = verifyMode
@@ -1296,7 +1298,21 @@ function refreshSetBtn() {
   b.setAttribute('aria-label', f.length ? `Réglages (${f.join(', ')})` : 'Réglages');
 }
 // Bouton Aléatoire / Dans l'ordre (écran Répliques, vérification comprise) : montre le mode en cours, le touche bascule
-const orderBtnHTML = () => `<button class="vord" id="btn-order" aria-label="Ordre : ${inOrder ? 'dans l’ordre' : 'aléatoire'}. Toucher pour passer ${inOrder ? 'en aléatoire' : 'dans l’ordre'}">${icon(inOrder ? 'order' : 'shuffle')}<span>${inOrder ? 'Dans l’ordre' : 'Aléatoire'}</span></button>`;
+// (icône seule en vérification, faute de place à côté de « Passer »)
+const orderBtnHTML = () => `<button class="vord${verifyMode ? ' ico' : ''}" id="btn-order" aria-label="Ordre : ${inOrder ? 'dans l’ordre' : 'aléatoire'}">${icon(inOrder ? 'order' : 'shuffle')}<span${verifyMode ? ' class="lab"' : ''}>${inOrder ? 'Dans l’ordre' : 'Aléatoire'}</span></button>`;
+// bascule sur place : ni la scène ni le son ne repartent, VoiceOver ne relit pas la réplique
+function toggleOrder() {
+  setOrder(!inOrder);
+  const $ = id => document.getElementById(id);
+  const b = $('btn-order'); b.outerHTML = orderBtnHTML(); $('btn-order').addEventListener('click', toggleOrder); $('btn-order').focus({ preventScroll: true });
+  const prev = $('btn-prev'), next = $('btn-next');
+  if (prev) {
+    prev.disabled = !inOrder && randPos <= 0;
+    prev.setAttribute('aria-label', inOrder ? 'Réplique précédente' : 'Revenir à la réplique précédente'); prev.querySelector('span').textContent = inOrder ? 'Précédente' : 'Retour';
+  }
+  if (next) { next.setAttribute('aria-label', inOrder ? 'Réplique suivante' : 'Autre réplique'); next.querySelector('span').textContent = inOrder ? 'Suivante' : 'Autre'; }
+  nextRand = null; prefetchAround();
+}
 // Gabarit de l'écran Répliques : la carte (photo floutée du personnage, ou fond neutre), le nom, la lecture, la navigation
 function citationsHTML(q, m, dir) {
   const size = Math.round(Math.min(quoteSize(q.quote), innerWidth < 360 || innerHeight < 620 ? Q_MAX.videoSE : Q_MAX.video) * textScale());
@@ -1348,14 +1364,14 @@ function bindCitations(q, m, keep) {
     $('avis-ok')?.addEventListener('click', () => recordAvis(q, true, [], ''));
     $('btn-coupe')?.addEventListener('click', () => openCoupe(q));
     $('avis-ko').addEventListener('click', () => openProblem(q));
-    $('avis-skip')?.addEventListener('click', () => { if (inOrder) stepQuote(1); else randomQuote(); });
+    $('avis-skip')?.addEventListener('click', () => swipeForward());
   } else if (!verifyMode) {
     // en aléatoire, les boutons font comme les gestes (historique) ; dans l'ordre, voisines dans le corpus
     $('btn-prev').addEventListener('click', () => swipeBack());
     $('btn-next').addEventListener('click', () => swipeForward());
   }
   $('v-back')?.addEventListener('click', () => historyBack());
-  $('btn-order').addEventListener('click', () => { setOrder(!inOrder); renderCitations(); });
+  $('btn-order').addEventListener('click', toggleOrder);
   refreshSetBtn();
   const fig = $('qvideo-slot');
   if (fig) { bindScene(fig, cardVideo); playCardVideo(q, fig); }
@@ -1489,6 +1505,7 @@ function renderCitations(dir = 0) {
   if (!verifyMode && !forced && poolEmpty()) { renderEmptySel(); return; }
   const fid = main.contains(document.activeElement) ? document.activeElement.id : '';
   if (!allQuotes[quoteIdx]) quoteIdx = pickRandom();          // index périmé (filtres, données changées)
+  if (randPos < 0) pushHistory(quoteIdx);                     // historique repris à zéro : il part de la réplique affichée
   const q = allQuotes[quoteIdx];
   // le son de cette réplique joue déjà (mini-lecteur) : il continue ; sinon tout s'arrête
   const keep = !!audioQ && audioQ.i === q.i && !player.paused && !player.ended && !verifyMode;
@@ -1718,7 +1735,8 @@ function recordAvis(q, ok, problemes, note, extra = {}, force = false) {
   if (avisFaits[q.i] && !force) return;         // jamais deux avis pour la même réplique (double toucher)
   avisFaits[q.i] = ok ? 1 : 2;                  // 1 = validée, 2 = signalée
   const fp = fpOf(q);
-  avisFile.push({ i: q.i, quote: q.quote, name: q.name, audio: q.audio, video: q.video, approx: q.approx, fp, ok, problemes, note, ...extra, ts: Date.now() });
+  avisFile.push({ i: q.i, quote: q.quote, name: q.name, audio: q.audio, video: q.video, approx: q.approx, fp, ok, problemes, note, ...extra,
+    ...(extra.coupe ? { cx: q.cx, vv: q.vv || 0 } : {}), ts: Date.now() });   // coupe : la fenêtre est déduite et gardée côté serveur
   // la file d'abord : si elle ne peut pas être écrite, la réplique n'est pas marquée « vérifiée » (elle reviendra)
   if (writeJSON('kaam_avis_file', avisFile)) writeJSON('kaam_avis_faits', avisFaits);
   // la coupe joue tout de suite sur ce téléphone, sans attendre la liste commune
@@ -1763,6 +1781,8 @@ function undoAvis() {
   lastAvis = null; clearTimeout(doneTimer);
   rebuildVerify();
   showAnyway = true;                         // la réplique revient, même si elle était la dernière à vérifier
+  // historique recalé sur la réplique rendue : « ‹ » ramène ensuite à celle d'avant, dès le premier toucher
+  if (randHistory[randPos - 1] === last.idx) randPos--; else if (randHistory[randPos] !== last.idx) pushHistory(last.idx);
   showQuote(last.idx, last.demande ? 0 : -1);
   document.getElementById('sr-live').textContent = last.demande ? 'Demande annulée.' : 'Avis annulé.';
 }
@@ -1781,19 +1801,21 @@ function renderVerifyDone() {
       <button class="pill wide" id="verify-leave">Revenir à la lecture</button></div></div>`;
   document.getElementById('btn-settings').addEventListener('click', openSettings);
   document.getElementById('verify-leave').addEventListener('click', () => {
-    verifyMode = false; writePref('kaam_verify', false); nextRand = null;
+    verifyMode = false; writePref('kaam_verify', false); nextRand = null; resetHistory();
     showQuote(pickRandom());
   });
 }
 // Envoi par lots ; les avis restent dans l'appareil tant que l'envoi n'a pas réussi.
 // Un lot refusé pour de bon (400, 415) est écarté ; 429 et 5xx : nouvel essai avec un délai doublé.
 let sending = false, sendDelay = 15000, sendRetry = null, idleSend = null;
+// → promesse de la fin de l'envoi (le partage d'une coupe attend qu'elle soit enregistrée avant de demander l'extrait)
+let sendingP = Promise.resolve();
 function sendAvis() {
-  if (sending || !avisFile.length) return;
+  if (sending || !avisFile.length) return sendingP;
   sending = true;
   clearTimeout(sendRetry);
   const lot = avisFile.slice(0, 100);
-  fetch('/api/avis', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ avis: lot }), keepalive: true })
+  return sendingP = fetch('/api/avis', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ avis: lot }), keepalive: true })
     .then(r => {
       if (r.ok || r.status === 400 || r.status === 415) {
         const sent = new Set(lot.map(a => a.ts));
@@ -1810,8 +1832,10 @@ function sendAvis() {
 }
 function refreshVerifyCounter() {
   const c = document.querySelector('.stage-foot.vf .quote-counter');
-  if (c) c.textContent = `${plural(Object.keys(avisFaits).length, 'vérifiée')}${avisFile.length ? ` · ${nf(avisFile.length)} à envoyer` : ''}`;
+  if (c) c.textContent = verifyCounter();
 }
+// pied de la vérification, étroit (‹, ordre, Passer à côté) : les avis en attente d'envoi priment, sinon le total vérifié
+function verifyCounter() { return avisFile.length ? `${nf(avisFile.length)} à envoyer` : plural(Object.keys(avisFaits).length, 'vérifiée'); }
 // envoi après 20 s sans nouvel avis, et dès le retour du réseau
 function scheduleSend() { clearTimeout(idleSend); idleSend = setTimeout(sendAvis, 20000); }
 
@@ -1849,8 +1873,15 @@ function randomQuote() {
   showQuote(idx, 0);
 }
 // Toucher / glisser : selon le mode, réplique suivante dans l'ordre ou au hasard (avec historique)
-function swipeForward() { if (inOrder) stepQuote(1); else historyForward(); }
-function swipeBack()    { if (inOrder) stepQuote(-1); else historyBack(); }
+// En vérification, tout retour (glisser, flèche, « ‹ ») passe par l'historique des répliques vues (les classées quittent la
+// file : « la précédente dans l'ordre » n'est plus celle qu'on vient de voir) ; en avant, l'historique d'abord, puis la file.
+function swipeForward() {
+  if (verifyMode && randPos < randHistory.length - 1) historyForward();
+  else if (inOrder) stepQuote(1); else historyForward();
+}
+function swipeBack() { if (inOrder && !verifyMode) stepQuote(-1); else historyBack(); }
+// historique repris à zéro en entrant en vérification ou en en sortant : « ‹ » ne ramène pas dans l'autre mode
+function resetHistory() { randHistory = []; randPos = -1; }
 function historyBack() {
   if (randPos > 0) { randPos--; showQuote(randHistory[randPos], -1); }
 }
@@ -1887,7 +1918,13 @@ const shareTimers = new WeakMap();   // bouton → { libellé d'origine, minuteu
 async function shareText(text, btn) {
   let said = '';
   if (navigator.share) {
-    try { await navigator.share({ text }); said = 'Envoyé'; } catch { return; }
+    try { await navigator.share({ text }); said = 'Envoyé'; }
+    catch (e) {
+      // hors du geste (iOS, après un extrait injoignable) : un second toucher envoie le texte ; jamais un bouton figé
+      if (e.name === 'NotAllowedError') { sayInButton(btn, 'Envoyer', 10000); document.getElementById('sr-live').textContent = 'Texte prêt : touchez Envoyer.'; }
+      else restoreButton(btn);
+      return;
+    }
   } else {
     try { await navigator.clipboard.writeText(text); said = 'Copié'; }
     catch {                                   // presse-papiers refusé : copie à l'ancienne
@@ -1926,10 +1963,10 @@ function shareTextOf(q) {
 // le permet encore (Android), ou le bouton propose « Envoyer » pour un second toucher (iOS).
 const shareFiles = new Map();     // url de l'extrait → File prêt (les 4 derniers)
 const sharePending = new Set();   // url en cours de téléchargement : un second toucher ne relance rien
-// coupe en attente : l'extrait coupé est fabriqué en ligne (api/extrait.js), sans attendre le PC
+const shareTexteSeul = new Set(); // extrait injoignable : le toucher suivant envoie le texte tout de suite (dans le geste)
+// coupe en attente : l'extrait coupé est fabriqué en ligne (api/extrait.js) d'après la coupe enregistrée, sans attendre le PC
 function extraitURL(q) {
-  const w = fenetre(q);
-  if (w) return `/api/extrait?k=${q.video}&v=${q.vv || 1}&a=${w[0].toFixed(2)}&b=${w[1].toFixed(2)}`;
+  if (fenetre(q)) return `/api/extrait?i=${q.i}&fp=${coupeDe(q).fp}`;
   return q.video ? videoURL(q) : q.audio ? audioURL(q.audio) : null;
 }
 function canShareFiles() {
@@ -1942,9 +1979,9 @@ function extraitFile(q, url, blob) {
   const type = q.video ? 'video/mp4' : ext === 'mp3' ? 'audio/mpeg' : 'audio/mp4';
   return new File([blob], `Kaamelott - ${nameCase(q.name)} - ${mots}.${ext}`.replace(/[\\/:*?"<>|]/g, ''), { type });
 }
-let SHARE_DELAI = 20000;     // téléchargement bloqué (réseau coupé ou changé en cours, iOS ne rend jamais la main) : abandon
+let shareDelai = 20000;     // téléchargement bloqué (réseau coupé ou changé en cours, iOS ne rend jamais la main) : abandon
 async function fetchExtrait(q, url) {
-  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), SHARE_DELAI);
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), shareDelai);
   let blob;
   try {
     const r = await fetch(mediaReady.get(url) || url, { signal: ctl.signal });   // copie déjà en mémoire (préchargement) : instantané
@@ -1974,16 +2011,18 @@ async function shareExtrait(q, f, btn) {
 }
 function shareQuote(q, btn) {
   const url = extraitURL(q);
-  if (!url || !navigator.share || !canShareFiles()) return shareText(shareTextOf(q), btn);
+  if (!url || !navigator.share || !canShareFiles() || shareTexteSeul.has(url)) return shareText(shareTextOf(q), btn);
   const f = shareFiles.get(url);
   if (f) return shareExtrait(q, f, btn);
   if (sharePending.has(url)) return Promise.resolve();
   sharePending.add(url);
   sayInButton(btn, 'Préparation…', 0);
-  return fetchExtrait(q, url)
+  // coupe encore sur ce téléphone seulement : envoyée d'abord, le serveur ne découpe que les coupes enregistrées
+  const envoi = fenetre(q) && avisFile.some(a => a.i === q.i && a.coupe) ? sendAvis() : Promise.resolve();
+  return envoi.then(() => fetchExtrait(q, url))
     .then(f => shareExtrait(q, f, btn), e => e.name === 'AbortError'
       ? (sayInButton(btn, 'Réseau trop lent, réessayez', 4000), 'délai')       // le bouton redevient utilisable
-      : shareText(shareTextOf(q), btn))                                         // extrait injoignable : le texte
+      : (shareTexteSeul.add(url), shareText(shareTextOf(q), btn)))              // extrait injoignable : le texte
     .finally(() => sharePending.delete(url));
 }
 
@@ -2891,11 +2930,38 @@ function reloadIfIdle(view) {
   }
   return false;
 }
+// Écran « Code d'accès » : les répliques ne se chargent qu'avec le code (cookie posé par api/acces.js, 400 jours).
+// Aucun focus automatique (iOS : pas de clavier imposé à l'ouverture).
+function renderAcces() {
+  setMast('Kaamelott');
+  keepTabs(['citations']);
+  const main = document.getElementById('main-content');
+  main.innerHTML = `
+    <div class="empty acces"><span class="ei">${icon('person')}</span><span class="err-k">Code d’accès</span>Entrez le code qu’on vous a donné pour ouvrir l’app.
+      <form class="acces-f" id="acces-f" novalidate>
+        <input id="acces-code" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go" aria-label="Code d’accès" aria-describedby="acces-msg">
+        <button class="pill" type="submit">Entrer</button>
+      </form><small id="acces-msg" role="alert"></small></div>`;
+  const f = document.getElementById('acces-f'), msg = document.getElementById('acces-msg'), btn = f.querySelector('button');
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const code = document.getElementById('acces-code').value.trim();
+    if (!code) { msg.textContent = 'Entrez le code.'; return; }
+    btn.disabled = true; msg.textContent = '';
+    try {
+      const r = await fetch('/api/acces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+      if (r.ok) { boot(); return; }
+      msg.textContent = r.status === 401 ? 'Code incorrect.' : r.status === 429 ? 'Trop d’essais : réessayez dans une heure.' : 'Serveur indisponible, réessayez.';
+    } catch { msg.textContent = navigator.onLine === false ? 'Hors ligne : il faut du réseau pour entrer le code.' : 'Serveur indisponible, réessayez.'; }
+    btn.disabled = false;
+  });
+}
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
   const hadCtrl = !!navigator.serviceWorker.controller;   // une version tournait déjà
   navigator.serviceWorker.register('sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data?.type === 'ACCES') { location.reload(); return; }   // code changé ou absent : les répliques en cache sont retirées
     if (e.data?.type !== 'SW_UPDATED' || !hadCtrl) return;
     updatePending = true;
   });
@@ -2939,6 +3005,7 @@ async function boot() {
   } catch (e) {
     booting = false;
     endLaunch();                           // l'écran d'erreur doit se voir
+    if (e.acces) { renderAcces(); return; }
     console.error('Chargement des répliques :', e);
     const offline = navigator.onLine === false;
     setMast('Répliques');

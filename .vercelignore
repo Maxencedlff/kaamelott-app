@@ -1,3 +1,4 @@
 # Tests et intégration continue : jamais publiés sur le site
 tests/
 .github/
+docs/

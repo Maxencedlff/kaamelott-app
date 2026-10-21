@@ -10,7 +10,7 @@ let ipN = 0;
 
 // faux GitHub : avis/… rangés dans puts ; faits.json et coupes.json gardés dans store (sha qui change à chaque écriture,
 // `conflits` premières écritures refusées en 409 comme lors de deux envois simultanés)
-function call({ method = 'POST', origin = ORIGIN, type = 'application/json', body = {}, ip, token = 'factice', github = 201, faits = null, coupes = null, conflits = 0 } = {}) {
+function call({ method = 'POST', origin = ORIGIN, type = 'application/json', body = {}, ip, token = 'factice', github = 201, faits = null, coupes = null, conflits = 0, gros = false } = {}) {
   const puts = [], n = { v: 0 };
   const store = { 'faits.json': { val: faits, sha: faits ? 's0' : null }, 'coupes.json': { val: coupes, sha: coupes ? 's0' : null },
     get faits() { return this['faits.json'].val; }, get coupes() { return this['coupes.json'].val; } };
@@ -18,8 +18,11 @@ function call({ method = 'POST', origin = ORIGIN, type = 'application/json', bod
     if (github === 'down') throw new Error('réseau');
     const f = store[url.split('/').pop()];
     if (f && url.includes('/contents/') && !url.includes('/avis/')) {
-      if ((opt.method || 'GET') === 'GET') return f.val ? { ok: true, status: 200, json: async () => ({ sha: f.sha,
-        content: Buffer.from(JSON.stringify(f.val)).toString('base64') }) } : { ok: false, status: 404 };
+      // gros : fichier de plus de 1 Mo, GitHub ne renvoie que le sha (encoding « none ») et le contenu brut à part
+      if ((opt.method || 'GET') === 'GET') return !f.val ? { ok: false, status: 404 }
+        : /raw/.test(opt.headers?.Accept || '') ? { ok: true, status: 200, text: async () => JSON.stringify(f.val) }
+        : { ok: true, status: 200, json: async () => gros ? { sha: f.sha, encoding: 'none', content: '', size: 2e6 }
+          : { sha: f.sha, encoding: 'base64', content: Buffer.from(JSON.stringify(f.val)).toString('base64') } };
       const b = JSON.parse(opt.body);
       if (conflits-- > 0 || (b.sha || null) !== f.sha) return { ok: false, status: 409 };
       f.val = JSON.parse(Buffer.from(b.content, 'base64').toString()); f.sha = `s${++n.v}`;
@@ -121,4 +124,17 @@ test('POST : demande de recoupe enregistrée, ne vaut pas vérification ; bloque
 test('POST : coupes en panne → 502 (le client réessaie)', async () => {
   const { res } = await call({ conflits: 99, body: { avis: [avis({ fp: 'k3x9', coupe: [0, 0.3] })] } });
   assert.equal(res.code, 502);
+});
+test('POST : coupe avec sa vidéo élargie → fenêtre gardée pour api/extrait.js ; cx invalide → coupe seule', async () => {
+  const { store, lot } = await call({ body: { avis: [avis({ fp: 'k3x9', video: 'a1b2c3d4e5f6', vv: 2, cx: [3, 1.45, 3], coupe: [0.38, -0.09] }),
+    avis({ i: 6, fp: 'b', video: 'a1b2c3d4e5f6', cx: [3, 999, 3], coupe: [0.1, 0] })] } });
+  assert.deepEqual(lot[0].cx, [3, 1.45, 3]);
+  assert.deepEqual(store.coupes.coupes[5], { fp: 'k3x9', ds: 0.38, de: -0.09, k: 'a1b2c3d4e5f6', vv: 2, w: [3.38, 4.36] });
+  assert.deepEqual(store.coupes.coupes[6], { fp: 'b', ds: 0.1, de: 0 });
+});
+test('GET / POST : fichier de plus de 1 Mo lu en brut, jamais pris pour vide (rien d\'effacé)', async () => {
+  const coupes = { coupes: { 9: { fp: 'z', ds: 0, de: 0, fini: 1 } }, demandes: {} };
+  const { res, store } = await call({ gros: true, coupes, body: { avis: [avis({ fp: 'k3x9', coupe: [0.1, 0] })] } });
+  assert.equal(res.code, 200);
+  assert.deepEqual(Object.keys(store.coupes.coupes).sort(), ['5', '9']);
 });

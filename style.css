@@ -231,7 +231,7 @@ mark { background: none; color: inherit; font-weight: 700; }
 @keyframes breathe { 50% { opacity: .35; } }
 .tp .lp, .tp .ls, .tp .x { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .transport button:not(:disabled):active, .tools button:active { opacity: .45; }
-/* outils en glyphes seuls (Au hasard dans l'ordre, Scène si elle existe, Partager) */
+/* outils : ordre (Aléatoire / Dans l'ordre), puis en glyphes seuls Scène (si elle existe) et Partager */
 .tools { flex: none; display: flex; justify-content: center; align-items: center; gap: 28px; margin: 0 var(--pad) 4px; }
 .tool { position: relative; width: 44px; height: 40px; display: grid; place-items: center; color: var(--ink2); }
 .tool svg { width: 24px; height: 24px; }
@@ -244,13 +244,18 @@ mark { background: none; color: inherit; font-weight: 700; }
 .quote-counter { font-size: 13px; line-height: 17px; color: var(--ink3); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .skip { flex: none; height: 44px; padding: 0 2px 0 12px; color: var(--accent-t); font-size: 17px; }
 /* vérification : « ‹ » revient à la réplique vue juste avant (historique), le compteur se resserre */
-.vf .vback { flex: none; width: 36px; height: 44px; margin-left: -10px; margin-right: -10px; display: grid; place-items: center; color: var(--accent-t); }
+.vf .vback { flex: none; width: 44px; height: 44px; margin-left: -12px; display: grid; place-items: center; color: var(--accent-t); }
 .vf .vback svg { width: 22px; height: 22px; }
 .vf .vback:disabled { color: var(--ink3); opacity: .35; }
 .vf .quote-counter { flex: 1; min-width: 0; }
 /* Aléatoire / Dans l'ordre, basculé sur place : outils de l'écran Répliques, ou à gauche de « Passer » en vérification */
 .vgo { flex: none; display: flex; align-items: center; gap: 4px; }
-.vord { height: 32px; display: flex; align-items: center; gap: 5px; padding: 0 11px 0 9px; border-radius: 980px; background: var(--fill); color: var(--ink2); font-size: 14px; font-weight: 600; white-space: nowrap; }
+.vord { position: relative; height: 44px; display: flex; align-items: center; gap: 5px; padding: 0 11px 0 9px; color: var(--ink2); font-size: 14px; font-weight: 600; white-space: nowrap; }
+.vord::before { content: ''; position: absolute; inset: 6px 0; border-radius: 980px; background: var(--fill); z-index: -1; }   /* pastille de 32, cible de 44 */
+.vord { isolation: isolate; }
+.vord.ico { width: 44px; padding: 0; justify-content: center; }
+.vord.ico::before { inset: 6px; }
+.vord .lab { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .vord svg { width: 16px; height: 16px; flex: none; }
 .vord:active { opacity: .6; }
 
@@ -554,6 +559,13 @@ mark { background: none; color: inherit; font-weight: 700; }
 .empty .pill { margin-top: 22px; min-width: 220px; }
 .empty .tbtn { margin-top: 14px; }
 .empty.fav0 { margin-top: 18vh; }
+/* code d'accès : champ et bouton l'un sous l'autre, pleine largeur ; message d'erreur sous le bouton */
+.acces-f { display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 22px; }
+.acces-f input { height: 50px; padding: 0 16px; border-radius: 12px; border: 0; background: var(--fill); color: var(--ink); font: inherit; font-size: 17px; text-align: center; }
+.acces-f input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.acces-f .pill { margin-top: 0; min-width: 0; width: 100%; }
+.acces small:empty { display: none; }
+.acces small { color: var(--accent-t); }
 .empty .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 22px; width: 100%; }
 .empty .row2 .pill { min-width: 0; padding: 0 10px; }
 .empty.err { margin-top: 12vh; }
