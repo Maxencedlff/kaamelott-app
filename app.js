@@ -1247,12 +1247,11 @@ function setOrder(seq) {
 }
 function citationsModel(q) {
   const P = pool();
-  // le rang n'a de sens que dans l'ordre ; en aléatoire, rien. Réplique ouverte exprès hors du parcours (recherche, favoris) :
-  // pas de rang (jamais « 0 sur … »), on dit pourquoi elle n'en a pas
+  // rang de la réplique dans le parcours, en aléatoire comme dans l'ordre. Réplique ouverte exprès hors du parcours
+  // (recherche, favoris) : pas de rang (jamais « 0 sur … »), on dit pourquoi elle n'en a pas
   const rank = P ? P.indexOf(quoteIdx) : quoteIdx;
   const counter = verifyMode
     ? `${plural(Object.keys(avisFaits).length, 'vérifiée')}${avisFile.length ? ` · ${nf(avisFile.length)} à envoyer` : ''}`
-    : !inOrder ? ''
     : rank < 0 ? (!inSel(q) ? 'Hors sélection' : videoOnly ? 'Sans vidéo' : audioOnly ? 'Sans son' : 'Hors sélection')
     : P ? `${nf(rank + 1)} sur ${nf(P.length)}${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}` : `${nf(quoteIdx + 1)} sur ${nf(allQuotes.length)}`;
   const summary = verifyMode

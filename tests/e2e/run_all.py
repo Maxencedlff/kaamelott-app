@@ -1291,6 +1291,7 @@ def scenario_fonctions(w):
         pg.click("#btn-order"); pg.wait_for_timeout(80)
         a = idx(); pg.evaluate(SWIPE_JS, [-120]); pg.wait_for_timeout(80); b = idx()
         if a == b: raise RuntimeError("glisser en aléatoire ne change pas de réplique")
+        if " sur " not in pg.inner_text(".quote-counter"): raise RuntimeError(f"aléatoire : rang absent ({pg.inner_text('.quote-counter')!r})")
         pg.evaluate(SWIPE_JS, [120]); pg.wait_for_timeout(80)
         if idx() != a: raise RuntimeError(f"glisser → en aléatoire ne revient pas à la précédente ({a} attendu, {idx()})")
         w.shot(pg, rec, "40-ordre")
