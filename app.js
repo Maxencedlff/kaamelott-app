@@ -324,6 +324,8 @@ function sceneHTML(q, id) {
 const mmss = t => { t = Math.max(0, Math.round(t || 0)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 const sceneGuards = new WeakMap();   // lecteur → délai de 8 s avant « Scène indisponible »
 function setScene(v, st) {
+  if (st === 'loading' && v._bloque) st = 'bloque';         // lecture refusée par iOS : « chargement » arrivé après coup
+  if (st === 'playing' || st === 'muted') v._bloque = false;
   const f = v.closest('.scene');
   v.parentElement?.classList.toggle('muted', v.muted);
   if (!f) return;
@@ -338,6 +340,7 @@ function setScene(v, st) {
     playing: ['num', `${mmss(span(v)[0])} / ${mmss(span(v)[1])}`],
     ended:   ['ink', '<span aria-hidden="true">↻</span> Revoir'],
     error:   ['red', navigator.onLine === false ? 'Hors ligne · Réessayer' : 'Scène indisponible · Réessayer'],
+    bloque:  ['ink', '<span aria-hidden="true">▶</span> Touchez pour lancer'],   // lecture automatique refusée par iOS
   }[st];
   el.className = 'st ' + T[0];
   el.innerHTML = T[1];
@@ -359,6 +362,8 @@ function wireScene(v) {
     else v.parentElement?.classList.toggle('muted', v.muted);
   });
   v.addEventListener('ended', () => { setScene(v, 'ended'); tickScene(v); });
+  // la scène avance alors qu'elle était « bloquée » (lecture partie autrement qu'au premier essai) : l'état suit la réalité
+  v.addEventListener('timeupdate', () => { if (!v.paused && v.closest('.scene')?.dataset.s === 'bloque') setScene(v, v.muted ? 'muted' : 'playing'); });
   v.addEventListener('error', () => { if (v.getAttribute('src')) setScene(v, 'error'); });
 }
 // toucher la figure : rejouer avec le son, ou réessayer après un échec
@@ -383,7 +388,7 @@ function unlockSound() {
   if (soundUnlocked) return;
   soundUnlocked = true;
   cardVideo.muted = false;
-  if (cardVideo.src) cardVideo.play().catch(e => {
+  if (cardVideo.src) cardVideo.play().then(() => { if (cardVideo.closest('.scene')?.dataset.s === 'bloque') setScene(cardVideo, 'playing'); }).catch(e => {
     if (e.name === 'NotAllowedError') { cardVideo.muted = true; soundUnlocked = false; }   // refus réel (pas une simple interruption)
   });
   else { cardVideo.play().catch(() => {}); cardVideo.pause(); }
@@ -396,14 +401,17 @@ function playCardVideo(q, fig) {
   frame.prepend(cardVideo);
   fig.dataset.src = url;   // « Réessayer » relance ce fichier
   if (offlineMiss(url)) { cardVideo.pause(); cardVideo.removeAttribute('src'); setScene(cardVideo, 'error'); return; }
-  if (cardVideo.src !== src) { cardVideo.src = src; setScene(cardVideo, 'loading'); }
+  if (cardVideo.src !== src) { cardVideo._bloque = false; cardVideo.src = src; setScene(cardVideo, 'loading'); }
   seekStart(cardVideo);
   // son activé par défaut ; si le navigateur refuse (aucun toucher encore), lecture sans son, signalée
   cardVideo.muted = false;
   cardVideo.play().catch(e => {
     if (e.name !== 'NotAllowedError') return;            // lecture interrompue par la réplique suivante : rien à faire
     if (playingBtn) return;                              // refus arrivé après « Écouter » : la scène ne repart pas sous le son
-    cardVideo.muted = true; cardVideo.play().catch(() => {});
+    // sans le son : iOS l'autorise d'ordinaire ; en économie d'énergie, il refuse tout avant un premier toucher. Ce n'est
+    // pas une panne : « Touchez pour lancer », jamais « Scène indisponible » (le premier toucher, n'importe où, la lance)
+    cardVideo.muted = true;
+    cardVideo.play().catch(e2 => { if (e2.name === 'NotAllowedError' && cardVideo.paused) { cardVideo._bloque = true; setScene(cardVideo, 'bloque'); } });
   });
 }
 
