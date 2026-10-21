@@ -22,7 +22,6 @@ let media = loadMedia();
 let videoOnly = media === 'video';   // mode vidéo : seulement les répliques avec scène, scène jouée dans la carte
 let audioOnly = media === 'audio';   // n'afficher que les répliques avec son
 let autoPlay  = readPref('kaam_autoplay');     // jouer le son dès qu'on tombe sur la réplique
-let shareMode = ['extrait', 'texte', 'deux'].includes(readStr('kaam_share', '')) ? readStr('kaam_share', '') : 'extrait';   // Partager : extrait, texte ou les deux
 let inOrder   = readPref('kaam_in_order');     // toucher / glisser : réplique suivante dans l'ordre au lieu d'aléatoire
 let verifyMode = readPref('kaam_verify');      // ne montrer que les répliques avec son/vidéo pas encore vérifiées
 // Navigation
@@ -1121,11 +1120,6 @@ function settingsHTML() {
     <div class="g"><button class="gr${verifyMode ? ' dis' : ''}" id="sw-auto" role="switch" aria-checked="${autoPlay}" data-auto="${autoPlay ? 0 : 1}"${verifyMode ? ' disabled' : ''}><span class="k">Lecture auto<small>Le son part dès qu’une réplique s’affiche</small></span><span class="sw" aria-hidden="true"></span></button></div>
     <p class="gf" role="status">${verifyMode ? 'Affichage et lecture auto sont suspendus pendant la vérification.'
       : n ? `<b>${unitPlural(n)}</b> ${n > 1 ? 'correspondent' : 'correspond'}.` : 'Aucune réplique ne correspond.'}</p>
-    <p class="gh">Partage</p>
-    <div class="g"><div class="gr">${seg('Partager', [[shareMode === 'extrait', 'data-share="extrait"', 'Extrait'], [shareMode === 'texte', 'data-share="texte"', 'Texte'], [shareMode === 'deux', 'data-share="deux"', 'Les deux']])}</div></div>
-    <p class="gf">${shareMode === 'texte' ? 'Partager envoie la réplique écrite, avec le personnage et l’épisode.'
-      : shareMode === 'deux' ? 'Partager envoie la scène (ou le son) et la réplique écrite. Certaines messageries en font deux messages.'
-      : 'Partager envoie la scène, ou le son pour une réplique sans scène. Sans fichier possible, la réplique écrite part à la place.'}</p>
     <p class="gh">Contribuer</p>
     <div class="g"><button class="gr act${verifyMode ? ' on' : ''}" id="chip-verify"><span class="k">${verifyMode ? 'Quitter la vérification' : 'Vérifier les sons et les scènes'}</span>${icon('chev', 'chev')}</button></div>
     <p class="gf">Écouter, regarder, signaler ce qui cloche. ${todoTxt}</p>
@@ -1165,10 +1159,6 @@ function bindSettings(sheet) {
   sheet.querySelector('#chip-text').addEventListener('click', () => setMedia('text'));
   sheet.querySelector('#chip-audio-only').addEventListener('click', () => setMedia('audio'));
   sheet.querySelector('#chip-video-only')?.addEventListener('click', () => setMedia('video'));
-  sheet.querySelectorAll('[data-share]').forEach(b => b.addEventListener('click', () => {
-    shareMode = b.dataset.share; writeStr('kaam_share', shareMode);
-    refreshAfterSetting(`[data-share="${shareMode}"]`);
-  }));
   sheet.querySelectorAll('[data-auto]').forEach(b => b.addEventListener('click', () => {
     autoPlay = b.dataset.auto === '1'; writePref('kaam_autoplay', autoPlay);
     refreshAfterSetting('#sw-auto');
@@ -1381,7 +1371,7 @@ function citationsHTML(q, m, dir) {
   return `
     ${verifyMode ? `<button class="bar verify" id="btn-settings"><span class="bar-sum">${m.summary}</span>${icon('chev', 'chev')}</button>` : ''}
     ${m.inlineVideo ? sceneHTML(q, 'qvideo-slot') : ''}
-    <div class="stage ${m.inlineVideo ? 'plain' : 'art'}${photo ? ' photo' : ''} swap-in${dir < 0 ? ' swap-back' : dir > 0 ? '' : ' rand'}" id="quote-card">
+    <div class="stage ${m.inlineVideo ? 'plain' : 'art'}${photo ? ' photo' : ''} ${swapClass(dir)}" id="quote-card">
       ${photo ? `<span class="bgimg img" aria-hidden="true"><img src="${photo}" alt="" decoding="async"></span>` : ''}
       <div class="qblock">
         <blockquote class="quote" lang="fr"${m.inlineVideo ? ` style="font-size:${size}px" data-fs0="${size}"` : ''}>${quoteHTML(q.quote)}</blockquote>
@@ -1412,7 +1402,7 @@ function bindCitations(q, m, keep) {
   $('btn-settings')?.addEventListener('click', openSettings);
   $('btn-who').addEventListener('click', e => { e.stopPropagation(); openPersonnage(q.name); });
   $('btn-fav').addEventListener('click', () => favButton($('btn-fav'), q));
-  $('btn-share').addEventListener('click', () => shareQuote(q, $('btn-share')));
+  $('btn-share').addEventListener('click', () => openShareSheet(q));
   if (m.reviewable) {
     $('avis-ok')?.addEventListener('click', () => recordAvis(q, true, [], ''));
     $('btn-coupe')?.addEventListener('click', () => openCoupe(q));
@@ -1427,7 +1417,11 @@ function bindCitations(q, m, keep) {
   $('btn-order').addEventListener('click', toggleOrder);
   refreshSetBtn();
   const fig = $('qvideo-slot');
-  if (fig) { bindScene(fig, cardVideo); playCardVideo(q, fig); }
+  if (fig) {
+    bindScene(fig, cardVideo); playCardVideo(q, fig);
+    if (!verifyMode) bindGlisserVertical(fig);                // scène de la carte : un glisser vertical change aussi de réplique
+    if (glisseVRendu) fig.classList.add(...glisseVRendu.split(' '));
+  }
   else cardVideo.pause();
   prefetchAround();
   $('btn-video')?.addEventListener('click', () => showVideo(q));
@@ -1511,13 +1505,39 @@ function watchResize() {
   if (!('ResizeObserver' in window)) { addEventListener('resize', () => { clearTimeout(refitT); refitT = setTimeout(refitMain, 120); }); return; }
   new ResizeObserver(() => { clearTimeout(refitT); refitT = setTimeout(refitMain, 120); }).observe(main);
 }
-// Toucher la carte = suivante ; glisser horizontalement = suivante / précédente (le défilement vertical reste libre) ;
-// toucher long = écouter (le son part au relâcher, donc dans le geste : iOS l'autorise)
+// Toucher la carte = suivante ; glisser vers le haut = suivante, vers le bas = précédente (comme un fil de vidéos), sur la
+// carte comme sur la scène ; glisser sur le côté marche encore. Réplique longue : son texte défile d'abord jusqu'au bout.
+// Toucher long = écouter (le son part au relâcher, donc dans le geste : iOS l'autorise)
 const LONG_PRESS = 450;
+let glisseV = false;   // la réplique vient d'un glisser vertical : elle monte (ou descend), quel que soit l'ordre
+let glisseVRendu = '';  // classes d'animation de ce rendu, reprises par la scène de la carte
+const swapClass = dir => `swap-in${glisseV ? ` swap-v${dir < 0 ? ' swap-back' : ''}` : dir < 0 ? ' swap-back' : dir > 0 ? '' : ' rand'}`;
+function glisser(versLeHaut) {
+  glisseV = true;
+  try { if (versLeHaut) swipeForward(); else swipeBack(); } finally { glisseV = false; }
+}
+// glisser vertical sur un élément (scroller : bloc de texte qui défile peut-être) ; capture : avant le lecteur vidéo, qui
+// garde ses touchers (lecture, pause) mais pas les glissers
+function bindGlisserVertical(el, scroller) {
+  let sx = 0, sy = 0, st = 0, haut = true, bas = true;
+  el.addEventListener('touchstart', e => {
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now();
+    const sc = scroller && scroller.scrollHeight > scroller.clientHeight + 2 ? scroller : null;
+    haut = !sc || sc.scrollTop <= 1; bas = !sc || sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2;   // bords au départ
+  }, { passive: true, capture: true });
+  el.addEventListener('touchend', e => {
+    const dy = sy - e.changedTouches[0].clientY, dx = Math.abs(sx - e.changedTouches[0].clientX);
+    const fast = Date.now() - st < 250 && Math.abs(dy) > 30;
+    if (!((Math.abs(dy) > 60 || fast) && Math.abs(dy) > dx * 1.2)) return;
+    if (dy > 0 ? !bas : !haut) return;                       // le texte avait encore à défiler : c'était un défilement
+    glisser(dy > 0);
+  }, { passive: true, capture: true });
+}
 function bindCardGestures(card) {
   let lastScroll = 0, lastLong = 0, pressT = null;
   const qb = card.querySelector('.qblock');
   qb.addEventListener('scroll', () => { lastScroll = Date.now(); fitOverflow(card); }, { passive: true });
+  bindGlisserVertical(card, qb);
   card.addEventListener('click', e => {
     if (e.target.closest('button')) return;
     if (Date.now() - lastLong < 700) return;                // fin d'un toucher long : le son, pas la suivante
@@ -1566,6 +1586,7 @@ function renderCitations(dir = 0) {
   setMast(verifyMode ? 'Vérification' : 'Répliques');
   const m = citationsModel(q);
   main.innerHTML = citationsHTML(q, m, dir);
+  glisseVRendu = glisseV ? swapClass(dir) : '';              // la scène monte (ou descend) avec la carte
   bindCitations(q, m, keep);
   const card = document.getElementById('quote-card');
   fitCard(card, q, m.inlineVideo);
@@ -1987,9 +2008,9 @@ async function shareText(text, btn) {
     try { await navigator.share({ text }); said = 'Envoyé'; }
     catch (e) {
       // hors du geste (iOS, après un extrait injoignable) : un second toucher envoie le texte ; jamais un bouton figé
-      if (e.name === 'NotAllowedError') { sayInButton(btn, 'Envoyer', 10000); document.getElementById('sr-live').textContent = 'Texte prêt : touchez Envoyer.'; }
-      else restoreButton(btn);
-      return;
+      if (e.name === 'NotAllowedError') { sayInButton(btn, 'Envoyer', 10000); document.getElementById('sr-live').textContent = 'Texte prêt : touchez Envoyer.'; return 'attente'; }
+      restoreButton(btn);
+      return 'annulé';
     }
   } else {
     try { await navigator.clipboard.writeText(text); said = 'Copié'; }
@@ -2004,6 +2025,7 @@ async function shareText(text, btn) {
   }
   document.getElementById('sr-live').textContent = said === 'Copié' ? 'Copié dans le presse-papiers.' : said === 'Envoyé' ? 'Envoyé.' : 'Copie impossible.';
   sayInButton(btn, said, 1500);
+  return said === 'Échec' ? 'échec' : 'envoyé';
 }
 // Écrit un mot dans le bouton (« Copié », « Préparation… », « Envoyer ») puis remet son libellé après ms (0 : jusqu'au prochain mot)
 function sayInButton(btn, said, ms) {
@@ -2028,7 +2050,7 @@ function shareTextOf(q) {
 // mémoire part au premier toucher ; sinon il se télécharge (« Préparation… ») et part tout seul si le navigateur
 // le permet encore (Android), ou le bouton propose « Envoyer » pour un second toucher (iOS).
 const shareFiles = new Map();     // url de l'extrait → File prêt (les 4 derniers)
-const sharePending = new Set();   // url en cours de téléchargement : un second toucher ne relance rien
+const sharePending = new Map();   // url → téléchargement en cours (lancé dès l'ouverture du choix, partagé par les touchers)
 const shareTexteSeul = new Set(); // extrait injoignable : le toucher suivant envoie le texte tout de suite (dans le geste)
 // coupe en attente : l'extrait coupé est fabriqué en ligne (api/extrait.js) d'après la coupe enregistrée, sans attendre le PC
 function extraitURL(q) {
@@ -2059,9 +2081,9 @@ async function fetchExtrait(q, url) {
   while (shareFiles.size > 4) shareFiles.delete(shareFiles.keys().next().value);
   return f;
 }
-async function shareExtrait(q, f, btn) {
-  // la scène seule par défaut : avec un texte, iOS et WhatsApp envoient deux messages, ou le texte en légende (« Les deux »)
-  const avec = shareMode === 'deux' ? { text: shareTextOf(q) } : {};
+async function shareExtrait(q, f, btn, mode) {
+  // la scène seule par défaut : avec un texte (« Vidéo et texte »), iOS et WhatsApp envoient deux messages, ou le texte en légende
+  const avec = mode === 'deux' ? { text: shareTextOf(q) } : {};
   try { await navigator.share({ files: [f], ...avec }); }
   catch (e) {
     if (e.name === 'NotAllowedError') {                                  // geste expiré pendant le téléchargement
@@ -2076,21 +2098,48 @@ async function shareExtrait(q, f, btn) {
   sayInButton(btn, 'Envoyé', 1500);
   return 'envoyé';
 }
-function shareQuote(q, btn) {
+// téléchargement de l'extrait, une seule fois par adresse ; une coupe encore sur ce téléphone seulement est envoyée
+// d'abord (le serveur ne découpe que les coupes enregistrées)
+function preparerExtrait(q, url) {
+  if (!sharePending.has(url)) {
+    const envoi = fenetre(q) && avisFile.some(a => a.i === q.i && a.coupe) ? sendAvis() : Promise.resolve();
+    sharePending.set(url, envoi.then(() => fetchExtrait(q, url)).finally(() => sharePending.delete(url)));
+  }
+  return sharePending.get(url);
+}
+const partageFichier = url => !!url && !!navigator.share && canShareFiles() && !shareTexteSeul.has(url);
+// mode : « extrait » (la scène, ou le son sans scène), « texte », « deux » (extrait et texte ensemble)
+function shareQuote(q, btn, mode = 'extrait') {
   const url = extraitURL(q);
-  if (shareMode === 'texte' || !url || !navigator.share || !canShareFiles() || shareTexteSeul.has(url)) return shareText(shareTextOf(q), btn);
+  if (mode === 'texte' || !partageFichier(url)) return shareText(shareTextOf(q), btn);
   const f = shareFiles.get(url);
-  if (f) return shareExtrait(q, f, btn);
-  if (sharePending.has(url)) return Promise.resolve();
-  sharePending.add(url);
+  if (f) return shareExtrait(q, f, btn, mode);                 // déjà prêt : part dans le geste
+  if (btn.dataset.attente) return Promise.resolve();          // second toucher pendant le téléchargement : rien de plus
+  btn.dataset.attente = '1';
   sayInButton(btn, 'Préparation…', 0);
-  // coupe encore sur ce téléphone seulement : envoyée d'abord, le serveur ne découpe que les coupes enregistrées
-  const envoi = fenetre(q) && avisFile.some(a => a.i === q.i && a.coupe) ? sendAvis() : Promise.resolve();
-  return envoi.then(() => fetchExtrait(q, url))
-    .then(f => shareExtrait(q, f, btn), e => e.name === 'AbortError'
+  return preparerExtrait(q, url)
+    .then(f => shareExtrait(q, f, btn, mode), e => e.name === 'AbortError'
       ? (sayInButton(btn, 'Réseau trop lent, réessayez', 4000), 'délai')       // le bouton redevient utilisable
       : (shareTexteSeul.add(url), shareText(shareTextOf(q), btn)))              // extrait injoignable : le texte
-    .finally(() => sharePending.delete(url));
+    .finally(() => { delete btn.dataset.attente; });
+}
+// Choix au moment de partager : la vidéo (ou le son) en tête, puis le texte seul, puis les deux. L'extrait se télécharge dès
+// l'ouverture, pour partir aussitôt (iOS n'ouvre la feuille de partage que dans le geste).
+function openShareSheet(q) {
+  const url = extraitURL(q), fichier = partageFichier(url);
+  if (fichier && !shareFiles.has(url)) preparerExtrait(q, url).catch(() => {});
+  const quoi = q.video ? 'Vidéo' : 'Son', ic = q.video ? 'film' : 'play';
+  const row = (mode, ico, lab) => `<button class="gr" data-share="${mode}">${icon(ico, 'mi')}<span class="k t">${lab}</span></button>`;
+  const sheet = openSheet(`
+    <div class="grab" aria-hidden="true"></div>
+    <div class="sh-nav"><span></span><h2 id="sh-title">Partager</h2><button class="r" id="sheet-close">Annuler</button></div>
+    <p class="mq">${typo(q.quote)}</p>
+    <div class="g">${fichier ? row('extrait', ic, quoi) : ''}${row('texte', 'quote', 'Texte')}${fichier ? row('deux', 'share', `${quoi} et texte`) : ''}</div>`);
+  sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
+  sheet.querySelectorAll('[data-share]').forEach(b => b.addEventListener('click', () => {
+    // envoyé ou copié : le choix se ferme ; à retoucher (« Envoyer », « Réseau trop lent ») ou annulé : il reste ouvert
+    shareQuote(q, b, b.dataset.share).then(r => { if (r === 'envoyé' || r === 'texte') setTimeout(closeSheet, 700); });
+  }));
 }
 
 // ===== QUIZ =====
@@ -2386,7 +2435,7 @@ function openEntryMenu(q, ent, opts, onFav) {
   sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
   sheet.querySelectorAll('[data-m]').forEach(b => b.addEventListener('click', () => {
     const m = b.dataset.m, more = ent.querySelector('.ent-more');
-    if (m === 'share') { shareQuote(q, b).then(r => { if (r !== 'attente' && r !== 'délai') setTimeout(closeSheet, 700); }); return; }
+    if (m === 'share') { openShareSheet(q); return; }   // le menu laisse place au choix de partage
     closeSheet();
     if (m === 'audio') playAudio(q.audio, more, q);
     else if (m === 'video') showVideo(q);
@@ -2931,7 +2980,7 @@ function showVideo(q) {
   v.play().catch(e => { if (e.name === 'NotAllowedError') { v.muted = true; v.play().catch(() => {}); } });
   const fav = document.getElementById('m-fav');
   fav.addEventListener('click', () => favButton(fav, q));
-  document.getElementById('m-share').addEventListener('click', e => shareQuote(q, e.currentTarget));
+  document.getElementById('m-share').addEventListener('click', () => openShareSheet(q));
   document.getElementById('m-goto').addEventListener('click', () => gotoQuote(q));
   document.getElementById('m-who').addEventListener('click', () => openPersonnage(q.name));
   overlayCtx = { kind: 'scene', from: fromFiche };

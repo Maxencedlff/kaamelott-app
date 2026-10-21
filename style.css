@@ -188,6 +188,11 @@ mark { background: none; color: inherit; font-weight: 700; }
 .swap-in.rand { animation-name: fade; animation-duration: .22s; }
 @keyframes swap { from { opacity: 0; transform: translateX(24px) scale(.985); } }
 @keyframes swapb { from { opacity: 0; transform: translateX(-24px) scale(.985); } }
+/* glisser vertical (fil de vidéos) : la suivante monte du bas, la précédente descend du haut */
+.swap-in.swap-v { animation: swapu .32s cubic-bezier(.2, .8, .2, 1); }
+.swap-in.swap-v.swap-back { animation-name: swapd; }
+@keyframes swapu { from { opacity: 0; transform: translateY(48px); } }
+@keyframes swapd { from { opacity: 0; transform: translateY(-48px); } }
 @keyframes fade { from { opacity: 0; } }
 
 /* nom (en rouge, comme l'artiste dans Musique), épisode, étoile */

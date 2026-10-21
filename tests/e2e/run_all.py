@@ -1190,18 +1190,27 @@ def scenario_vague2(w):
         return "même question et mêmes choix sur deux appareils ; une seule tentative"
     w.step("Quiz : question du jour", s_daily)
 
+    ROW = '#sheet [data-share="{}"]'
+    def partager(pg, mode="extrait", btn="#btn-share"):
+        # Partager ouvre le choix (vidéo ou son en tête, texte, les deux) ; renvoie le sélecteur du choix touché
+        pg.click(btn); pg.wait_for_selector("#sheet:not([hidden]) [data-share]")
+        pg.click(ROW.format(mode)); return ROW.format(mode)
+
     def s_copy(rec):
         pg = page()
         pg.evaluate("() => { try { delete Navigator.prototype.share; } catch (e) {} navigator.share = undefined; }")
         alerts = []
         pg.on("dialog", lambda d: (alerts.append(d.message), d.dismiss()))
-        pg.click("#btn-share"); pg.wait_for_timeout(250)
-        lab = pg.evaluate("document.querySelector('#btn-share').innerText")
+        pg.click("#btn-share"); pg.wait_for_selector("#sheet:not([hidden]) [data-share]")
+        rows = pg.evaluate("[...document.querySelectorAll('#sheet [data-share]')].map(b => b.dataset.share)")
+        sel = ROW.format("texte"); pg.click(sel); pg.wait_for_timeout(250)
+        lab = pg.evaluate(f"document.querySelector({json.dumps(sel)})?.innerText || ''")
         w.shot(pg, rec, "39-partage-copie")
         pg.close()
         if alerts: raise RuntimeError(f"fenêtre d'alerte : {alerts}")
-        if not re.search(r"Copié|Échec", lab): raise RuntimeError(f"pas de confirmation dans le bouton : {lab!r}")
-        return f"confirmation dans le bouton : {lab.strip()!r}"
+        if rows != ["texte"]: raise RuntimeError(f"sans partage de fichier, seul « Texte » doit être proposé : {rows}")
+        if not re.search(r"Copié|Échec", lab): raise RuntimeError(f"pas de confirmation dans le choix : {lab!r}")
+        return f"seul « Texte » proposé ; confirmation : {lab.strip()!r}"
     w.step("Partager : confirmation sans alerte", s_copy)
 
     def s_extrait(rec):
@@ -1212,51 +1221,52 @@ def scenario_vague2(w):
             navigator.share = async d => { if (window.__refus-- > 0 && !window.__ok1) { const e = new Error('geste'); e.name = 'NotAllowedError'; throw e; }
                 window.__sh.push({ n: (d.files || []).length, name: d.files?.[0]?.name, type: d.files?.[0]?.type, size: d.files?.[0]?.size, text: d.text }); }; }""")
         pg.evaluate("quoteIdx = allQuotes.findIndex(q => q.video); renderCitations()")
-        pg.click("#btn-share")
-        pg.wait_for_function("() => document.querySelector('#btn-share').innerText.includes('Envoyer')", timeout=6000)
+        pg.click("#btn-share"); pg.wait_for_selector("#sheet:not([hidden]) [data-share]")
+        rows = pg.evaluate("[...document.querySelectorAll('#sheet [data-share]')].map(b => b.innerText.trim())")
+        if rows != ["Vidéo", "Texte", "Vidéo et texte"]: raise RuntimeError(f"choix proposés : {rows}")
+        sel = ROW.format("extrait"); pg.click(sel)
+        pg.wait_for_function(f"() => document.querySelector({json.dumps(sel)})?.innerText.includes('Envoyer')", timeout=6000)
         w.shot(pg, rec, "39b-partage-envoyer")
-        pg.click("#btn-share"); pg.wait_for_function("() => window.__sh.length === 1", timeout=3000)
+        pg.click(sel); pg.wait_for_function("() => window.__sh.length === 1", timeout=3000)
+        pg.wait_for_selector("#sheet", state="hidden", timeout=3000)       # envoyé : le choix se referme
         v = pg.evaluate("({ s: window.__sh[0], q: allQuotes[quoteIdx].quote })")
-        # son seul (réplique sans vidéo) : partage direct au premier toucher quand le navigateur le permet
+        # son seul (réplique sans vidéo) : « Son » en tête, partage direct au premier toucher quand le navigateur le permet
         pg.evaluate("window.__refus = 0; quoteIdx = allQuotes.findIndex(q => q.audio && !q.video); renderCitations()")
-        pg.click("#btn-share"); pg.wait_for_function("() => window.__sh.length === 2", timeout=6000)
+        partager(pg); pg.wait_for_function("() => window.__sh.length === 2", timeout=6000)
         a = pg.evaluate("window.__sh[1]")
         pg.close()
         s = v["s"]
         if not (s["n"] == 1 and s["type"] == "video/mp4" and s["name"].endswith(".mp4") and s["size"] > 0): raise RuntimeError(f"vidéo : {s}")
         if s["text"] or a["text"]: raise RuntimeError(f"texte joint à l'extrait : {s['text']!r} {a['text']!r}")
         if not (a["n"] == 1 and a["type"].startswith("audio/") and a["size"] > 0): raise RuntimeError(f"son : {a}")
-        return f"scène {s['name']!r} ({s['size']} o) au 2e toucher après refus ; son {a['type']} au 1er"
-    w.step("Partager : l'extrait part seul, sans texte", s_extrait)
+        return f"choix Vidéo / Texte / Vidéo et texte ; scène {s['name']!r} ({s['size']} o) au 2e toucher après refus ; son {a['type']} au 1er"
+    w.step("Partager : choix proposé, l'extrait part seul, sans texte", s_extrait)
 
     def s_partage_mode(rec):
-        # réglage Partage : « Texte » n'envoie que la réplique écrite, « Les deux » la scène et le texte ensemble
+        # « Texte » n'envoie que la réplique écrite, « Vidéo et texte » la scène et le texte ensemble
         pg = page()
         pg.evaluate("""() => { window.__sh = [];
             navigator.canShare = d => !!(d && d.files);
             navigator.share = async d => { window.__sh.push({ n: (d.files || []).length, text: d.text || '' }); }; }""")
         out = {}
         for mode in ("texte", "deux"):
-            pg.click("#mast-set"); pg.wait_for_selector("#sheet:not([hidden])")
-            pg.click(f'#sheet [data-share="{mode}"]'); pg.wait_for_timeout(80)
-            pg.click("#sheet-close"); pg.wait_for_selector("#sheet", state="hidden")
             pg.evaluate("quoteIdx = allQuotes.findIndex(q => q.video); shareFiles.clear(); renderCitations()")
             n0 = pg.evaluate("window.__sh.length")
-            pg.click("#btn-share")
+            sel = partager(pg, mode)
             try: pg.wait_for_function(f"() => window.__sh.length > {n0}", timeout=6000)
             except Exception:                                   # geste expiré pendant le téléchargement : second toucher
-                pg.click("#btn-share"); pg.wait_for_function(f"() => window.__sh.length > {n0}", timeout=6000)
+                pg.click(sel); pg.wait_for_function(f"() => window.__sh.length > {n0}", timeout=6000)
             out[mode] = pg.evaluate("window.__sh[window.__sh.length - 1]")
-        if pg.evaluate("localStorage.getItem('kaam_share')") != "deux": raise RuntimeError("réglage non mémorisé")
+            pg.wait_for_selector("#sheet", state="hidden", timeout=3000)
         pg.close()
         if out["texte"]["n"] != 0 or "Kaamelott" not in out["texte"]["text"]: raise RuntimeError(f"Texte : {out['texte']}")
-        if out["deux"]["n"] != 1 or "Kaamelott" not in out["deux"]["text"]: raise RuntimeError(f"Les deux : {out['deux']}")
-        return "Texte : réplique écrite seule ; Les deux : scène + texte ; réglage mémorisé"
-    w.step("Partager : réglage Extrait / Texte / Les deux", s_partage_mode)
+        if out["deux"]["n"] != 1 or "Kaamelott" not in out["deux"]["text"]: raise RuntimeError(f"Vidéo et texte : {out['deux']}")
+        return "Texte : réplique écrite seule ; Vidéo et texte : scène + texte"
+    w.step("Partager : Texte ou Vidéo et texte", s_partage_mode)
 
     def s_extrait_coupe(rec):
         # coupe réglée, pas encore finie sur le PC : l'extrait partagé est le coupé (api/extrait.js) ; téléchargement
-        # bloqué (réseau coupé en route) : le bouton sort de « Préparation… » au lieu d'y rester
+        # bloqué (réseau coupé en route) : le choix sort de « Préparation… » au lieu d'y rester
         pg = page()
         demandes = []
         pg.route("**/api/extrait*", lambda r: (demandes.append(r.request.url), r.fulfill(status=200, body=b"mp4", headers={"content-type": "video/mp4"})))
@@ -1265,18 +1275,19 @@ def scenario_vague2(w):
             navigator.share = async d => { window.__sh.push({ type: d.files?.[0]?.type }); }; }""")
         pg.evaluate("""() => { const i = allQuotes.findIndex(q => q.cx && q.video); quoteIdx = i; const q = allQuotes[i];
             __kaam.avisCoupes = { [q.i]: { fp: __kaam.fpOf(q), ds: 0.2, de: -0.1 } }; renderCitations(); }""")
-        pg.click("#btn-share"); pg.wait_for_function("() => window.__sh.length === 1", timeout=6000)
+        partager(pg); pg.wait_for_function("() => window.__sh.length === 1", timeout=6000)
         if not (len(demandes) == 1 and re.search(r"/api/extrait\?i=\d+&fp=[0-9a-z]+$", demandes[0])): raise RuntimeError(f"extrait coupé non demandé : {demandes}")
+        pg.wait_for_selector("#sheet", state="hidden", timeout=3000)
         pg.unroute("**/api/extrait*")
         pg.route("**/api/extrait*", lambda r: None)          # jamais de réponse
         # même coupe, même adresse : l'extrait déjà prêt est oublié pour forcer un nouveau téléchargement
         pg.evaluate("""() => { shareDelai = 800; shareFiles.clear(); renderCitations(); }""")
-        pg.click("#btn-share")
-        pg.wait_for_function("() => document.querySelector('#btn-share').innerText.includes('Réseau trop lent')", timeout=5000)
-        pg.wait_for_function("() => !document.querySelector('#btn-share').classList.contains('said')", timeout=6000)
+        sel = partager(pg)
+        pg.wait_for_function(f"() => document.querySelector({json.dumps(sel)})?.innerText.includes('Réseau trop lent')", timeout=5000)
+        pg.wait_for_function(f"() => !document.querySelector({json.dumps(sel)})?.classList.contains('said')", timeout=6000)
         pg.close()
-        return "extrait coupé demandé en ligne ; téléchargement bloqué abandonné, bouton rendu"
-    w.step("Partager : coupe en attente → extrait coupé ; réseau bloqué → bouton rendu", s_extrait_coupe)
+        return "extrait coupé demandé en ligne ; téléchargement bloqué abandonné, choix rendu"
+    w.step("Partager : coupe en attente → extrait coupé ; réseau bloqué → choix rendu", s_extrait_coupe)
 
     def s_retour_recherche(rec):
         # une réplique ouverte depuis Rechercher : « ‹ » (puis le Retour système) ramène aux résultats, texte et défilement gardés
@@ -1310,6 +1321,12 @@ SWIPE_JS = """([dx]) => { const el = document.getElementById('quote-card'); cons
   const fire = (type, X, down) => { const e = new Event(type, { bubbles: true, cancelable: true }); const t = [{ identifier: 1, target: el, clientX: X, clientY: y }];
     Object.defineProperty(e, 'touches', { value: down ? t : [] }); Object.defineProperty(e, 'changedTouches', { value: t }); el.dispatchEvent(e); };
   fire('touchstart', x, true); fire('touchmove', x + dx / 2, true); fire('touchend', x + dx, false); }"""
+# glisser vertical (dy < 0 : le doigt monte → réplique suivante) sur la carte, ou sur un autre élément (sel)
+SWIPE_V_JS = """([dy, sel]) => { const el = document.querySelector(sel || '#quote-card'); const b = el.getBoundingClientRect();
+  const x = b.left + b.width / 2, y = b.top + b.height / 2;
+  const fire = (type, Y, down) => { const e = new Event(type, { bubbles: true, cancelable: true }); const t = [{ identifier: 1, target: el, clientX: x, clientY: Y }];
+    Object.defineProperty(e, 'touches', { value: down ? t : [] }); Object.defineProperty(e, 'changedTouches', { value: t }); el.dispatchEvent(e); };
+  fire('touchstart', y, true); fire('touchmove', y + dy / 2, true); fire('touchend', y + dy, false); }"""
 
 
 def scenario_fonctions(w):
@@ -1354,6 +1371,26 @@ def scenario_fonctions(w):
         pg.close()
         return f"ordre : toucher {p0}->{p1}, glisser {p1}->{p2}->{p3}, mémorisé ; aléatoire : historique {a}->{b}->{a}"
     w.step("Ordre : toucher, glisser, mémorisation, historique aléatoire", s_order)
+
+    def s_vertical(rec):
+        # fil de vidéos : glisser vers le haut = suivante (elle monte), vers le bas = précédente, sur la carte et sur la scène
+        pg = w.new_page(w.ctx(), prefs={"kaam_in_order": "1", "kaam_hint": "9"}); w.goto(pg)
+        pos = lambda: pg.evaluate("(() => { const P = __kaam.pool(); return P ? P.indexOf(__kaam.quoteIdx) : __kaam.quoteIdx; })()")
+        p0 = pos(); pg.evaluate(SWIPE_V_JS, [-140, None]); pg.wait_for_timeout(80); p1 = pos()
+        monte = pg.evaluate("document.getElementById('quote-card').classList.contains('swap-v')")
+        pg.evaluate(SWIPE_V_JS, [140, None]); pg.wait_for_timeout(80); p2 = pos()
+        descend = pg.evaluate("document.getElementById('quote-card').classList.contains('swap-back')")
+        pg.close()
+        if p1 != p0 + 1 or not monte: raise RuntimeError(f"glisser vers le haut : {p0} -> {p1} (animation montante : {monte})")
+        if p2 != p0 or not descend: raise RuntimeError(f"glisser vers le bas : {p1} -> {p2} (animation descendante : {descend})")
+        # même geste sur la scène, affichage Vidéo
+        pg = w.new_page(w.ctx(), prefs={"kaam_in_order": "1", "kaam_hint": "9", "kaam_media": "video"}); w.goto(pg)
+        pg.wait_for_selector("#qvideo-slot")
+        q0 = pos(); pg.evaluate(SWIPE_V_JS, [-140, "#qvideo-slot"]); pg.wait_for_timeout(80); q1 = pos()
+        pg.close()
+        if q1 != q0 + 1: raise RuntimeError(f"glisser vers le haut sur la scène : {q0} -> {q1}")
+        return f"haut : {p0}->{p1}, bas : ->{p2} ; sur la scène : {q0}->{q1}"
+    w.step("Glisser vertical : suivante vers le haut, précédente vers le bas", s_vertical)
 
     def s_avis(rec):
         w.avis_posts.clear()
@@ -2285,17 +2322,19 @@ def scenario_correctifs(w, tag=""):
     w.step("Dans l'ordre : réplique hors parcours, jamais « 0 sur … »", s_counter)
 
     def s_copie(rec):
+        # « Copié » s'écrit dans le choix touché, sans sortir de sa ligne ni de l'écran
         ctx, pg = open_({"kaam_in_order": "1", "kaam_hint": "0"})
         try:
             pg.evaluate("() => { try { delete Navigator.prototype.share; } catch (e) {} navigator.share = undefined; }")
-            pg.click("#btn-share"); pg.wait_for_timeout(200)
-            r = pg.evaluate("""() => { const t = document.querySelector('#btn-share .t').getBoundingClientRect(), f = document.querySelector('.stage-foot').getBoundingClientRect();
-                return { txt: document.querySelector('#btn-share .t').textContent, over: Math.min(t.bottom, f.bottom) - Math.max(t.top, f.top), right: t.right, vw: innerWidth }; }""")
+            pg.click("#btn-share"); pg.wait_for_selector('#sheet:not([hidden]) [data-share="texte"]')
+            pg.click('#sheet [data-share="texte"]'); pg.wait_for_timeout(200)
+            r = pg.evaluate("""() => { const b = document.querySelector('#sheet [data-share="texte"]'), t = b.querySelector('.t').getBoundingClientRect(), g = b.getBoundingClientRect();
+                return { txt: b.querySelector('.t').textContent, dehors: t.right > g.right + 0.5 || t.bottom > g.bottom + 0.5, right: t.right, vw: innerWidth }; }""")
             w.shot(pg, rec, f"85-copie{tag}")
-            if r["over"] > 0 or r["right"] > r["vw"]: raise RuntimeError(f"« {r['txt']} » chevauche la ligne du bas ou sort de l'écran : {r}")
-            return f"« {r['txt']} » à côté du pictogramme, sans chevaucher la ligne du bas"
+            if r["dehors"] or r["right"] > r["vw"]: raise RuntimeError(f"« {r['txt']} » sort de sa ligne ou de l'écran : {r}")
+            return f"« {r['txt']} » dans le choix Texte, sans déborder"
         finally: ctx.close()
-    w.step("Partager : « Copié » ne chevauche pas la ligne du bas", s_copie)
+    w.step("Partager : « Copié » reste dans sa ligne", s_copie)
 
     def s_hist(rec):
         ctx, pg = open_({"kaam_hint": "9"})
