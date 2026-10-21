@@ -2348,7 +2348,8 @@ const TOP_CHARS = [
   'LE RÉPURGATEUR', 'CALOGRENANT', 'ATTILA', 'VENEC', 'GALESSIN',
 ];
 function initQuiz() {
-  quizState = { correct: 0, total: 0, streak: 0, best: +readStr('kaam_quiz_best', 0) || 0, answered: false };
+  // top : meilleure série de cette partie (best : record de tous les temps, gardé sur l'appareil)
+  quizState = { correct: 0, total: 0, streak: 0, top: 0, best: +readStr('kaam_quiz_best', 0) || 0, answered: false };
 }
 // Tirage juste : personnage d'abord (uniforme), puis une de ses répliques. Chaque nom affiché a ainsi 1 chance sur 4
 // d'être le bon (plus de « réflexe Arthur »). Pool : réplique avec scène, 25 signes au moins, sans le nom de celui qui parle.
@@ -2453,7 +2454,7 @@ function quizRecord(btn, replay, { q, daily, hist }) {
   } else {
     quizState.total++;
     if (correct) {
-      quizState.correct++; quizState.streak++;
+      quizState.correct++; quizState.streak++; quizState.top = Math.max(quizState.top || 0, quizState.streak);
       if (quizState.streak > quizState.best) {
         quizState.best = quizState.streak; record = true;
         writeStr('kaam_quiz_best', quizState.best);
@@ -2510,12 +2511,32 @@ function quizNavAfter(daily) {
     document.getElementById('qdj-share').addEventListener('click', e => shareText(`Kaamelott · Qui a dit ça ? · ${d} · ${res.ok ? 'Juste' : 'Faux'}${quizState.best ? ` (record ${quizState.best})` : ''}`, e.currentTarget));
     document.getElementById('quiz-free').addEventListener('click', () => renderQuiz());
   } else {
-    nav.className = 'nav one';
-    nav.innerHTML = `<button class="pill" id="quiz-next">Question suivante</button>`;
+    nav.className = 'nav two';
+    nav.innerHTML = `<button class="tbtn" id="quiz-fin">Terminer</button><button class="pill" id="quiz-next">Question suivante</button>`;
+    document.getElementById('quiz-fin').addEventListener('click', renderQuizFin);
     const nx = document.getElementById('quiz-next');
     nx.addEventListener('click', () => renderQuiz());
     if (usingKeyboard) nx.focus({ preventScroll: true });   // clavier : on enchaîne sur « Question suivante »
   }
+}
+// Fin d'une partie de quiz libre : le bilan, puis une nouvelle partie (score remis à zéro, record gardé) ou la question du jour
+function renderQuizFin() {
+  stopVideos();
+  const { correct, total, top, best } = quizState;
+  setMast('Quiz');
+  const main = document.getElementById('main-content');
+  const pc = total ? Math.round(correct / total * 100) : 0;
+  const mot = !total ? 'Aucune question jouée.' : pc === 100 ? 'Sans faute, c’est pas faux !' : pc >= 75 ? 'Pas mal.' : pc >= 50 ? 'Ça va, ça va.' : 'Faut se remettre aux livres.';
+  main.innerHTML = `<div class="scroll">
+    <div class="empty quiz-fin"><span class="ei">${icon('quiz')}</span><span class="err-k">Partie terminée</span>
+      ${total ? `<b class="qf-score">${nf(correct)} sur ${nf(total)}</b>` : ''}<small>${mot}</small>
+      ${total ? `<dl class="grp qf-grp"><div><dt>Meilleure série</dt><dd>${nf(top || 0)}</dd></div><div><dt>Record</dt><dd>${nf(best || 0)}</dd></div></dl>` : ''}
+      <button class="pill" id="qf-new">Nouvelle partie</button>
+      <div class="row2"><button class="pill gray" id="qf-share"${total ? '' : ' disabled'}>Partager</button><button class="pill gray" id="qf-daily">Question du jour</button></div>
+    </div></div>`;   // défile sur petit écran (iPhone SE) : rien sous la barre d'onglets
+  document.getElementById('qf-new').addEventListener('click', () => { const b = quizState.best; initQuiz(); quizState.best = b; renderQuiz(); });
+  document.getElementById('qf-daily').addEventListener('click', () => { initQuiz(); renderQuiz(true); });
+  document.getElementById('qf-share').addEventListener('click', e => shareText(`Kaamelott · Qui a dit ça ? · ${correct} sur ${total}${top > 1 ? ` · série de ${top}` : ''}`, e.currentTarget));
 }
 function quizAnswer(btn, replay, ctx) {
   if (quizState.answered) return;
@@ -2603,7 +2624,9 @@ function renderQuiz(daily = false) {
     </div>
     ${daily
       ? `<div class="nav txt" id="quiz-nav"><button class="tbtn" id="quiz-free">Quiz libre</button></div>`
-      : `<div class="nav txt" id="quiz-nav"><button class="tbtn" id="quiz-daily">${done ? `Question du jour · ${done.ok ? 'juste' : 'faux'}` : 'Question du jour'}</button><button class="tbtn" id="quiz-next">Passer</button></div>`}`;
+      // partie commencée : « Terminer » à la place de la question du jour (qui reste au bilan)
+      : `<div class="nav txt" id="quiz-nav">${quizState.total ? '<button class="tbtn" id="quiz-fin">Terminer</button>'
+        : `<button class="tbtn" id="quiz-daily">${done ? `Question du jour · ${done.ok ? 'juste' : 'faux'}` : 'Question du jour'}</button>`}<button class="tbtn" id="quiz-next">Passer</button></div>`}`;
 
   const stage = document.getElementById('quiz-stage');
   // la question entière dans la zone (corps réduit jusqu'à 17 px) ; après la réponse, la scène entière en tête
@@ -2614,6 +2637,7 @@ function renderQuiz(daily = false) {
   document.getElementById('quiz-next')?.addEventListener('click', () => renderQuiz());
   document.getElementById('quiz-daily')?.addEventListener('click', () => renderQuiz(true));
   document.getElementById('quiz-free')?.addEventListener('click', () => renderQuiz());
+  document.getElementById('quiz-fin')?.addEventListener('click', renderQuizFin);
   const answer = (btn, replay) => quizAnswer(btn, replay, { q, daily, hist, stage, fade });
   document.querySelectorAll('.choice').forEach(btn => btn.addEventListener('click', () => answer(btn, false)));
   // question du jour déjà jouée : on montre la réponse donnée, sans nouvelle tentative

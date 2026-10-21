@@ -544,6 +544,23 @@ def scenario_screens(w):
         w.shot(pg, rec, "07-quiz-avant")
     w.step("Quiz (avant réponse)", s_quiz)
 
+    def s_quiz_fin(rec):
+        # quiz libre : « Terminer » donne le bilan de la partie, « Nouvelle partie » remet le score à zéro (record gardé)
+        pg = fresh()
+        w.nav(pg, "quiz")
+        if pg.locator("#quiz-free").count(): pg.click("#quiz-free"); pg.wait_for_selector(".choice")
+        for _ in range(2):
+            pg.click(".choice >> nth=0"); pg.wait_for_selector("#quiz-next"); pg.click("#quiz-next"); pg.wait_for_selector(".choice")
+        pg.click("#quiz-fin"); pg.wait_for_selector(".quiz-fin")
+        score = pg.inner_text(".qf-score")
+        w.shot(pg, rec, "07c-quiz-bilan")
+        pg.click("#qf-new"); pg.wait_for_selector(".choice")
+        total = pg.evaluate("quizState.total")
+        if not score.endswith("sur 2"): raise RuntimeError(f"bilan : {score!r}")
+        if total != 0: raise RuntimeError(f"nouvelle partie : score non remis à zéro ({total})")
+        return f"bilan « {score} », nouvelle partie à zéro"
+    w.step("Quiz : Terminer, bilan, nouvelle partie", s_quiz_fin)
+
     def s_quiz2(rec):
         pg = state["page"]
         pg.locator(".choice").first.click()

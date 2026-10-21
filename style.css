@@ -620,6 +620,11 @@ mark { background: none; color: inherit; font-weight: 700; }
 .grp > div { display: flex; justify-content: space-between; padding: 12px 16px; position: relative; }
 .grp > div + div::before { content: ""; position: absolute; left: 16px; right: 0; top: 0; border-top: .5px solid var(--line); }
 .grp dd { color: var(--ink2); font-variant-numeric: tabular-nums; }
+/* bilan du quiz libre : score en grand, série et record en tableau */
+.quiz-fin .qf-score { margin-top: 6px; font-size: 34px; line-height: 40px; font-variant-numeric: tabular-nums; }
+.quiz-fin .qf-grp { width: 100%; margin: 20px 0 0; text-align: left; }
+.quiz-fin .row2 { margin-top: 12px; }
+.empty.quiz-fin { margin-top: 28px; padding-bottom: 24px; }
 /* sélection sans rien à montrer : centré dans l'écran, deux boutons empilés */
 .empty.sel0 { flex: 1; justify-content: center; margin: 0 auto; padding-bottom: 32px; }
 .empty .col2 { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-top: 22px; }
