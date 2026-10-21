@@ -1348,10 +1348,13 @@ def scenario_fonctions(w):
     def s_order(rec):
         pg = w.new_page(w.ctx()); w.goto(pg)
         pg.click("#btn-order"); pg.wait_for_timeout(80)        # bouton de l'écran : Aléatoire → Dans l'ordre
+        # réplique courte : une longue fait d'abord défiler son texte (le glisser ne change alors pas de réplique, c'est voulu)
+        pg.evaluate("(() => { const P = __kaam.pool() || __kaam.allQuotes.map((q, i) => i); __kaam.quoteIdx = P.find(i => __kaam.allQuotes[i].quote.length < 50); renderCitations(); })()")
         idx = lambda: pg.evaluate("__kaam.quoteIdx")
         pos = lambda: pg.evaluate("(() => { const P = __kaam.pool(); return P ? P.indexOf(__kaam.quoteIdx) : __kaam.quoteIdx; })()")
         p0 = pos(); pg.locator("#quote-card .quote").click(position={"x": 8, "y": 8}); pg.wait_for_timeout(80); p1 = pos()
         if p1 != p0 + 1: raise RuntimeError(f"toucher en mode ordre : {p0} -> {p1}")
+        pg.evaluate("(() => { const P = __kaam.pool() || __kaam.allQuotes.map((q, i) => i); __kaam.quoteIdx = P.find(i => __kaam.allQuotes[i].quote.length < 50); renderCitations(); })()"); p1 = pos()
         pg.evaluate(SWIPE_V_JS, [-420, None]); pg.wait_for_timeout(420); p2 = pos()
         if p2 != p1 + 1: raise RuntimeError(f"glisser vers le haut (suivante) : {p1} -> {p2}")
         pg.evaluate(SWIPE_V_JS, [420, None]); pg.wait_for_timeout(420); p3 = pos()
@@ -1363,6 +1366,8 @@ def scenario_fonctions(w):
         if pg.locator('#sheet [data-order]').count(): raise RuntimeError("l'ordre est encore dans les Réglages")
         pg.click("#sheet-close"); pg.wait_for_selector("#sheet", state="hidden")
         pg.click("#btn-order"); pg.wait_for_timeout(80)
+        # aléatoire : la réplique courte entre dans l'historique, comme après une vraie navigation
+        pg.evaluate("(() => { const P = __kaam.pool() || __kaam.allQuotes.map((q, i) => i); __kaam.quoteIdx = P.find(i => __kaam.allQuotes[i].quote.length < 50); renderCitations(); })()"); pg.evaluate("pushHistory(__kaam.quoteIdx)")
         a = idx(); pg.evaluate(SWIPE_V_JS, [-420, None]); pg.wait_for_timeout(420); b = idx()
         if a == b: raise RuntimeError("glisser en aléatoire ne change pas de réplique")
         if " sur " not in pg.inner_text(".quote-counter"): raise RuntimeError(f"aléatoire : rang absent ({pg.inner_text('.quote-counter')!r})")
@@ -1377,6 +1382,7 @@ def scenario_fonctions(w):
         # fil de vidéos : glisser vers le haut = suivante (elle monte), vers le bas = précédente, sur la carte et sur la scène
         pg = w.new_page(w.ctx(), prefs={"kaam_in_order": "1", "kaam_hint": "9"}); w.goto(pg)
         pos = lambda: pg.evaluate("(() => { const P = __kaam.pool(); return P ? P.indexOf(__kaam.quoteIdx) : __kaam.quoteIdx; })()")
+        pg.evaluate("(() => { const P = __kaam.pool() || __kaam.allQuotes.map((q, i) => i); __kaam.quoteIdx = P.find(i => __kaam.allQuotes[i].quote.length < 50); renderCitations(); })()")
         p0 = pos(); pg.evaluate(SWIPE_V_JS, [-420, None]); pg.wait_for_timeout(420); p1 = pos()
         monte = pg.evaluate("![...document.getElementById('main-content').children].some(c => c.style.transform) && !document.querySelector('.peek')")
         pg.evaluate(SWIPE_V_JS, [420, None]); pg.wait_for_timeout(420); p2 = pos()
@@ -1391,6 +1397,7 @@ def scenario_fonctions(w):
         pg.close()
         if q1 != q0 + 1: raise RuntimeError(f"glisser vers le haut sur la scène : {q0} -> {q1}")
         pg = w.new_page(w.ctx(), prefs={"kaam_in_order": "1", "kaam_hint": "9"}); w.goto(pg)
+        pg.evaluate("(() => { const P = __kaam.pool() || __kaam.allQuotes.map((q, i) => i); __kaam.quoteIdx = P.find(i => __kaam.allQuotes[i].quote.length < 50); renderCitations(); })()")
         r0 = pos(); pg.evaluate(SWIPE_JS, [-160]); pg.wait_for_timeout(420); r1 = pos()
         # petit glisser (moins d'un quart d'écran, lent) : rien ne change, tout revient en place
         pg.evaluate(SWIPE_V_JS, [-40, None]); pg.wait_for_timeout(420); r2 = pos()
