@@ -234,7 +234,7 @@ let lancementPret = null, lancementT = null;   // réplique déjà rangée ; pr�
 function preparerLancement() {
   clearTimeout(lancementT);
   lancementT = setTimeout(async () => {
-    if (verifyMode || !videoOnly || !window.caches || navigator.connection?.saveData) return;
+    if (!(videoOnly || verifyMode) || !window.caches || navigator.connection?.saveData) return;   // scène montrée dans la carte
     const idx = voisine(1), q = idx != null && allQuotes[idx];
     if (!q || !q.video || lancementPret === q.i) return;
     const url = playURL(q);
@@ -256,7 +256,7 @@ function preparerLancement() {
 async function reprendreLancement() {
   try {
     const l = readJSON('kaam_lancement', null);
-    if (!l || verifyMode || !videoOnly || !window.caches) return null;
+    if (!l || !(videoOnly || verifyMode) || !window.caches) return null;
     const idx = allQuotes.findIndex(q => q.i === l.i), P = pool();
     if (idx < 0 || (P && !P.includes(idx)) || playURL(allQuotes[idx]) !== l.url) return null;
     const r = await (await caches.open(LANCEMENT)).match(`/lancement/${l.i}`);
@@ -1461,7 +1461,6 @@ function bindCitations(q, m, keep) {
   const fig = $('qvideo-slot');
   if (fig) {
     bindScene(fig, cardVideo); playCardVideo(q, fig);
-    bindGlisserVertical(fig);                                 // la scène se glisse comme la carte
     fig.classList.add(...[...$('quote-card').classList].filter(c => c.startsWith('swap')));   // la scène s'anime avec la carte
   }
   else cardVideo.pause();
@@ -1548,8 +1547,7 @@ function watchResize() {
   if (!('ResizeObserver' in window)) { addEventListener('resize', () => { clearTimeout(refitT); refitT = setTimeout(refitMain, 120); }); return; }
   new ResizeObserver(() => { clearTimeout(refitT); refitT = setTimeout(refitMain, 120); }).observe(main);
 }
-// Toucher la carte = suivante ; glisser vers le haut = suivante, vers le bas = précédente (comme un fil de vidéos), sur la
-// carte comme sur la scène ; glisser sur le côté marche encore. Réplique longue : son texte défile d'abord jusqu'au bout.
+// Toucher la carte = suivante ; glisser (vers le haut : suivante, vers le bas : précédente) : bindGlisser, sur tout l'écran.
 // Toucher long = écouter (le son part au relâcher, donc dans le geste : iOS l'autorise)
 const LONG_PRESS = 450;
 let glisseSansAnim = false;   // rendu au bout d'un glisser : la réplique est déjà à sa place, aucune animation de plus
@@ -1570,32 +1568,54 @@ function voisine(dir) {
 // Glisser vertical façon Reels : tout l'écran suit le doigt, la voisine arrive par le bas (ou le haut) en aperçu, et au
 // lâcher elle se cale (au-delà d'un quart d'écran ou d'un geste vif), sinon tout revient en place. Réplique longue : son
 // texte défile d'abord jusqu'au bout. Capture : avant le lecteur vidéo, qui garde ses touchers (lecture, pause).
-function bindGlisserVertical(el, scroller) {
+// Glisser vertical façon Reels, sur TOUT l'écran Répliques (le pouce reste en bas) : le contenu (scène, carte, nom) suit
+// le doigt, le voisin arrive en dessous (ou au-dessus) et se cale au lâcher ; les commandes du bas (lecture, Passer,
+// Partager…) et le bandeau de vérification restent fixes, le contenu glisse dans la bande entre eux. Réplique longue : son
+// texte défile d'abord jusqu'au bout. Un glisser parti d'un bouton ne le déclenche pas. Écouteurs posés une seule fois.
+const CONTENU = '#qvideo-slot, .stage, .meta';   // ce qui glisse ; tout le reste de l'écran est fixe
+function bindGlisser(mc) {
   let sx = 0, sy = 0, st = 0, haut = true, bas = true, etat = null, dir = 0, cible = null, peek = null, dy = 0;
-  let vit = 0, lastY = 0, lastT = 0;   // vitesse du doigt (px/ms) sur les derniers mouvements : l'élan au lâcher
-  const main = () => document.getElementById('main-content');
-  const enfants = () => [...main().children];
-  // « none » et pas « » : la carte a sa propre transition (toucher long), qui la ferait traîner derrière le doigt
-  // anim : durée en ms ; la courbe part à la vitesse du doigt et se pose en douceur (pas de cassure au lâcher)
-  const poser = (y, anim) => enfants().forEach(c => { c.style.transition = anim ? `transform ${anim}ms cubic-bezier(.25, .9, .3, 1)` : 'none'; c.style.transform = y ? `translateY(${y}px)` : ''; });
-  // rien ne passe sur l'en-tête (titre, sélection) : l'écran est découpé sous lui le temps du glisser
-  const couper = on => { const m = main(); m.style.clipPath = on ? `inset(${getComputedStyle(m).paddingTop} 0 0 0)` : ''; };
-  // l'écran voisin, VRAI rendu du même gabarit (texte à sa taille, scène qui joue déjà, sans le son) : au lâcher, le
-  // nouvel écran prend exactement sa place, rien ne saute. Ses identifiants doublent ceux de l'écran affiché le temps du
-  // glisser (getElementById rend toujours l'affiché, placé avant) ; il est retiré dès la fin.
+  let vit = 0, lastY = 0, lastT = 0, bande = null, finGlisse = 0;   // vitesse du doigt (px/ms) : l'élan au lâcher
+  const boites = new Map();                      // élément qui glisse → sa place sans glisser (haut, hauteur) dans l'écran
+  const contenu = () => [...mc.children].filter(c => c.matches(CONTENU));
+  // chaque élément est découpé à la bande (clip-path dans ses propres coordonnées, animé avec lui) : ce qui sort de la bande
+  // disparaît, sans jamais masquer les commandes fixes. anim : durée en ms ; « none » (pas « ») : la carte a sa propre
+  // transition (toucher long), qui la ferait traîner derrière le doigt
+  const poser = (y, anim) => [...contenu(), ...(peek ? [peek] : [])].forEach(c => {
+    const b = boites.get(c), ease = 'cubic-bezier(.25, .9, .3, 1)';
+    c.style.transition = anim ? `transform ${anim}ms ${ease}, clip-path ${anim}ms ${ease}` : 'none';
+    c.style.transform = y ? `translateY(${y}px)` : '';
+    c.style.clipPath = y && b ? `inset(${Math.max(0, bande.top - b.top - y)}px 0 ${Math.max(0, b.top + y + b.h - bande.top - bande.h)}px 0)` : '';
+  });
+  // la bande où glisse le contenu : du haut de la scène (ou de la carte) au bas du nom, marges comprises ; hors d'elle
+  // (en-tête, commandes du bas), rien ne dépasse
+  const mesurer = () => {
+    const c = contenu(); if (!c.length) return null;
+    const m0 = mc.getBoundingClientRect(), a = c[0], z = c[c.length - 1];
+    boites.clear();
+    c.forEach(e => { const r = e.getBoundingClientRect(); boites.set(e, { top: r.top - m0.top, h: r.height }); });
+    const top = a.getBoundingClientRect().top - parseFloat(getComputedStyle(a).marginTop) - m0.top;
+    const bot = z.getBoundingClientRect().bottom + parseFloat(getComputedStyle(z).marginBottom) - m0.top;
+    return { top, h: bot - top, bas: m0.height - bot };
+  };
+  // le voisin : VRAI rendu du même gabarit, réduit au contenu (texte à sa taille, scène qui joue déjà, sans le son) ; au
+  // lâcher le nouvel écran prend exactement sa place. Ses identifiants doublent ceux de l'écran affiché le temps du glisser
+  // (getElementById rend toujours l'affiché, placé avant) ; il est retiré dès la fin.
   const apercu = d => {
     peek?.remove(); peek = null; cible = voisine(d);
     const q = cible != null && allQuotes[cible];
-    if (!q) return;
+    if (!q || !bande) return;
     const garde = quoteIdx; let m, html;
     quoteIdx = cible;
     try { m = citationsModel(q, true); html = citationsHTML(q, m, 0); } finally { quoteIdx = garde; }
-    const mc = main();
     peek = document.createElement('div');
-    peek.className = `peek ${d > 0 ? 'bas' : 'haut'}`; peek.setAttribute('aria-hidden', 'true'); peek.inert = true;
-    peek.style.paddingTop = getComputedStyle(mc).paddingTop;
+    peek.className = 'peek'; peek.setAttribute('aria-hidden', 'true'); peek.inert = true;
     peek.innerHTML = html;
+    [...peek.children].forEach(c => { if (!c.matches(CONTENU)) c.remove(); });
     peek.querySelectorAll('.swap-in').forEach(e => e.classList.remove('swap-in', 'rand', 'swap-v', 'swap-back'));
+    const top = bande.top + (d > 0 ? bande.h : -bande.h);
+    Object.assign(peek.style, { top: `${top}px`, height: `${bande.h}px` });
+    boites.set(peek, { top, h: bande.h });
     mc.appendChild(peek);
     const card = peek.querySelector('.stage');
     if (card) fitCard(card, q, m.inlineVideo);
@@ -1609,34 +1629,41 @@ function bindGlisserVertical(el, scroller) {
       v.play().catch(() => {});
     }
   };
-  el.addEventListener('touchstart', e => {
-    if (e.touches.length > 1 || etat === 'part') return;
+  mc.addEventListener('touchstart', e => {
+    etat = null;
+    if (e.touches.length > 1 || currentView !== 'citations' || !document.getElementById('quote-card') || sheetOpen()) return;
+    if (e.target.closest('input, textarea, .tl, .done-line')) return;
     sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); etat = 'attente'; dir = 0; dy = 0;
     vit = 0; lastY = sy; lastT = 0;
-    const sc = scroller && scroller.scrollHeight > scroller.clientHeight + 2 ? scroller : null;
+    // réplique longue qui défile, touchée sur son texte : glisser la fait d'abord défiler jusqu'au bout
+    const qb = e.target.closest('.stage')?.querySelector('.qblock');
+    const sc = qb && qb.scrollHeight > qb.clientHeight + 2 ? qb : null;
     haut = !sc || sc.scrollTop <= 1; bas = !sc || sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2;   // bords au départ
   }, { passive: true, capture: true });
-  el.addEventListener('touchmove', e => {
+  mc.addEventListener('touchmove', e => {
     if (!etat || etat === 'part') return;
     const ddy = e.touches[0].clientY - sy, ddx = e.touches[0].clientX - sx;
     if (etat === 'attente') {
       if (Math.abs(ddy) < 8 && Math.abs(ddx) < 8) return;
       if (Math.abs(ddy) < Math.abs(ddx) || (ddy < 0 ? !bas : !haut)) { etat = null; return; }   // de côté, ou le texte défile
-      etat = 'glisse'; couper(true);
+      bande = mesurer();
+      if (!bande) { etat = null; return; }
+      etat = 'glisse';
     }
     e.preventDefault();
     const d = ddy < 0 ? 1 : -1;
     if (d !== dir) { dir = d; apercu(d); }
-    dy = peek ? ddy : ddy * .25;                              // rien de ce côté : l'écran résiste
+    dy = peek ? ddy : ddy * .25;                              // rien de ce côté : le contenu résiste
     const now = performance.now();
     if (lastT) vit = vit * .4 + .6 * (e.touches[0].clientY - lastY) / Math.max(1, now - lastT);
     lastY = e.touches[0].clientY; lastT = now;
     poser(dy, 0);
   }, { passive: false, capture: true });
   const fin = () => {
-    if (etat !== 'glisse') { etat = null; return; }
-    const h = main().clientHeight;
-    // geste vif dans le sens du glisser (même court), ou plus d'un quart d'écran ; un retour du doigt en fin de geste annule
+    if (etat !== 'glisse') { if (etat !== 'part') etat = null; return; }
+    finGlisse = Date.now();
+    const h = bande.h;
+    // geste vif dans le sens du glisser (même court), ou plus d'un quart de la bande ; un retour du doigt en fin de geste annule
     const vif = Math.abs(vit) > .45 && Math.sign(vit) === Math.sign(dy) && Math.abs(dy) > 30;
     const contre = Math.abs(vit) > .3 && Math.sign(vit) !== Math.sign(dy);
     if (peek && !contre && (Math.abs(dy) > h * .22 || vif)) {
@@ -1647,24 +1674,25 @@ function bindGlisserVertical(el, scroller) {
       const vers = dir, t = peek.querySelector('video')?.currentTime || 0;
       setTimeout(() => {
         glisseSansAnim = true;
-        try { if (vers > 0) swipeForward(); else swipeBack(); } finally { glisseSansAnim = false; etat = null; couper(false); }
+        try { if (vers > 0) swipeForward(); else swipeBack(); } finally { glisseSansAnim = false; etat = null; peek = null; }
         // la scène reprend là où l'aperçu en était (elle jouait déjà, sans le son) : aucune reprise à zéro visible
         if (t > .05 && document.getElementById('qvideo-slot') && !fenetre(allQuotes[quoteIdx])) { try { cardVideo.currentTime = t; } catch {} }
       }, ms);
     } else {
-      poser(0, 260);
-      setTimeout(() => { peek?.remove(); peek = null; enfants().forEach(c => { c.style.transition = ''; }); couper(false); }, 270);
       etat = null;
+      poser(0, 260);
+      setTimeout(() => { peek?.remove(); peek = null; contenu().forEach(c => { c.style.transition = ''; c.style.clipPath = ''; }); }, 270);
     }
   };
-  el.addEventListener('touchend', fin, { passive: true, capture: true });
-  el.addEventListener('touchcancel', fin, { passive: true, capture: true });
+  mc.addEventListener('touchend', fin, { passive: true, capture: true });
+  mc.addEventListener('touchcancel', fin, { passive: true, capture: true });
+  // le toucher qui finit un glisser n'est pas un « clic » (bouton sous le doigt, carte qui passerait à la suivante)
+  mc.addEventListener('click', e => { if (Date.now() - finGlisse < 400) { e.stopPropagation(); e.preventDefault(); } }, true);
 }
 function bindCardGestures(card) {
   let lastScroll = 0, lastLong = 0, pressT = null;
   const qb = card.querySelector('.qblock');
   qb.addEventListener('scroll', () => { lastScroll = Date.now(); fitOverflow(card); }, { passive: true });
-  bindGlisserVertical(card, qb);
   card.addEventListener('click', e => {
     if (e.target.closest('button')) return;
     if (Date.now() - lastLong < 700) return;                // fin d'un toucher long : le son, pas la suivante
@@ -1673,7 +1701,7 @@ function bindCardGestures(card) {
     swipeForward();
   });
   card.addEventListener('contextmenu', e => { if (document.getElementById('btn-audio')) e.preventDefault(); });
-  let sx = 0, sy = 0, st = 0, moved = false;   // toucher long seulement : les glissers sont dans bindGlisserVertical
+  let sx = 0, sy = 0, st = 0, moved = false;   // toucher long seulement : les glissers sont dans bindGlisser
   const unpress = () => { clearTimeout(pressT); card.classList.remove('press'); };
   card.addEventListener('touchstart', e => {
     sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); moved = false;
@@ -3369,6 +3397,7 @@ function bindGlobalEvents() {
   document.addEventListener('error', onImgError, true);                       // portrait introuvable : l'initiale reste
   document.addEventListener('load', onImgLoad, true);                         // portrait vide (hors ligne) : de même
   document.addEventListener('keydown', onArrowKeys);                         // flèches : réplique suivante / précédente
+  bindGlisser(document.getElementById('main-content'));                     // glisser vertical sur tout l'écran Répliques
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheetOpen()) closeSheet(); });
   // réseau : « Hors ligne » dans l'en-tête ; au retour du réseau, envoi des avis en attente
   ['online', 'offline'].forEach(ev => window.addEventListener(ev, refreshMast));

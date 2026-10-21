@@ -188,10 +188,8 @@ mark { background: none; color: inherit; font-weight: 700; }
 .swap-in.rand { animation-name: fade; animation-duration: .22s; }
 @keyframes swap { from { opacity: 0; transform: translateX(24px) scale(.985); } }
 @keyframes swapb { from { opacity: 0; transform: translateX(-24px) scale(.985); } }
-/* aperçu de la voisine pendant un glisser vertical (façon Reels) : juste sous l'écran (ou au-dessus), il suit le doigt */
-.peek { position: absolute; left: 0; right: 0; height: 100%; display: flex; flex-direction: column; background: var(--bg); pointer-events: none; }
-.peek.bas { top: 100%; }
-.peek.haut { bottom: 100%; }
+/* aperçu du voisin pendant un glisser vertical (façon Reels) : juste sous la bande de contenu (ou au-dessus), il suit le doigt */
+.peek { position: absolute; left: 0; right: 0; display: flex; flex-direction: column; background: var(--bg); pointer-events: none; }   /* top, height : posés par bindGlisser */
 /* boutons : la suivante monte du bas, la précédente descend du haut */
 .swap-in.swap-v { animation: swapu .32s cubic-bezier(.2, .8, .2, 1); }
 .swap-in.swap-v.swap-back { animation-name: swapd; }
