@@ -243,6 +243,11 @@ mark { background: none; color: inherit; font-weight: 700; }
 .stage-foot:not(.vf) { justify-content: center; min-height: 22px; margin-bottom: 4px; }
 .quote-counter { font-size: 13px; line-height: 17px; color: var(--ink3); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .skip { flex: none; height: 44px; padding: 0 2px 0 12px; color: var(--accent-t); font-size: 17px; }
+/* vérification : ordre de passage basculé sur place, à gauche de « Passer » */
+.vgo { flex: none; display: flex; align-items: center; gap: 4px; }
+.vord { height: 32px; display: flex; align-items: center; gap: 5px; padding: 0 11px 0 9px; border-radius: 980px; background: var(--fill); color: var(--ink2); font-size: 14px; font-weight: 600; white-space: nowrap; }
+.vord svg { width: 16px; height: 16px; flex: none; }
+.vord:active { opacity: .6; }
 
 /* vérification : lecture, « OK » rouge, « Problème » gris, puis compteur / annulation à hauteur fixe */
 .vrow { flex: none; display: flex; align-items: center; gap: 10px; margin: 12px var(--pad) 0; }

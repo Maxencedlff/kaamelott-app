@@ -451,6 +451,21 @@ def scenario_screens(w):
         w.shot(pg, rec, "05-verifier")
     w.step("Vérifier", s_verify)
 
+    def s_verify_order(rec):
+        # Aléatoire ↔ Dans l'ordre directement sur l'écran de vérification ; « Passer » suit ensuite la file dans l'ordre
+        pg = fresh({"kaam_verify": "1"})
+        pg.wait_for_selector("#v-order")
+        if "Aléatoire" not in pg.inner_text("#v-order"): raise RuntimeError(f"ordre affiché : {pg.inner_text('#v-order')!r}")
+        pg.click("#v-order")
+        pg.wait_for_function("() => document.querySelector('#v-order')?.innerText.includes('Dans l’ordre')", timeout=3000)
+        if pg.evaluate("localStorage.getItem('kaam_in_order')") != "1": raise RuntimeError("choix non mémorisé")
+        q0 = pg.evaluate("__kaam.quoteIdx"); pg.click("#avis-skip"); pg.wait_for_timeout(400)
+        i0, i1 = pg.evaluate(f"[__kaam.verifyIdx.indexOf({q0}), __kaam.verifyIdx.indexOf(__kaam.quoteIdx)]")
+        if i1 != i0 + 1: raise RuntimeError(f"Passer dans l'ordre : rang {i0} → {i1}")
+        w.shot(pg, rec, "05b-verifier-ordre")
+        return "basculé sur place, mémorisé ; Passer → réplique suivante de la file"
+    w.step("Vérifier : ordre basculé sur l'écran", s_verify_order)
+
     def s_problem(rec):
         pg = state["page"]
         pg.click("#avis-ko")
