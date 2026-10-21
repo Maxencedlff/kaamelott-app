@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v66';
+const CACHE = 'kaamelott-v67';
 const DATA_CACHE = 'kaamelott-data';
 // Portraits des personnages (img/perso/, ~200 × 3 petits JPEG) : noms à empreinte, donc immuables. Cache à part, jamais
 // vidé par une mise à jour ; servis depuis le cache dès la première vue, plafonné à IMG_MAX fichiers (les plus anciens sortent).

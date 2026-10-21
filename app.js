@@ -1080,9 +1080,8 @@ function settingsHTML() {
     <div class="g"><div class="gr${verifyMode ? ' dis' : ''}">${seg('Affichage', [[m === 'text', 'id="chip-text"', 'Texte'], [m === 'audio', 'id="chip-audio-only"', 'Son']]
       .concat(videoIdx.length ? [[m === 'video', 'id="chip-video-only"', 'Vidéo']] : []), verifyMode)}</div></div>
     <p class="gf">Vidéo montre la scène et ne garde que les répliques qui en ont. Chaque scène se télécharge à l’affichage (30 à 650 Ko).</p>
-    <p class="gh">Ordre</p>
-    <div class="g"><div class="gr">${seg('Ordre', [[!inOrder, 'data-order="random"', 'Aléatoire'], [inOrder, 'data-order="seq"', 'Dans l’ordre']])}</div>
-      <button class="gr${verifyMode ? ' dis' : ''}" id="sw-auto" role="switch" aria-checked="${autoPlay}" data-auto="${autoPlay ? 0 : 1}"${verifyMode ? ' disabled' : ''}><span class="k">Lecture auto<small>Le son part dès qu’une réplique s’affiche</small></span><span class="sw" aria-hidden="true"></span></button></div>
+    <p class="gh">Lecture</p>
+    <div class="g"><button class="gr${verifyMode ? ' dis' : ''}" id="sw-auto" role="switch" aria-checked="${autoPlay}" data-auto="${autoPlay ? 0 : 1}"${verifyMode ? ' disabled' : ''}><span class="k">Lecture auto<small>Le son part dès qu’une réplique s’affiche</small></span><span class="sw" aria-hidden="true"></span></button></div>
     <p class="gf" role="status">${verifyMode ? 'Affichage et lecture auto sont suspendus pendant la vérification.'
       : n ? `<b>${unitPlural(n)}</b> ${n > 1 ? 'correspondent' : 'correspond'}.` : 'Aucune réplique ne correspond.'}</p>
     <p class="gh">Contribuer</p>
@@ -1122,10 +1121,6 @@ function bindSettings(sheet) {
   sheet.querySelector('#chip-text').addEventListener('click', () => setMedia('text'));
   sheet.querySelector('#chip-audio-only').addEventListener('click', () => setMedia('audio'));
   sheet.querySelector('#chip-video-only')?.addEventListener('click', () => setMedia('video'));
-  sheet.querySelectorAll('[data-order]').forEach(b => b.addEventListener('click', () => {
-    setOrder(b.dataset.order === 'seq');
-    refreshAfterSetting(`[data-order="${b.dataset.order}"]`);
-  }));
   sheet.querySelectorAll('[data-auto]').forEach(b => b.addEventListener('click', () => {
     autoPlay = b.dataset.auto === '1'; writePref('kaam_autoplay', autoPlay);
     refreshAfterSetting('#sw-auto');
@@ -1244,7 +1239,7 @@ function hintCount() { return +readStr('kaam_hint', 0) || 0; }
 function countHint() { writeStr('kaam_hint', hintCount() + 1); }
 let firstRender = true;
 // Données de l'écran Répliques (aucun effet sur la page, sauf le compteur de l'aide)
-// Aléatoire ↔ Dans l'ordre (Réglages, ou directement sur l'écran de vérification)
+// Aléatoire ↔ Dans l'ordre : bouton de l'écran Répliques (vérification ou non), plus dans les Réglages
 function setOrder(seq) {
   inOrder = seq; writePref('kaam_in_order', inOrder); nextRand = null;
   // retour en Aléatoire : la réplique atteinte dans l'ordre entre dans l'historique (« Retour » ramène à la précédente vue)
@@ -1262,7 +1257,7 @@ function citationsModel(q) {
     : P ? `${nf(rank + 1)} sur ${nf(P.length)}${videoOnly ? ' avec vidéo' : audioOnly ? ' avec son' : ''}` : `${nf(quoteIdx + 1)} sur ${nf(allQuotes.length)}`;
   const summary = verifyMode
     ? ['Tout vérifier', plural(verifyIdx.length, 'restante'), selAll() ? '' : esc(scopeLabel())].filter(Boolean).join(SEP)
-    : [{ text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], inOrder ? 'Dans l’ordre' : 'Aléatoire', autoPlay ? 'Lecture auto' : '']
+    : [{ text: 'Texte', audio: 'Son', video: 'Vidéo' }[mediaMode()], autoPlay ? 'Lecture auto' : '']
         .filter(Boolean).join(SEP);
   const inlineVideo = !!((videoOnly || verifyMode) && q.video);
   // l'aide n'est jamais dans la carte : une ligne discrète dessous, sur les 3 premières répliques
@@ -1292,7 +1287,7 @@ function listenHTML(q, cls = 'tp') {
 // Réglages autres que ceux par défaut et invisibles à l'écran : un point sur le bouton Réglages (et dans son libellé pour VoiceOver).
 // La sélection n'en fait pas partie : elle est écrite sous le titre.
 function activeFilters() {
-  return [{ text: 'Texte', audio: 'Son', video: '' }[mediaMode()], inOrder ? 'Dans l’ordre' : '', autoPlay ? 'Lecture auto' : ''].filter(Boolean);
+  return [{ text: 'Texte', audio: 'Son', video: '' }[mediaMode()], autoPlay ? 'Lecture auto' : ''].filter(Boolean);
 }
 function refreshSetBtn() {
   const b = document.getElementById('mast-set');
@@ -1301,14 +1296,16 @@ function refreshSetBtn() {
   b.classList.toggle('dot', f.length > 0);
   b.setAttribute('aria-label', f.length ? `Réglages (${f.join(', ')})` : 'Réglages');
 }
+// Bouton Aléatoire / Dans l'ordre (écran Répliques, vérification comprise) : montre le mode en cours, le touche bascule
+const orderBtnHTML = () => `<button class="vord" id="btn-order" aria-label="Ordre : ${inOrder ? 'dans l’ordre' : 'aléatoire'}. Toucher pour passer ${inOrder ? 'en aléatoire' : 'dans l’ordre'}">${icon(inOrder ? 'order' : 'shuffle')}<span>${inOrder ? 'Dans l’ordre' : 'Aléatoire'}</span></button>`;
 // Gabarit de l'écran Répliques : la carte (photo floutée du personnage, ou fond neutre), le nom, la lecture, la navigation
 function citationsHTML(q, m, dir) {
   const size = Math.round(Math.min(quoteSize(q.quote), innerWidth < 360 || innerHeight < 620 ? Q_MAX.videoSE : Q_MAX.video) * textScale());
   const photo = !m.inlineVideo && !q.acteur && persoURL(q.name, 's');
   const playable = !!(q.audio || m.inlineVideo);
-  // outils en glyphes seuls : Au hasard (dans l'ordre seulement : en aléatoire, « Autre » fait déjà ce travail), Scène (si elle existe), Partager
+  // outils : l'ordre (Aléatoire / Dans l'ordre), puis en glyphes seuls Scène (si elle existe) et Partager
   const tools = [
-    inOrder ? `<button class="tool" id="btn-random" aria-label="Une réplique au hasard">${icon('shuffle')}</button>` : '',
+    orderBtnHTML(),
     q.video && !m.inlineVideo ? `<button class="tool" id="btn-video" aria-label="Voir la scène">${icon('film')}</button>` : '',
     `<button class="tool" id="btn-share" aria-label="Partager">${icon('share')}<span class="t">Partager</span></button>`,
   ].join('');
@@ -1331,7 +1328,7 @@ function citationsHTML(q, m, dir) {
     <div class="scrub${playable ? '' : ' none'}" id="scrub" aria-hidden="true"><div class="track"><i></i></div><span class="badge" data-t="${m.badge}"${m.badge ? '' : ' hidden'}>${m.badge}</span></div>
     ${verifyMode ? `
       ${m.reviewable ? `<div class="vrow">${listenHTML(q, 'tp sm')}${m.deja ? `<span class="vdone" id="avis-deja" role="img" aria-label="${dejaLabel(q)[1]}">${icon('check')}<span>${dejaLabel(q)[0]}</span></span>` : `<button class="ok" id="avis-ok">${icon('check')}<span>${m.what}</span></button>`}<button class="ko" id="avis-ko">Problème</button></div>` : ''}
-      <div class="vfoot"><div class="stage-foot vf"><span class="quote-counter">${m.counter}</span><span class="vgo"><button class="vord" id="v-order" aria-label="Ordre : ${inOrder ? 'dans l’ordre' : 'aléatoire'}. Toucher pour passer ${inOrder ? 'en aléatoire' : 'dans l’ordre'}">${icon(inOrder ? 'order' : 'shuffle')}<span>${inOrder ? 'Dans l’ordre' : 'Aléatoire'}</span></button>${m.reviewable ? `<button class="skip" id="avis-skip">Passer</button>` : ''}</span></div><div class="done-slot"></div></div>`
+      <div class="vfoot"><div class="stage-foot vf"><span class="quote-counter">${m.counter}</span><span class="vgo">${orderBtnHTML()}${m.reviewable ? `<button class="skip" id="avis-skip">Passer</button>` : ''}</span></div><div class="done-slot"></div></div>`
     : `
       <div class="transport">
         <button class="ts" id="btn-prev" aria-label="${inOrder ? 'Réplique précédente' : 'Revenir à la réplique précédente'}"${m.atStart ? ' disabled' : ''}>${icon('chev-l')}<span>${inOrder ? 'Précédente' : 'Retour'}</span></button>
@@ -1357,9 +1354,8 @@ function bindCitations(q, m, keep) {
     // en aléatoire, les boutons font comme les gestes (historique) ; dans l'ordre, voisines dans le corpus
     $('btn-prev').addEventListener('click', () => swipeBack());
     $('btn-next').addEventListener('click', () => swipeForward());
-    $('btn-random')?.addEventListener('click', () => randomQuote());
   }
-  $('v-order')?.addEventListener('click', () => { setOrder(!inOrder); renderCitations(); });
+  $('btn-order').addEventListener('click', () => { setOrder(!inOrder); renderCitations(); });
   refreshSetBtn();
   const fig = $('qvideo-slot');
   if (fig) { bindScene(fig, cardVideo); playCardVideo(q, fig); }

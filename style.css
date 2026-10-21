@@ -232,7 +232,7 @@ mark { background: none; color: inherit; font-weight: 700; }
 .tp .lp, .tp .ls, .tp .x { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .transport button:not(:disabled):active, .tools button:active { opacity: .45; }
 /* outils en glyphes seuls (Au hasard dans l'ordre, Scène si elle existe, Partager) */
-.tools { flex: none; display: flex; justify-content: center; gap: 36px; margin: 0 var(--pad) 4px; }
+.tools { flex: none; display: flex; justify-content: center; align-items: center; gap: 28px; margin: 0 var(--pad) 4px; }
 .tool { position: relative; width: 44px; height: 40px; display: grid; place-items: center; color: var(--ink2); }
 .tool svg { width: 24px; height: 24px; }
 .tool .t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -243,7 +243,7 @@ mark { background: none; color: inherit; font-weight: 700; }
 .stage-foot:not(.vf) { justify-content: center; min-height: 22px; margin-bottom: 4px; }
 .quote-counter { font-size: 13px; line-height: 17px; color: var(--ink3); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .skip { flex: none; height: 44px; padding: 0 2px 0 12px; color: var(--accent-t); font-size: 17px; }
-/* vérification : ordre de passage basculé sur place, à gauche de « Passer » */
+/* Aléatoire / Dans l'ordre, basculé sur place : outils de l'écran Répliques, ou à gauche de « Passer » en vérification */
 .vgo { flex: none; display: flex; align-items: center; gap: 4px; }
 .vord { height: 32px; display: flex; align-items: center; gap: 5px; padding: 0 11px 0 9px; border-radius: 980px; background: var(--fill); color: var(--ink2); font-size: 14px; font-weight: 600; white-space: nowrap; }
 .vord svg { width: 16px; height: 16px; flex: none; }

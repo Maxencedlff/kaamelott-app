@@ -454,10 +454,10 @@ def scenario_screens(w):
     def s_verify_order(rec):
         # Aléatoire ↔ Dans l'ordre directement sur l'écran de vérification ; « Passer » suit ensuite la file dans l'ordre
         pg = fresh({"kaam_verify": "1"})
-        pg.wait_for_selector("#v-order")
-        if "Aléatoire" not in pg.inner_text("#v-order"): raise RuntimeError(f"ordre affiché : {pg.inner_text('#v-order')!r}")
-        pg.click("#v-order")
-        pg.wait_for_function("() => document.querySelector('#v-order')?.innerText.includes('Dans l’ordre')", timeout=3000)
+        pg.wait_for_selector("#btn-order")
+        if "Aléatoire" not in pg.inner_text("#btn-order"): raise RuntimeError(f"ordre affiché : {pg.inner_text('#btn-order')!r}")
+        pg.click("#btn-order")
+        pg.wait_for_function("() => document.querySelector('#btn-order')?.innerText.includes('Dans l’ordre')", timeout=3000)
         if pg.evaluate("localStorage.getItem('kaam_in_order')") != "1": raise RuntimeError("choix non mémorisé")
         q0 = pg.evaluate("__kaam.quoteIdx"); pg.click("#avis-skip"); pg.wait_for_timeout(400)
         i0, i1 = pg.evaluate(f"[__kaam.verifyIdx.indexOf({q0}), __kaam.verifyIdx.indexOf(__kaam.quoteIdx)]")
@@ -1271,7 +1271,7 @@ def scenario_fonctions(w):
 
     def s_order(rec):
         pg = w.new_page(w.ctx()); w.goto(pg)
-        setting(pg, '[data-order="seq"]')
+        pg.click("#btn-order"); pg.wait_for_timeout(80)        # bouton de l'écran : Aléatoire → Dans l'ordre
         idx = lambda: pg.evaluate("__kaam.quoteIdx")
         pos = lambda: pg.evaluate("(() => { const P = __kaam.pool(); return P ? P.indexOf(__kaam.quoteIdx) : __kaam.quoteIdx; })()")
         p0 = pos(); pg.locator("#quote-card .quote").click(position={"x": 8, "y": 8}); pg.wait_for_timeout(80); p1 = pos()
@@ -1281,9 +1281,12 @@ def scenario_fonctions(w):
         pg.evaluate(SWIPE_JS, [120]); pg.wait_for_timeout(80); p3 = pos()
         if p3 != p2 - 1: raise RuntimeError(f"glisser → (précédente) : {p2} -> {p3}")
         pg.reload(); w.wait_ready(pg)
-        if "sur" not in pg.inner_text(".quote-counter") or "ordre" not in (pg.get_attribute("#mast-set", "aria-label") or "") or not pg.evaluate("document.getElementById('mast-set').classList.contains('dot')"):
-            raise RuntimeError("mode « Dans l'ordre » oublié au rechargement (ou point des réglages absent)")
-        setting(pg, '[data-order="random"]')
+        if "sur" not in pg.inner_text(".quote-counter") or "Dans l’ordre" not in pg.inner_text("#btn-order"):
+            raise RuntimeError("mode « Dans l'ordre » oublié au rechargement")
+        pg.click("#mast-set"); pg.wait_for_selector("#sheet:not([hidden]) #sw-auto")
+        if pg.locator('#sheet [data-order]').count(): raise RuntimeError("l'ordre est encore dans les Réglages")
+        pg.click("#sheet-close"); pg.wait_for_selector("#sheet", state="hidden")
+        pg.click("#btn-order"); pg.wait_for_timeout(80)
         a = idx(); pg.evaluate(SWIPE_JS, [-120]); pg.wait_for_timeout(80); b = idx()
         if a == b: raise RuntimeError("glisser en aléatoire ne change pas de réplique")
         pg.evaluate(SWIPE_JS, [120]); pg.wait_for_timeout(80)
@@ -2241,7 +2244,7 @@ def scenario_correctifs(w, tag=""):
             idx = lambda: pg.evaluate("__kaam.quoteIdx")
             pg.click("#btn-next"); pg.wait_for_timeout(250); b = idx()
             def order(v):
-                pg.click("#mast-set"); pg.click(f'[data-order="{v}"]'); pg.click("#sheet-close"); pg.wait_for_timeout(200)
+                if ("Dans l’ordre" in pg.inner_text("#btn-order")) != (v == "seq"): pg.click("#btn-order"); pg.wait_for_timeout(200)
             order("seq")
             for _ in range(3): pg.click("#btn-next"); pg.wait_for_timeout(200)
             c = idx()
