@@ -1181,6 +1181,30 @@ def scenario_vague2(w):
         return f"scène {s['name']!r} ({s['size']} o) au 2e toucher après refus ; son {a['type']} au 1er"
     w.step("Partager : l'extrait part seul, sans texte", s_extrait)
 
+    def s_extrait_coupe(rec):
+        # coupe réglée, pas encore finie sur le PC : l'extrait partagé est le coupé (api/extrait.js) ; téléchargement
+        # bloqué (réseau coupé en route) : le bouton sort de « Préparation… » au lieu d'y rester
+        pg = page()
+        demandes = []
+        pg.route("**/api/extrait*", lambda r: (demandes.append(r.request.url), r.fulfill(status=200, body=b"mp4", headers={"content-type": "video/mp4"})))
+        pg.evaluate("""() => { window.__sh = [];
+            navigator.canShare = d => !!(d && d.files);
+            navigator.share = async d => { window.__sh.push({ type: d.files?.[0]?.type }); }; }""")
+        pg.evaluate("""() => { const i = allQuotes.findIndex(q => q.cx && q.video); quoteIdx = i; const q = allQuotes[i];
+            __kaam.avisCoupes = { [q.i]: { fp: __kaam.fpOf(q), ds: 0.2, de: -0.1 } }; renderCitations(); }""")
+        pg.click("#btn-share"); pg.wait_for_function("() => window.__sh.length === 1", timeout=6000)
+        if not (len(demandes) == 1 and "/api/extrait?k=" in demandes[0]): raise RuntimeError(f"extrait coupé non demandé : {demandes}")
+        pg.unroute("**/api/extrait*")
+        pg.route("**/api/extrait*", lambda r: None)          # jamais de réponse
+        pg.evaluate("""() => { SHARE_DELAI = 800; const q = allQuotes[quoteIdx];
+            __kaam.avisCoupes = { [q.i]: { fp: __kaam.fpOf(q), ds: 0.3, de: -0.1 } }; renderCitations(); }""")
+        pg.click("#btn-share")
+        pg.wait_for_function("() => document.querySelector('#btn-share').innerText.includes('Réseau trop lent')", timeout=5000)
+        pg.wait_for_function("() => !document.querySelector('#btn-share').classList.contains('said')", timeout=6000)
+        pg.close()
+        return "extrait coupé demandé en ligne ; téléchargement bloqué abandonné, bouton rendu"
+    w.step("Partager : coupe en attente → extrait coupé ; réseau bloqué → bouton rendu", s_extrait_coupe)
+
     def s_retour_recherche(rec):
         # une réplique ouverte depuis Rechercher : « ‹ » (puis le Retour système) ramène aux résultats, texte et défilement gardés
         pg = page(); w.nav(pg, "recherche")

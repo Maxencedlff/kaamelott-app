@@ -1940,10 +1940,16 @@ function extraitFile(q, url, blob) {
   const type = q.video ? 'video/mp4' : ext === 'mp3' ? 'audio/mpeg' : 'audio/mp4';
   return new File([blob], `Kaamelott - ${nameCase(q.name)} - ${mots}.${ext}`.replace(/[\\/:*?"<>|]/g, ''), { type });
 }
+let SHARE_DELAI = 20000;     // téléchargement bloqué (réseau coupé ou changé en cours, iOS ne rend jamais la main) : abandon
 async function fetchExtrait(q, url) {
-  const r = await fetch(mediaReady.get(url) || url);   // copie déjà en mémoire (préchargement) : instantané
-  if (!r.ok) throw new Error(r.status);
-  const f = extraitFile(q, url, await r.blob());
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), SHARE_DELAI);
+  let blob;
+  try {
+    const r = await fetch(mediaReady.get(url) || url, { signal: ctl.signal });   // copie déjà en mémoire (préchargement) : instantané
+    if (!r.ok) throw new Error(r.status);
+    blob = await r.blob();
+  } finally { clearTimeout(t); }
+  const f = extraitFile(q, url, blob);
   shareFiles.set(url, f);
   while (shareFiles.size > 4) shareFiles.delete(shareFiles.keys().next().value);
   return f;
@@ -1973,7 +1979,9 @@ function shareQuote(q, btn) {
   sharePending.add(url);
   sayInButton(btn, 'Préparation…', 0);
   return fetchExtrait(q, url)
-    .then(f => shareExtrait(q, f, btn), () => shareText(shareTextOf(q), btn))   // extrait injoignable : le texte
+    .then(f => shareExtrait(q, f, btn), e => e.name === 'AbortError'
+      ? (sayInButton(btn, 'Réseau trop lent, réessayez', 4000), 'délai')       // le bouton redevient utilisable
+      : shareText(shareTextOf(q), btn))                                         // extrait injoignable : le texte
     .finally(() => sharePending.delete(url));
 }
 
@@ -2265,7 +2273,7 @@ function openEntryMenu(q, ent, opts, onFav) {
   sheet.querySelector('#sheet-close').addEventListener('click', closeSheet);
   sheet.querySelectorAll('[data-m]').forEach(b => b.addEventListener('click', () => {
     const m = b.dataset.m, more = ent.querySelector('.ent-more');
-    if (m === 'share') { shareQuote(q, b).then(r => { if (r !== 'attente') setTimeout(closeSheet, 700); }); return; }
+    if (m === 'share') { shareQuote(q, b).then(r => { if (r !== 'attente' && r !== 'délai') setTimeout(closeSheet, 700); }); return; }
     closeSheet();
     if (m === 'audio') playAudio(q.audio, more, q);
     else if (m === 'video') showVideo(q);
