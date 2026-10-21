@@ -188,7 +188,19 @@ mark { background: none; color: inherit; font-weight: 700; }
 .swap-in.rand { animation-name: fade; animation-duration: .22s; }
 @keyframes swap { from { opacity: 0; transform: translateX(24px) scale(.985); } }
 @keyframes swapb { from { opacity: 0; transform: translateX(-24px) scale(.985); } }
-/* glisser vertical (fil de vidéos) : la suivante monte du bas, la précédente descend du haut */
+/* aperçu de la voisine pendant un glisser vertical (façon Reels) : juste sous l'écran (ou au-dessus), il suit le doigt */
+.peek { position: absolute; left: 0; right: 0; height: 100%; padding: calc(var(--mh) + 10px) var(--pad) 0; background: var(--bg); pointer-events: none; }
+#app.has-scope .peek { padding-top: calc(var(--mh) + var(--scope-h) + 10px); }
+.peek.bas { top: 100%; }
+.peek.haut { bottom: 100%; }
+.peek-v { aspect-ratio: 16 / 9; border-radius: 16px; background: #000; margin-bottom: 14px; }
+.peek-c { position: relative; isolation: isolate; overflow: hidden; height: 62%; border-radius: 22px; background: var(--bg2); padding: 24px 22px; }
+.peek-c.photo .peek-q { color: #fff; }
+.peek-c .bgimg { position: absolute; inset: 0; z-index: -1; overflow: hidden; background: #2c2c2e; }
+.peek-c .bgimg > img { position: absolute; inset: -20%; width: 140%; height: 140%; object-fit: cover; filter: blur(28px) saturate(1.25) brightness(.62); }
+.peek-q { font-size: 28px; line-height: 1.16; font-weight: 600; letter-spacing: -.02em; color: var(--ink); overflow-wrap: break-word; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.peek-n { margin-top: 12px; font-size: 1.235rem; font-weight: 600; color: var(--ink); }
+/* boutons : la suivante monte du bas, la précédente descend du haut */
 .swap-in.swap-v { animation: swapu .32s cubic-bezier(.2, .8, .2, 1); }
 .swap-in.swap-v.swap-back { animation-name: swapd; }
 @keyframes swapu { from { opacity: 0; transform: translateY(48px); } }

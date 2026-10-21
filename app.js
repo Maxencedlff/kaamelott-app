@@ -1019,12 +1019,12 @@ function refreshScope() {
     b.setAttribute('aria-label', `Sélection : ${l}. Modifier`);
   }
 }
-// Clavier (iPad, ordinateur) : flèches gauche / droite pour changer de réplique
+// Clavier (iPad, ordinateur) : flèches (droite ou bas : suivante ; gauche ou haut : précédente)
 function onArrowKeys(e) {
   if (currentView !== 'citations' || sheetOpen() || !document.getElementById('detail-overlay').classList.contains('hidden')) return;
   if (e.target.matches?.('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === 'ArrowRight') { e.preventDefault(); swipeForward(); }
-  else if (e.key === 'ArrowLeft') { e.preventDefault(); swipeBack(); }
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); swipeForward(); }
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); swipeBack(); }
 }
 
 // ===== FEUILLE (réglages, signalement) : vraie fenêtre modale =====
@@ -1419,8 +1419,8 @@ function bindCitations(q, m, keep) {
   const fig = $('qvideo-slot');
   if (fig) {
     bindScene(fig, cardVideo); playCardVideo(q, fig);
-    if (!verifyMode) bindGlisserVertical(fig);                // scène de la carte : un glisser vertical change aussi de réplique
-    if (glisseVRendu) fig.classList.add(...glisseVRendu.split(' '));
+    bindGlisserVertical(fig);                                 // la scène se glisse comme la carte
+    fig.classList.add(...[...$('quote-card').classList].filter(c => c.startsWith('swap')));   // la scène s'anime avec la carte
   }
   else cardVideo.pause();
   prefetchAround();
@@ -1509,29 +1509,84 @@ function watchResize() {
 // carte comme sur la scène ; glisser sur le côté marche encore. Réplique longue : son texte défile d'abord jusqu'au bout.
 // Toucher long = écouter (le son part au relâcher, donc dans le geste : iOS l'autorise)
 const LONG_PRESS = 450;
-let glisseV = false;   // la réplique vient d'un glisser vertical : elle monte (ou descend), quel que soit l'ordre
-let glisseVRendu = '';  // classes d'animation de ce rendu, reprises par la scène de la carte
-const swapClass = dir => `swap-in${glisseV ? ` swap-v${dir < 0 ? ' swap-back' : ''}` : dir < 0 ? ' swap-back' : dir > 0 ? '' : ' rand'}`;
-function glisser(versLeHaut) {
-  glisseV = true;
-  try { if (versLeHaut) swipeForward(); else swipeBack(); } finally { glisseV = false; }
-}
+let glisseSansAnim = false;   // rendu au bout d'un glisser : la réplique est déjà à sa place, aucune animation de plus
+// boutons (Suivante, Autre, Passer…) : la suivante monte du bas, la précédente descend du haut ; au hasard : fondu
+const swapClass = dir => glisseSansAnim ? '' : `swap-in${dir < 0 ? ' swap-v swap-back' : dir > 0 ? ' swap-v' : ' rand'}`;
 // glisser vertical sur un élément (scroller : bloc de texte qui défile peut-être) ; capture : avant le lecteur vidéo, qui
 // garde ses touchers (lecture, pause) mais pas les glissers
+// Réplique qu'un glisser montrerait (sans y aller) : dir 1 = suivante (vers le haut), -1 = précédente ; null s'il n'y en a
+// pas. Mêmes règles que swipeForward / swipeBack (la suivante aléatoire est celle tirée à l'avance : c'est elle qui viendra).
+function voisine(dir) {
+  if (dir < 0) return inOrder && !verifyMode ? pasDe(-1) : randPos > 0 ? randHistory[randPos - 1] : null;
+  if (randPos < randHistory.length - 1 && (verifyMode || !inOrder)) return randHistory[randPos + 1];
+  if (inOrder) return pasDe(1);
+  const P = pool();
+  if (nextRand === null || (P && !P.includes(nextRand)) || nextRand === quoteIdx) nextRand = pickRandom();
+  return nextRand;
+}
+// Glisser vertical façon Reels : tout l'écran suit le doigt, la voisine arrive par le bas (ou le haut) en aperçu, et au
+// lâcher elle se cale (au-delà d'un quart d'écran ou d'un geste vif), sinon tout revient en place. Réplique longue : son
+// texte défile d'abord jusqu'au bout. Capture : avant le lecteur vidéo, qui garde ses touchers (lecture, pause).
 function bindGlisserVertical(el, scroller) {
-  let sx = 0, sy = 0, st = 0, haut = true, bas = true;
+  let sx = 0, sy = 0, st = 0, haut = true, bas = true, etat = null, dir = 0, cible = null, peek = null, dy = 0;
+  const main = () => document.getElementById('main-content');
+  const enfants = () => [...main().children];
+  // « none » et pas « » : la carte a sa propre transition (toucher long), qui la ferait traîner derrière le doigt
+  const poser = (y, anim) => enfants().forEach(c => { c.style.transition = anim ? 'transform .24s cubic-bezier(.2, .8, .2, 1)' : 'none'; c.style.transform = y ? `translateY(${y}px)` : ''; });
+  // rien ne passe sur l'en-tête (titre, sélection) : l'écran est découpé sous lui le temps du glisser
+  const couper = on => { const m = main(); m.style.clipPath = on ? `inset(${getComputedStyle(m).paddingTop} 0 0 0)` : ''; };
+  const apercu = d => {
+    peek?.remove(); peek = null; cible = voisine(d);
+    const q = cible != null && allQuotes[cible];
+    if (!q) return;
+    peek = document.createElement('div');
+    peek.className = `peek ${d > 0 ? 'bas' : 'haut'}`; peek.setAttribute('aria-hidden', 'true');
+    // même allure que l'écran qui arrivera : scène noire puis texte (affichage Vidéo), sinon la carte et sa photo floutée
+    const photo = !(videoOnly && q.video) && !q.acteur && persoURL(q.name, 's');
+    peek.innerHTML = videoOnly && q.video
+      ? `<div class="peek-v"></div><p class="peek-q">« ${typo(q.quote)} »</p><p class="peek-n">${esc(nameCase(q.name))}</p>`
+      : `<div class="peek-c${photo ? ' photo' : ''}">${photo ? `<span class="bgimg img"><img src="${photo}" alt=""></span>` : ''}<p class="peek-q">« ${typo(q.quote)} »</p></div><p class="peek-n">${esc(nameCase(q.name))}</p>`;
+    main().appendChild(peek);
+  };
   el.addEventListener('touchstart', e => {
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now();
+    if (e.touches.length > 1 || etat === 'part') return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); etat = 'attente'; dir = 0; dy = 0;
     const sc = scroller && scroller.scrollHeight > scroller.clientHeight + 2 ? scroller : null;
     haut = !sc || sc.scrollTop <= 1; bas = !sc || sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2;   // bords au départ
   }, { passive: true, capture: true });
-  el.addEventListener('touchend', e => {
-    const dy = sy - e.changedTouches[0].clientY, dx = Math.abs(sx - e.changedTouches[0].clientX);
-    const fast = Date.now() - st < 250 && Math.abs(dy) > 30;
-    if (!((Math.abs(dy) > 60 || fast) && Math.abs(dy) > dx * 1.2)) return;
-    if (dy > 0 ? !bas : !haut) return;                       // le texte avait encore à défiler : c'était un défilement
-    glisser(dy > 0);
-  }, { passive: true, capture: true });
+  el.addEventListener('touchmove', e => {
+    if (!etat || etat === 'part') return;
+    const ddy = e.touches[0].clientY - sy, ddx = e.touches[0].clientX - sx;
+    if (etat === 'attente') {
+      if (Math.abs(ddy) < 8 && Math.abs(ddx) < 8) return;
+      if (Math.abs(ddy) < Math.abs(ddx) || (ddy < 0 ? !bas : !haut)) { etat = null; return; }   // de côté, ou le texte défile
+      etat = 'glisse'; couper(true);
+    }
+    e.preventDefault();
+    const d = ddy < 0 ? 1 : -1;
+    if (d !== dir) { dir = d; apercu(d); }
+    dy = peek ? ddy : ddy * .25;                              // rien de ce côté : l'écran résiste
+    poser(dy, false);
+  }, { passive: false, capture: true });
+  const fin = () => {
+    if (etat !== 'glisse') { etat = null; return; }
+    const h = main().clientHeight, vif = Math.abs(dy) / Math.max(1, Date.now() - st) > .5 && Math.abs(dy) > 40;
+    if (peek && (Math.abs(dy) > h * .22 || vif)) {
+      etat = 'part';
+      poser(dir > 0 ? -h : h, true);
+      const vers = dir;
+      setTimeout(() => {
+        glisseSansAnim = true;
+        try { if (vers > 0) swipeForward(); else swipeBack(); } finally { glisseSansAnim = false; etat = null; couper(false); }
+      }, 240);
+    } else {
+      poser(0, true);
+      setTimeout(() => { peek?.remove(); peek = null; enfants().forEach(c => { c.style.transition = ''; }); couper(false); }, 260);
+      etat = null;
+    }
+  };
+  el.addEventListener('touchend', fin, { passive: true, capture: true });
+  el.addEventListener('touchcancel', fin, { passive: true, capture: true });
 }
 function bindCardGestures(card) {
   let lastScroll = 0, lastLong = 0, pressT = null;
@@ -1546,7 +1601,7 @@ function bindCardGestures(card) {
     swipeForward();
   });
   card.addEventListener('contextmenu', e => { if (document.getElementById('btn-audio')) e.preventDefault(); });
-  let sx = 0, sy = 0, st = 0, moved = false;
+  let sx = 0, sy = 0, st = 0, moved = false;   // toucher long seulement : les glissers sont dans bindGlisserVertical
   const unpress = () => { clearTimeout(pressT); card.classList.remove('press'); };
   card.addEventListener('touchstart', e => {
     sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); moved = false;
@@ -1555,17 +1610,13 @@ function bindCardGestures(card) {
   }, { passive: true });
   card.addEventListener('touchmove', e => {
     const dx = Math.abs(e.touches[0].clientX - sx), dy = Math.abs(e.touches[0].clientY - sy);
-    if (dx > 10 || dy > 10) { moved = true; unpress(); }
-    if (dx > dy && dx > 8) e.preventDefault();
-  }, { passive: false });
+    if (dx > 10 || dy > 10) { moved = true; unpress(); }   // un glisser n'est pas un toucher long
+  }, { passive: true });
   card.addEventListener('touchcancel', unpress, { passive: true });
   card.addEventListener('touchend', e => {
     unpress();
-    const dx = sx - e.changedTouches[0].clientX, dy = Math.abs(sy - e.changedTouches[0].clientY);
     const audio = document.getElementById('btn-audio');
-    if (!moved && audio && Date.now() - st >= LONG_PRESS) { lastLong = Date.now(); audio.click(); return; }
-    const fast = Date.now() - st < 250 && Math.abs(dx) > 30;
-    if ((Math.abs(dx) > 50 || fast) && Math.abs(dx) > dy) { if (dx > 0) swipeForward(); else swipeBack(); }
+    if (!moved && audio && Date.now() - st >= LONG_PRESS) { lastLong = Date.now(); audio.click(); }
   }, { passive: true });
 }
 let showAnyway = false;   // réplique ouverte exprès (recherche, favoris, fiche) : montrée même hors de la sélection
@@ -1586,7 +1637,6 @@ function renderCitations(dir = 0) {
   setMast(verifyMode ? 'Vérification' : 'Répliques');
   const m = citationsModel(q);
   main.innerHTML = citationsHTML(q, m, dir);
-  glisseVRendu = glisseV ? swapClass(dir) : '';              // la scène monte (ou descend) avec la carte
   bindCitations(q, m, keep);
   const card = document.getElementById('quote-card');
   fitCard(card, q, m.inlineVideo);
@@ -1936,8 +1986,8 @@ function pushHistory(idx) {
   randHistory.push(idx);
   randPos = randHistory.length - 1;
 }
-function stepQuote(dir) {
-  if (!verifyMode && poolEmpty()) { renderCitations(); return; }
+// position voisine dans le parcours (dir 1 : suivante, -1 : précédente), en boucle
+function pasDe(dir) {
   const P = pool();
   let idx;
   if (P) {
@@ -1948,6 +1998,11 @@ function stepQuote(dir) {
   } else {
     idx = (quoteIdx + dir + allQuotes.length) % allQuotes.length;
   }
+  return idx;
+}
+function stepQuote(dir) {
+  if (!verifyMode && poolEmpty()) { renderCitations(); return; }
+  const idx = pasDe(dir);
   if (verifyMode) pushHistory(idx);   // vérification : « ‹ » revient aux répliques vues, même dans l'ordre (les classées quittent la file)
   showQuote(idx, dir);
 }
