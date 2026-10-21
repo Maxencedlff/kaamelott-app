@@ -1,5 +1,6 @@
 // ES5 volontairement : doit tourner sur les plus vieux Safari pour dire pourquoi l'app ne s'ouvre pas
-// (app.js demande iOS 13.4 ou plus récent ; en dessous, il ne s'exécute pas du tout et l'écran resterait sur le lancement).
+// Minimum : iOS 15 (la page utilise aspect-ratio, Safari 15). En dessous, app.js peut s'exécuter mais les scènes et les
+// affiches tomberaient à 0 px de haut sans rien dire : on le détecte ici et on le dit.
 // Chargé juste après l'écran de lancement (#launch), avant le reste de la page.
 (function () {
   // L'image de lancement d'iOS est centrée sur l'écran entier. Si la vue web commence sous la barre d'état (style « default »),
@@ -8,8 +9,10 @@
     var off = screen.height - innerHeight;
     if (off > 0 && off < 80) document.documentElement.style.setProperty('--kc', (screen.height / 2 - off) + 'px');
   }
+  var vieux = !(window.CSS && CSS.supports && CSS.supports('aspect-ratio', '1'));
+  if (vieux) window.__kaamVieux = 1;                     // app.js ne démarre pas (boot) : le message reste seul à l'écran
   function msg() {
-    if (window.__kaamOK) return;
+    if (window.__kaamOK && !vieux) return;
     var l = document.getElementById('launch');
     if (l && l.parentNode) l.parentNode.removeChild(l);   // sinon le message resterait caché sous le noir
     document.documentElement.className = document.documentElement.className.replace(/\blaunching\b/, '');
@@ -18,9 +21,10 @@
     var b = document.querySelector('.boot');
     if (b) {
       b.innerHTML = '<div class="t">Cet appareil est trop ancien pour l’app.</div>'
-        + '<p>Il faut iOS 14 ou plus récent (Réglages › Général › Mise à jour logicielle).</p>';
+        + '<p>Il faut iOS 15 ou plus récent (Réglages › Général › Mise à jour logicielle).</p>';
     }
   }
   window.addEventListener('error', function (e) { if (/app\.js/.test(e.filename || '')) msg(); });
-  setTimeout(msg, 15000);
+  if (vieux) { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', msg); else msg(); }
+  else setTimeout(msg, 15000);
 })();

@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """Cohérence de data.json, sans réseau.
-Usage : python3 tests/check_data.py [dossier_app] [ancien_data.json]
+Usage : python3 tests/check_data.py [dossier_app] [ancien_data.json] [--autoriser]
 Sans ancien fichier, compare au data.json du commit précédent (git show HEAD~1:data.json) s'il existe.
-Code 1 si erreur. Les avis et favoris référencent l'index i : jamais de suppression ni de réordonnancement."""
+Code 1 si erreur. Les avis, favoris, faits.json et coupes.json référencent l'index i : jamais de suppression, de
+réordonnancement ni de réplique remplacée par une autre au même index.
+Correction voulue d'une réplique sur place (script_site.py, corrige_place.py…) : la déclarer dans
+tests/corrections_autorisees.json, {"i": "nouveau texte"} (ou {"i": {"quote": …, "character": …}} si l'épisode change).
+--autoriser y ajoute d'un coup toutes les différences constatées (à relire avant de committer)."""
 import json, os, re, subprocess, sys
 from collections import Counter
 
-APP = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-OLD = sys.argv[2] if len(sys.argv) > 2 else None
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+AUTORISER = "--autoriser" in sys.argv
+APP = ARGS[0] if ARGS else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+OLD = ARGS[1] if len(ARGS) > 1 else None
+LISTE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "corrections_autorisees.json")
 d = json.load(open(os.path.join(APP, "data.json"), encoding="utf-8"))
 err, warn = [], []
 ALLOWED = {"character": str, "quote": str, "audio": str, "video": str, "v": int, "vv": int, "approx": int, "inedit": int, "tourne": int, "hide": (int, bool),
@@ -51,11 +58,51 @@ else:
         old = json.loads(txt) if txt else None
     except Exception:
         old = None
+
+# ancienne version vide alors que data.json a un historique : comparaison impossible, jamais un « sans version précédente »
+def historique():
+    try:
+        return bool(subprocess.run(["git", "-C", APP, "log", "-1", "--format=%h", "--", "data.json"], capture_output=True, text=True, timeout=60).stdout.strip())
+    except Exception:
+        return False
+if old is not None and not old and historique():
+    err.append("ancienne version vide alors que data.json a un historique : comparaison impossible (git show raté ?)")
+
+# épisode d'une réplique : tout ce qui suit le nom (« ARTHUR, Livre I, épisode 3 : … » → « Livre I, épisode 3 : … »)
+episode = lambda c: c.split(",", 1)[1].strip() if "," in c else ""
 if old:
     if len(d) < len(old): err.append(f"entrées supprimées : {len(old)} -> {len(d)}")
-    changed = sum(1 for x, y in zip(old, d) if x.get("quote") != y.get("quote"))   # répliques, pas les noms (corrections de noms permises)
-    if changed > max(20, 0.005 * len(old)): err.append(f"ordre probablement changé : {changed} répliques différentes au même index")
-    elif changed: warn.append(f"{changed} répliques corrigées sur place")
+    try:
+        autorisees = json.load(open(LISTE, encoding="utf-8"))
+    except FileNotFoundError:
+        autorisees = {}
+    def permis(i, champ, val):
+        a = autorisees.get(str(i))
+        return (a == val) if champ == "quote" and isinstance(a, str) else isinstance(a, dict) and a.get(champ) == val
+    changees, nouvelles = [], {}
+    for i, (x, y) in enumerate(zip(old, d)):
+        qa, qn, ca, cn = x.get("quote", ""), y.get("quote", ""), x.get("character", ""), y.get("character", "")
+        if qa != qn:
+            if permis(i, "quote", qn): warn.append(f"{i}: réplique corrigée sur place (liste blanche)")
+            else: changees.append(f"{i}: {qa[:40]!r} -> {qn[:40]!r}"); nouvelles.setdefault(str(i), {})["quote"] = qn
+        if episode(ca) != episode(cn):
+            if permis(i, "character", cn): warn.append(f"{i}: épisode changé (liste blanche)")
+            else: changees.append(f"{i}: épisode {episode(ca)[:40]!r} -> {episode(cn)[:40]!r}"); nouvelles.setdefault(str(i), {})["character"] = cn
+        elif ca != cn: warn.append(f"{i}: nom corrigé {ca.split(',')[0]!r} -> {cn.split(',')[0]!r}")
+    if changees:
+        n = len(nouvelles)
+        err.append(f"{n} index dont la réplique ou l'épisode a changé{' : ordre probablement changé' if n > max(20, 0.005 * len(old)) else ''}"
+                   f" ; si ce sont des corrections voulues, les déclarer dans tests/corrections_autorisees.json"
+                   f" (ou relancer avec --autoriser, puis relire le fichier)")
+        err.extend(changees[:20])
+        if n <= 20:
+            exemple = {k: (v["quote"] if list(v) == ["quote"] else v) for k, v in nouvelles.items()}
+            err.append("à ajouter : " + json.dumps(exemple, ensure_ascii=False)[:600])
+    if AUTORISER and nouvelles:
+        for k, v in nouvelles.items():
+            autorisees[k] = v["quote"] if list(v) == ["quote"] else {**(autorisees.get(k) if isinstance(autorisees.get(k), dict) else {}), **v}
+        json.dump(autorisees, open(LISTE, "w", encoding="utf-8"), ensure_ascii=False, indent=1, sort_keys=True)
+        print(f"{len(nouvelles)} correction(s) ajoutée(s) à {LISTE} : relire le fichier, puis relancer sans --autoriser")
 print(f"data.json : {len(d)} entrées, {len(err)} erreur(s), {len(warn)} avertissement(s)"
       + (f", comparé à une version de {len(old)} entrées" if old else ", sans version précédente"))
 for m in err[:30] + warn[:15]: print(m)

@@ -500,7 +500,29 @@ function playAudio(src, btn, q) {
   audioGuard = setTimeout(() => { if (playingBtn?.classList.contains('wait')) { player.pause(); audioFailed(); } }, 10000);
   player.play().catch(e => { if (e.name !== 'AbortError') audioFailed(); });
   switching = false;
+  majSessionMedia(q);
   renderMini();
+}
+// Écran verrouillé et Centre de contrôle : la réplique et le personnage, suivante / précédente comme les gestes
+function majSessionMedia(q) {
+  if (!('mediaSession' in navigator) || !q) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: q.quote.length > 90 ? q.quote.slice(0, 88) + '…' : q.quote,
+      artist: nameCase(q.name), album: fmtEp(q) || 'Kaamelott', artwork: [{ src: 'icon-512.png', sizes: '512x512', type: 'image/png' }] });
+  } catch {}
+}
+if ('mediaSession' in navigator) {
+  try {
+    // jamais en vérification (chaque réplique s'y classe à la main) ; le son de la nouvelle réplique part (sauf lecture auto, qui s'en charge)
+    const suivre = f => () => {
+      if (currentView !== 'citations' || verifyMode) return;
+      f();
+      const q = allQuotes[quoteIdx];
+      if (!autoPlay && q?.audio) playAudio(q.audio, document.getElementById('btn-audio'), q);
+    };
+    navigator.mediaSession.setActionHandler('nexttrack', suivre(() => swipeForward()));
+    navigator.mediaSession.setActionHandler('previoustrack', suivre(() => swipeBack()));
+  } catch {}
 }
 player.addEventListener('playing', () => { clearTimeout(audioGuard); playingBtn?.classList.remove('wait'); tickAudio(); tickScrub(); renderMini(); });
 player.addEventListener('ended', () => { setPlayingBtn(null); tickScrub(); renderMini(); });
@@ -698,7 +720,7 @@ function toggleFav(q) {
   const before = favorites;
   if (isFav(q)) favorites = favorites.filter(f => !sameQuote(f, q));
   else { const { live, ...keep } = q; favorites = [keep, ...favorites]; }   // la réplique entière, avec son index stable i
-  if (saveFavorites()) return true;
+  if (saveFavorites()) { if (favorites.length > before.length) garderFavoris(); return true; }
   favorites = before;
   return false;
 }
@@ -710,6 +732,16 @@ function favCellHTML(q, on = isFav(q)) {
   return `<button class="ic fav${on ? ' on' : ''}" id="btn-fav" aria-pressed="${on}">${favFace(on)}</button>`;
 }
 // bouton Favori : état coché à jour, ou « Non enregistré » 2 s si le stockage a refusé
+// Favoris gardés seulement sur l'appareil : stockage déclaré « persistant » au premier ajout (Safari efface sinon les
+// données d'un site non visité pendant 7 jours ; les apps de l'écran d'accueil en sont exemptées)
+let persistDemande = false;
+function garderFavoris() {
+  if (persistDemande) return;
+  persistDemande = true;
+  try { navigator.storage?.persist?.().catch(() => {}); } catch {}
+}
+// iPhone, dans un onglet Safari (pas l'app de l'écran d'accueil) : seul cas où les favoris peuvent disparaître
+const ongletIOS = () => /iP(hone|ad|od)/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches;
 function favButton(btn, q, label = 'Favori') {
   const ok = toggleFav(q), on = isFav(q);
   btn.innerHTML = favFace(on, label, ok ? '' : 'Non enregistré');
@@ -750,7 +782,9 @@ function faceHTML(name, kind = 's', cls = 'av') {
   const u = persoURL(name, kind);
   return `<span class="${cls} mono${u ? ' img' : ''}" aria-hidden="true">${icon('person', 'pg')}${u ? `<img src="${u}" alt="" loading="lazy" decoding="async">` : ''}</span>`;
 }
-// image absente ou refusée : retirée, la silhouette reste (écouteur unique, en capture : l'erreur d'une image ne remonte pas)
+// image absente ou refusée : retirée, la silhouette reste (écouteur unique, en capture : l'erreur d'une image ne remonte pas).
+// Hors ligne, le service worker répond un GIF vide de 1 px (jamais d'erreur réseau) : traité comme une image absente.
+function onImgLoad(e) { if (e.target?.tagName === 'IMG' && e.target.naturalWidth <= 1) onImgError(e); }
 function onImgError(e) {
   const im = e.target;
   if (im && im.tagName === 'IMG' && im.parentElement?.classList.contains('img')) {
@@ -1088,7 +1122,9 @@ function settingsHTML() {
       : n ? `<b>${unitPlural(n)}</b> ${n > 1 ? 'correspondent' : 'correspond'}.` : 'Aucune réplique ne correspond.'}</p>
     <p class="gh">Contribuer</p>
     <div class="g"><button class="gr act${verifyMode ? ' on' : ''}" id="chip-verify"><span class="k">${verifyMode ? 'Quitter la vérification' : 'Vérifier les sons et les scènes'}</span>${icon('chev', 'chev')}</button></div>
-    <p class="gf">Écouter, regarder, signaler ce qui cloche. ${todoTxt}</p>`;
+    <p class="gf">Écouter, regarder, signaler ce qui cloche. ${todoTxt}</p>
+    <p class="gh">Confidentialité</p>
+    <p class="gf">Favoris et réglages restent sur cet appareil. Les avis de vérification partent sans nom ni adresse, seulement pour corriger les extraits. Les sons et les scènes viennent de Hugging Face, qui voit l’adresse IP de l’appareil, comme tout site.</p>`;
 }
 function openSettings() {
   const sheet = openSheet(settingsHTML());
@@ -1227,8 +1263,15 @@ function fitQuote(card, qt, qb, q) {
     while (hi - lo > 1) { const m = (lo + hi) >> 1; set(m); if (qt.offsetHeight <= avail * r) lo = m; else hi = m; }
     return lo;
   };
-  const fs = Math.max(fit(.62), Math.min(Math.round(quoteSize(q.quote) * 1.12 * k), fit(.97)));
+  let fs = Math.max(fit(.62), Math.min(Math.round(quoteSize(q.quote) * 1.12 * k), fit(.97)));
+  // grand texte (Dynamic Type) : jamais un mot coupé au milieu (« Dépêch / ez-vous ») ; les 3 plus longs doivent tenir sur une ligne
+  const mots = q.quote.split(/\s+/).sort((a, b) => b.length - a.length).slice(0, 3);
+  const mesure = document.createElement('span');
+  mesure.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+  qt.appendChild(mesure);
   set(fs);
+  while (fs > MIN && mots.some(m => { mesure.textContent = m; return mesure.offsetWidth > qt.clientWidth; })) set(--fs);
+  mesure.remove();
   fitMemo.set(key, fs);
 }
 // Taille du texte choisie dans iOS (Réglages › Luminosité › Taille du texte) : 1 = taille par défaut (17 px)
@@ -1240,13 +1283,13 @@ function textScale() {
 function hintCount() { return +readStr('kaam_hint', 0) || 0; }
 function countHint() { writeStr('kaam_hint', hintCount() + 1); }
 let firstRender = true;
-// Données de l'écran Répliques (aucun effet sur la page, sauf le compteur de l'aide)
 // Aléatoire ↔ Dans l'ordre : bouton de l'écran Répliques (vérification ou non), plus dans les Réglages
 function setOrder(seq) {
   inOrder = seq; writePref('kaam_in_order', inOrder); nextRand = null;
   // retour en Aléatoire : la réplique atteinte dans l'ordre entre dans l'historique (« Retour » ramène à la précédente vue)
   if (!inOrder && randHistory[randPos] !== quoteIdx) pushHistory(quoteIdx);
 }
+// Données de l'écran Répliques (aucun effet sur la page, sauf le compteur de l'aide)
 function citationsModel(q) {
   const P = pool();
   // rang de la réplique dans le parcours, en aléatoire comme dans l'ordre. Réplique ouverte exprès hors du parcours
@@ -1571,7 +1614,8 @@ function openProblem(q) {
     ${PB_LISTS.filter(([k]) => has(k)).map(([, lab, rows]) => `<p class="gh">${lab}</p><div class="g">${rows.map(([id, l]) =>
       `<button class="gr" data-pb="${id}" role="checkbox" aria-checked="false"><span class="k">${l}</span>${icon('check', 'ck')}</button>`).join('')}</div>`).join('')}
     <p class="gh"><label for="avis-note">Précision (facultatif)</label></p>
-    <div class="g"><textarea class="note" id="avis-note" maxlength="500" placeholder="Par exemple : le son mord sur la réplique suivante"></textarea></div>
+    <div class="g"><textarea class="note" id="avis-note" maxlength="500" aria-describedby="avis-prive" placeholder="Par exemple : le son mord sur la réplique suivante"></textarea></div>
+    <p class="gf" id="avis-prive">Envoyé sans votre nom, seulement pour corriger les extraits. N’y mettez aucune information personnelle.</p>
     <div class="sh-foot"><button class="pill wide" id="avis-send" disabled>Signaler et passer</button><p class="sh-help" id="avis-help">Cochez au moins une case, ou écrivez une précision.</p></div>`);
   const picked = new Set();
   const send = sheet.querySelector('#avis-send'), note = sheet.querySelector('#avis-note');
@@ -1814,8 +1858,18 @@ function sendAvis() {
   if (sending || !avisFile.length) return sendingP;
   sending = true;
   clearTimeout(sendRetry);
-  const lot = avisFile.slice(0, 100);
-  return sendingP = fetch('/api/avis', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ avis: lot }), keepalive: true })
+  // 100 avis et ~60 Ko au plus (un envoi « keepalive », page qui se ferme, est plafonné à 64 Kio par le navigateur)
+  const lot = [];
+  let taille = 0;
+  for (const a of avisFile.slice(0, 100)) {
+    const t = new TextEncoder().encode(JSON.stringify(a)).length + 1;
+    if (lot.length && taille + t > 60000) break;
+    lot.push(a); taille += t;
+  }
+  // identifiant du lot : un même lot renvoyé (réponse perdue) réécrit le même fichier côté serveur, jamais un doublon
+  const id = h32(lot.map(a => a.ts).join(',')).toString(36).padStart(7, '0') + lot.length.toString(36).padStart(2, '0');
+  return sendingP = fetch('/api/avis', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lot: id, avis: lot }), keepalive: document.visibilityState === 'hidden' })
     .then(r => {
       if (r.ok || r.status === 400 || r.status === 415) {
         const sent = new Set(lot.map(a => a.ts));
@@ -1823,11 +1877,13 @@ function sendAvis() {
         writeJSON('kaam_avis_file', avisFile);
         sendDelay = 15000;
         refreshVerifyCounter();
+        if (avisFile.length >= 5) setTimeout(sendAvis, 0);   // lot coupé par la taille : la suite part aussitôt
       } else if (r.status === 429 || r.status >= 500) {
         sendRetry = setTimeout(sendAvis, sendDelay); sendDelay = Math.min(sendDelay * 2, 300000);
       }
     })
-    .catch(() => {})
+    // réseau coupé ou envoi refusé par le navigateur : nouvel essai plus tard (le retour du réseau relance aussi)
+    .catch(() => { sendRetry = setTimeout(sendAvis, sendDelay); sendDelay = Math.min(sendDelay * 2, 300000); })
     .finally(() => { sending = false; });
 }
 function refreshVerifyCounter() {
@@ -2088,12 +2144,17 @@ function shuffle(a, rnd = Math.random) { for (let i = a.length - 1; i > 0; i--) 
 function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 function todayKey() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function dailyState() { const st = readJSON('kaam_qdj', {}); return st.d === todayKey() ? st : null; }
+// tirage stable : le plus petit hachage (jour, clé) gagne. Ajouter une vidéo ou une réplique ailleurs ne change pas la
+// question du jour (un tirage par position, lui, changeait dès que le corpus bougeait)
+function h32(s) { let h = 0x811c9dc5; for (let k = 0; k < s.length; k++) h = Math.imul(h ^ s.charCodeAt(k), 0x01000193) >>> 0; return h; }
+const minPar = (xs, cle) => xs.reduce((m, x) => (cle(x) < cle(m) ? x : m));
 function dailyQuestion() {
   buildQuizPool();                                  // tout Kaamelott : la même question pour tout le monde, quelle que soit la sélection
-  const rnd = mulberry32(+todayKey().replace(/-/g, ''));
-  const names = Object.keys(quizByChar.m).sort();
-  const list = quizByChar.m[names[Math.floor(rnd() * names.length)]];
-  const q = allQuotes[list[Math.floor(rnd() * list.length)]];
+  const jour = todayKey(), rnd = mulberry32(+jour.replace(/-/g, ''));
+  // réplique déjà tirée aujourd'hui sur ce téléphone (kaam_qdj.i) : on la garde, même si data.json a changé entre-temps
+  const deja = dailyState()?.i, vue = deja != null && allQuotes.find(x => x.i === deja);
+  // personnage d'abord (chacun a la même chance), puis une de ses répliques
+  const q = vue || allQuotes[minPar(quizByChar.m[minPar(Object.keys(quizByChar.m), n => h32(`${jour}|${n}`))], p => h32(`${jour}|${allQuotes[p].i}`))];
   const wrong = shuffle(TOP_CHARS.filter(c => c !== q.name), rnd).slice(0, 3);
   return { q, choices: shuffle([q.name, ...wrong], rnd) };
 }
@@ -2105,7 +2166,7 @@ function quizRecord(btn, replay, { q, daily, hist }) {
   let record = false;
   if (daily) {
     if (!replay) {
-      writeJSON('kaam_qdj', { d: todayKey(), pick: btn.dataset.choice, ok: correct });
+      writeJSON('kaam_qdj', { d: todayKey(), i: q.i, pick: btn.dataset.choice, ok: correct });   // i : relu tel quel
       hist[todayKey()] = correct; writeJSON('kaam_qdj_hist', hist);
     }
   } else {
@@ -2495,7 +2556,9 @@ function openOverlay(html) {
 // feuille ou une page superposée est ouverte ; Retour la ferme (scène ouverte depuis une fiche : retour à la fiche).
 // Fermée par l'app (bouton, glisser du bord gauche d'iOS) : le témoin est retiré, jamais de double retour ni d'entrée parasite.
 let navMark = false, navIgnore = 0, navT = null;
-const navOpen = () => sheetOpen() || !document.getElementById('detail-overlay').classList.contains('hidden') || (!!backTo && currentView === 'citations');
+// un autre onglet que Répliques compte aussi comme « ouvert » : Retour y ramène d'abord (convention Android), puis quitte
+const navOpen = () => sheetOpen() || !document.getElementById('detail-overlay').classList.contains('hidden') || (!!backTo && currentView === 'citations')
+  || (currentView !== 'citations' && !!allQuotes.length);
 function navSoon() { clearTimeout(navT); navT = setTimeout(navSync, 0); }   // fermer puis rouvrir dans le même geste : rien ne bouge
 function navSync() {
   const open = navOpen();
@@ -2514,6 +2577,7 @@ function bindHistory() {
     if (sheetOpen()) closeSheet();
     else if (!document.getElementById('detail-overlay').classList.contains('hidden')) { const b = document.getElementById('detail-back'); b ? b.click() : closeOverlay(); }
     else if (backTo && currentView === 'citations') goBack();
+    else if (currentView !== 'citations') setView('citations');
     navSoon();
   });
 }
@@ -2801,7 +2865,8 @@ function renderFavoris() {
   const list = favorites.map(liveQuote);
   const sub = () => { const n = favorites.length; return `${nf(n)} réplique${n > 1 ? 's' : ''} enregistrée${n > 1 ? 's' : ''}${n > 1 ? ' · la plus récente en tête' : ''}`; };
   const playable = () => list.filter(q => q.live && favorites.some(f => sameQuote(f, q)));
-  main.innerHTML = `<div class="scroll"><div class="page-h"><h1 class="sr">Favoris</h1><p id="fav-count">${sub()}</p></div>
+  main.innerHTML = `<div class="scroll"><div class="page-h"><h1 class="sr">Favoris</h1><p id="fav-count">${sub()}</p>${ongletIOS()
+      ? '<p class="fav-garde">Pour ne jamais les perdre, ajoutez Kaamelott à l’écran d’accueil (Partager, puis « Sur l’écran d’accueil ») : Safari efface les données d’un site non ouvert pendant 7 jours.</p>' : ''}</div>
     ${allQuotes.length ? `<div class="pills"><button class="pill gray" id="fav-play">${icon('play')}Lecture</button><button class="pill gray" id="fav-rand">${icon('shuffle')}Aléatoire</button></div>` : ''}
     <div id="fav-list">${list.map((q, k) => entHTML(q, k, { remove: true })).join('')}</div></div>`;
   // plus aucun favori lisible (dernier retiré, ou répliques modifiées depuis) : Lecture et Aléatoire grisés, jamais un bouton qui ne fait rien
@@ -2914,6 +2979,7 @@ function setView(view) {
   renderMini();
   // le mini-lecteur vient d'apparaître sous le quiz : la question est réajustée à la place qui reste (jamais coupée)
   if (view === 'quiz') fitQuiz(document.getElementById('quiz-stage'));
+  navSoon();                               // autre onglet que Répliques : une entrée témoin, Retour y ramène
 }
 
 // ===== SERVICE WORKER ET MISES À JOUR =====
@@ -2961,7 +3027,12 @@ function registerSW() {
   const hadCtrl = !!navigator.serviceWorker.controller;   // une version tournait déjà
   navigator.serviceWorker.register('sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('message', e => {
-    if (e.data?.type === 'ACCES') { location.reload(); return; }   // code changé ou absent : les répliques en cache sont retirées
+    // code changé ou absent : les répliques en cache sont retirées, la page recharge une seule fois (jamais de boucle)
+    if (e.data?.type === 'ACCES') {
+      try { if (sessionStorage.getItem('kaam_acces_recharge')) return; sessionStorage.setItem('kaam_acces_recharge', '1'); } catch { return; }
+      location.reload(); return;
+    }
+    if (e.data?.type === 'DATA_UPDATED') { updatePending = true; return; }   // nouvelles répliques : rechargement au moment neutre
     if (e.data?.type !== 'SW_UPDATED' || !hadCtrl) return;
     updatePending = true;
   });
@@ -2981,7 +3052,7 @@ function onVisible() {
 // ===== DÉMARRAGE =====
 let retryTimer = null, autoRetried = false, booting = false, waitingOnline = false;
 async function boot() {
-  if (booting) return;                     // jamais deux démarrages en parallèle (Réessayer, retour du réseau, minuteur)
+  if (booting || window.__kaamVieux) return;   // appareil trop ancien (compat.js) : son message reste à l'écran                     // jamais deux démarrages en parallèle (Réessayer, retour du réseau, minuteur)
   clearTimeout(retryTimer);
   booting = true;
   currentView = 'citations';
@@ -3109,6 +3180,7 @@ function bindGlobalEvents() {
   ['pointerdown', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { usingKeyboard = false; }, { capture: true, passive: true }));
   document.addEventListener('touchstart', () => {}, { passive: true });   // iOS n'applique :active qu'avec un écouteur tactile
   document.addEventListener('error', onImgError, true);                       // portrait introuvable : l'initiale reste
+  document.addEventListener('load', onImgLoad, true);                         // portrait vide (hors ligne) : de même
   document.addEventListener('keydown', onArrowKeys);                         // flèches : réplique suivante / précédente
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheetOpen()) closeSheet(); });
   // réseau : « Hors ligne » dans l'en-tête ; au retour du réseau, envoi des avis en attente

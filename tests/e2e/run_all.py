@@ -3,6 +3,9 @@
 
 Usage : python3 tests/e2e/run_all.py            (tout, ~2-3 min)
         python3 tests/e2e/run_all.py --quick    (sans iPhone 13 « nu » ni les combinaisons de réglages)
+Options : --jobs N     au plus N navigateurs à la fois (défaut : tous les workers d'un coup ; PC partagé : 4)
+          --relancer   un worker en échec est relancé une fois, seul ; vert au 2e passage = « INSTABLE » (signalé
+                       dans le rapport et en sortie, à corriger), rouge aux deux = vrai échec
 Variables : QA_APP (dossier de l'app, défaut : racine du dépôt), QA_OUT (rapport et captures, défaut : tests/e2e),
             QA_REAL_MEDIA=1 (vrais médias Hugging Face, contrôle manuel ponctuel seulement).
 Code retour : 0 si tout passe, 1 au moindre échec (étape, erreur console/CSP/pageerror, test unitaire, data.json).
@@ -2377,6 +2380,21 @@ def scenario_android(w, tag=""):
         finally: ctx.close()
     w.step("Android : le Retour système ferme fiche, scène et feuille sans quitter l'app", s_back)
 
+    def s_back_onglet(rec):
+        # autre onglet que Répliques : le Retour système y ramène d'abord (convention Android), sans quitter l'app
+        ctx, pg = open_({"kaam_hint": "9"})
+        try:
+            url0 = pg.url
+            pg.click('.nav-btn[data-view="quiz"]'); pg.wait_for_timeout(300)
+            pg.click('.nav-btn[data-view="personnages"]'); pg.wait_for_timeout(300)
+            pg.evaluate("history.back()"); pg.wait_for_timeout(400)
+            v = pg.evaluate("document.querySelector('.nav-btn.active')?.dataset.view")
+            if v != "citations" or pg.url != url0: raise RuntimeError(f"Retour depuis Personnages : onglet {v}, adresse {pg.url}")
+            if pg.evaluate("history.state") is not None: raise RuntimeError("entrée témoin restée sur Répliques")
+            return "Quiz → Personnages → Retour : Répliques, sans entrée parasite"
+        finally: ctx.close()
+    w.step("Android : le Retour système ramène d'un autre onglet à Répliques", s_back_onglet)
+
     OVL = """(sel) => { const r = []; document.querySelectorAll(sel).forEach(e => r.push(e.getBoundingClientRect()));
         let o = -1e9; for (let i = 0; i < r.length; i++) for (let j = i + 1; j < r.length; j++) { const a = r[i], b = r[j];
           o = Math.max(o, Math.min(Math.min(a.right, b.right) - Math.max(a.left, b.left), Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))); }
@@ -2533,13 +2551,42 @@ def quick_checks():
     return [("tests unitaires (node --test)", unit), ("data.json (check_data.py)", data)]
 
 
+def run_workers(kinds, base, njobs, suffix=""):
+    """Lance les workers, au plus njobs à la fois ; chacun a son propre budget (QA_DEADLINE) à partir de son départ."""
+    procs, attente, fini = {}, list(kinds), set()
+    while attente or procs:
+        while attente and len(procs) < njobs:
+            kind = attente.pop(0)
+            out = RES / f"{kind}{suffix}.json"
+            args = [sys.executable, str(Path(__file__).resolve()), "--worker", kind, base, str(out)]
+            pr = subprocess.Popen(args, cwd=str(QA), start_new_session=True,
+                                  env={**os.environ, "QA_DEADLINE": str(time.time() + GLOBAL_BUDGET)})
+            procs[kind] = (pr, time.time() + GLOBAL_BUDGET + 25)
+        for kind, (pr, limite) in list(procs.items()):
+            if pr.poll() is not None: del procs[kind]; fini.add(kind)
+            elif time.time() > limite:
+                killgrp(pr); del procs[kind]; print(f"[{kind}] délai dépassé, arrêté (résultats partiels conservés)")
+        time.sleep(0.3)
+    res = {}
+    for kind in kinds:
+        f = RES / f"{kind}{suffix}.json"
+        res[kind] = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {
+            "name": kind, "steps": [{"name": "worker", "status": "ÉCHEC", "detail": "aucun résultat (plantage ou délai)", "shots": [], "dur": 0}],
+            "console": [], "csp": [], "pageerrors": [], "dur": 0}
+    return res
+
+
+def en_echec(r):
+    return r.get("partial") or any(s["status"] != "OK" for s in r["steps"])
+
+
 def main():
     quick = "--quick" in sys.argv
+    relancer = "--relancer" in sys.argv
     t0 = time.time()
     RES.mkdir(parents=True, exist_ok=True); SHOTS.mkdir(parents=True, exist_ok=True)
     for f in list(RES.glob("*.json")) + list(RES.glob("*.tmp")):
         f.unlink()
-    wdeadline = t0 + GLOBAL_BUDGET
     port = free_port()
     base = f"http://127.0.0.1:{port}/"
     srv = subprocess.Popen([sys.executable, "-c", SERVER_CODE, str(port), str(APP)],
@@ -2553,36 +2600,35 @@ def main():
         jobs = ["chromium", "iphone13-safe", "iphoneSE", "video-sound", "vague2", "fonctions", "sombre", "mini-lecteur", "portraits", "selection", "correctifs", "android-pixel7", "android-s8"]
         if not quick:
             jobs += ["iphone13", "combos", "selection-se", "selection-sombre"]
-        for kind in jobs:
-            out = RES / f"{kind}.json"
-            args = [sys.executable, str(Path(__file__).resolve()), "--worker", kind, base, str(out)]
-            procs.append((kind, subprocess.Popen(args, cwd=str(QA), start_new_session=True,
-                                                 env={**os.environ, "QA_DEADLINE": str(wdeadline)})))
-        deadline = wdeadline + 25
-        for kind, pr in procs:
-            try: pr.wait(timeout=max(1, deadline - time.time()))
-            except subprocess.TimeoutExpired:
-                killgrp(pr); print(f"[{kind}] délai dépassé, arrêté (résultats partiels conservés)")
+        njobs = len(jobs)
+        if "--jobs" in sys.argv:
+            njobs = max(1, int(sys.argv[sys.argv.index("--jobs") + 1]))
+        par = run_workers(jobs, base, njobs)
+        instables = {}
+        if relancer:
+            rates = [k for k in jobs if en_echec(par[k])]
+            if rates:
+                print(f"relance seule des workers en échec : {', '.join(rates)}")
+                second = run_workers(rates, base, njobs, suffix=".relance")
+                for k in rates:
+                    if not en_echec(second[k]):       # vert au 2e passage : instable, signalé, pas masqué
+                        instables[k] = [f"{s['name']} : {s['detail'][:200]}" for s in par[k]["steps"] if s["status"] != "OK"] or ["résultats partiels"]
+                        second[k]["instable"] = instables[k]
+                    par[k] = second[k]
+        procs = [(k, None) for k in jobs]
         check_out = []
         for lab, pr in checks:
             try: o, _ = pr.communicate(timeout=120)
             except subprocess.TimeoutExpired: pr.kill(); o = "délai dépassé"
             check_out.append((lab, pr.returncode, o))
     finally:
-        for _, pr in procs + checks:
+        for _, pr in checks:
             if pr.poll() is None: killgrp(pr)
         srv.terminate()
         try: srv.wait(timeout=5)
         except subprocess.TimeoutExpired: srv.kill()
 
-    results = []
-    for kind, _ in procs:
-        f = RES / f"{kind}.json"
-        if f.exists():
-            results.append(json.loads(f.read_text(encoding="utf-8")))
-        else:
-            results.append({"name": kind, "steps": [{"name": "worker", "status": "ÉCHEC", "detail": "aucun résultat (plantage ou délai)", "shots": [], "dur": 0}],
-                            "console": [], "csp": [], "pageerrors": [], "dur": 0})
+    results = [par[kind] for kind, _ in procs]
     dur = round(time.time() - t0, 1)
     tot = sum(len(r["steps"]) for r in results)
     ko = sum(1 for r in results for s in r["steps"] if s["status"] != "OK")
@@ -2599,8 +2645,11 @@ def main():
     for lab, rc, o in check_out:
         L += [f"## {lab} (code {rc})", "", "```"] + o.strip().splitlines()[-25:] + ["```", ""]
     for r in results:
-        flag = (" , RÉSULTATS PARTIELS" if r.get("partial") else "") + (f" , navigateur relancé {r['restarts']} fois" if r.get("restarts") else "")
-        L += [f"## {r['name']} ({r['dur']} s{flag})", "", "| Étape | Statut | Détail | Captures | s |", "|---|---|---|---|---|"]
+        flag = (" , RÉSULTATS PARTIELS" if r.get("partial") else "") + (f" , navigateur relancé {r['restarts']} fois" if r.get("restarts") else "") \
+            + (" , **INSTABLE** (vert au 2e passage)" if r.get("instable") else "")
+        L += [f"## {r['name']} ({r['dur']} s{flag})", ""]
+        if r.get("instable"): L += ["Échecs du 1er passage (à corriger, la relance ne les excuse pas) :", ""] + [f"- {md_cell(x)}" for x in r["instable"]] + [""]
+        L += ["| Étape | Statut | Détail | Captures | s |", "|---|---|---|---|---|"]
         for s in r["steps"]:
             shots = "<br>".join(f"[{Path(x).name}]({x})" for x in s["shots"])
             L.append(f"| {md_cell(s['name'])} | {'OK' if s['status'] == 'OK' else '**ÉCHEC**'} | {md_cell(s['detail'])[:500]} | {shots} | {s['dur']} |")
@@ -2609,8 +2658,10 @@ def main():
     fails = [f"{r['name']} / {s['name']} : {s['detail'][:200]}" for r in results for s in r["steps"] if s["status"] != "OK"]
     for f in fails[:40]: print("ÉCHEC", f)
     for lab in checks_ko: print("ÉCHEC", lab)
+    for k, v in instables.items():
+        for x in v: print("INSTABLE", k, "/", x)
     bad = bool(ko or partial or checks_ko)
-    print(f"Terminé en {dur} s : {tot - ko} OK / {ko} ÉCHEC navigateur ; contrôles rapides {'ÉCHEC' if checks_ko else 'OK'} -> {OUT / 'rapport.md'}")
+    print(f"Terminé en {dur} s : {tot - ko} OK / {ko} ÉCHEC navigateur{f' ; {len(instables)} worker(s) INSTABLE(S)' if instables else ''} ; contrôles rapides {'ÉCHEC' if checks_ko else 'OK'} -> {OUT / 'rapport.md'}")
     print("RÉSULTAT :", "ÉCHEC" if bad else "VERT")
     return 1 if bad else 0
 

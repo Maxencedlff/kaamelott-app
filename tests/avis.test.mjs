@@ -5,12 +5,14 @@ import { APP } from './harness.mjs';
 
 const require = createRequire(import.meta.url);
 const handler = require(path.join(APP, 'api', 'avis.js'));
+handler._attente = async () => {};   // pas de vraie pause entre deux essais (la suite durait 8 s)
 const ORIGIN = 'https://kaamelott-app.vercel.app';
 let ipN = 0;
 
 // faux GitHub : avis/… rangés dans puts ; faits.json et coupes.json gardés dans store (sha qui change à chaque écriture,
 // `conflits` premières écritures refusées en 409 comme lors de deux envois simultanés)
-function call({ method = 'POST', origin = ORIGIN, type = 'application/json', body = {}, ip, token = 'factice', github = 201, faits = null, coupes = null, conflits = 0, gros = false } = {}) {
+// `ecrits` (partagé entre deux appels) : fichiers avis/… déjà présents, un PUT sans sha dessus est refusé en 422 comme sur GitHub
+function call({ method = 'POST', origin = ORIGIN, type = 'application/json', body = {}, ip, realIp, token = 'factice', github = 201, faits = null, coupes = null, conflits = 0, gros = false, ecrits = new Set() } = {}) {
   const puts = [], n = { v: 0 };
   const store = { 'faits.json': { val: faits, sha: faits ? 's0' : null }, 'coupes.json': { val: coupes, sha: coupes ? 's0' : null },
     get faits() { return this['faits.json'].val; }, get coupes() { return this['coupes.json'].val; } };
@@ -28,11 +30,13 @@ function call({ method = 'POST', origin = ORIGIN, type = 'application/json', bod
       f.val = JSON.parse(Buffer.from(b.content, 'base64').toString()); f.sha = `s${++n.v}`;
       return { ok: true, status: 200 };
     }
+    if (github < 300 && ecrits.has(url)) return { ok: false, status: 422 };
+    if (github < 300) ecrits.add(url);
     puts.push({ url, body: JSON.parse(opt.body) }); return { ok: github < 300, status: github };
   };
   if (token) process.env.KAAM_AVIS_TOKEN = token; else delete process.env.KAAM_AVIS_TOKEN;
   const res = { code: 0, json: null, headers: {}, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.code = c; return this; }, json(j) { this.body = j; return this; } };
-  const req = { method, headers: { origin, 'content-type': type, 'x-forwarded-for': ip || `10.0.0.${++ipN % 250}` }, body };
+  const req = { method, headers: { origin, 'content-type': type, 'x-forwarded-for': ip || `10.0.${1 + (++ipN >> 8)}.${ipN % 250}`, ...(realIp ? { 'x-real-ip': realIp } : {}) }, body };
   return Promise.resolve(handler(req, res)).then(() => ({ res, puts, store, lot: puts[0] ? JSON.parse(Buffer.from(puts[0].body.content, 'base64').toString()) : null }));
 }
 const avis = (o = {}) => ({ i: 5, quote: 'Q', name: 'ARTHUR', ok: true, problemes: [], note: '', ts: 1700000000000, ...o });
@@ -137,4 +141,26 @@ test('GET / POST : fichier de plus de 1 Mo lu en brut, jamais pris pour vide (ri
   const { res, store } = await call({ gros: true, coupes, body: { avis: [avis({ fp: 'k3x9', coupe: [0.1, 0] })] } });
   assert.equal(res.code, 200);
   assert.deepEqual(Object.keys(store.coupes.coupes).sort(), ['5', '9']);
+});
+test('POST : identifiant de lot → même fichier ; renvoi du même lot (après un 502) = 200 sans doublon', async () => {
+  const ecrits = new Set();
+  const b = { lot: 'abc12345xyz', avis: [avis({ fp: 'k3x9' })] };
+  const r1 = await call({ body: b, ecrits });
+  assert.equal(r1.res.code, 200); assert.match(r1.puts[0].url, /\/avis\/\d{4}-\d\d-\d\d\/lot-abc12345xyz\.json$/);
+  const r2 = await call({ body: b, ecrits });
+  assert.equal(r2.res.code, 200); assert.equal(ecrits.size, 1);
+  const sans = await call({ body: { lot: 'TROP', avis: [avis()] } });              // identifiant invalide : nom au hasard
+  assert.match(sans.puts[0].url, /\/avis\/\d{4}-\d\d-\d\d\/\d{6}-[0-9a-z]+\.json$/);
+});
+test('POST : 30 lots par heure et par adresse, le 31e → 429 ; x-real-ip prime sur x-forwarded-for', async () => {
+  let r;
+  for (let n = 0; n <= handler.MAX_PAR_HEURE; n++) r = await call({ ip: '10.250.0.1', body: { avis: [avis()] } });
+  assert.equal(r.res.code, 429);
+  for (let n = 0; n <= handler.MAX_PAR_HEURE; n++) r = await call({ realIp: '10.250.0.2', ip: `10.250.1.${n}`, body: { avis: [avis()] } });
+  assert.equal(r.res.code, 429);                                                   // même x-real-ip, x-forwarded-for différents
+});
+test('MAX_I garde au moins 10 % de marge sur data.json (au-delà, les avis seraient filtrés sans bruit)', async () => {
+  const fs = await import('node:fs');
+  const n = JSON.parse(fs.readFileSync(path.join(APP, 'data.json'), 'utf8')).length;
+  assert.ok(handler.MAX_I > 1.1 * n, `MAX_I = ${handler.MAX_I} pour ${n} entrées : l'augmenter dans api/avis.js`);
 });

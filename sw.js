@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v70';
+const CACHE = 'kaamelott-v71';
 const DATA_CACHE = 'kaamelott-data';
 // Portraits des personnages (img/perso/, ~200 × 3 petits JPEG) : noms à empreinte, donc immuables. Cache à part, jamais
 // vidé par une mise à jour ; servis depuis le cache dès la première vue, plafonné à IMG_MAX fichiers (les plus anciens sortent).
@@ -126,7 +126,7 @@ self.addEventListener('fetch', e => {
         e.waitUntil(c.put(e.request, copy).then(() => c.keys()).then(keys => Promise.all(keys.slice(0, Math.max(0, keys.length - IMG_MAX)).map(k => c.delete(k)))).catch(() => {}));
       }
       return r;
-    }, () => blankImage()))));   // hors ligne et pas encore en cache : image vide, l'initiale du personnage reste visible dessous
+    }, () => blankImage()))));   // hors ligne et pas encore en cache : image vide (1 px), que app.js retire (onImgLoad) : la silhouette reste visible
     return;
   }
 
@@ -147,9 +147,15 @@ self.addEventListener('fetch', e => {
       const hit = await c.match('/data.json');
       const etag = hit && hit.headers.get('etag');
       const reseau = (etag ? fetch('/data.json', { cache: 'no-store', headers: { 'If-None-Match': etag } }) : fetch(e.request)).then(r => {
-        if (r.status === 200 && isJSON(r)) return c.put('/data.json', r.clone()).then(() => r, () => r);
+        // nouvelle version rangée alors qu'une copie était déjà servie : la page rechargera à un moment neutre (DATA_UPDATED),
+        // sinon la nouvelle coquille tournerait avec les anciennes répliques jusqu'au lancement suivant
+        if (r.status === 200 && isJSON(r)) return c.put('/data.json', r.clone())
+          .then(() => hit && self.clients.matchAll().then(cl => cl.forEach(x => x.postMessage({ type: 'DATA_UPDATED' }))))
+          .then(() => r, () => r);
         // code d'accès refusé (middleware.js) : la copie en cache ne doit pas ouvrir l'app sans code ; la page recharge
-        if (r.status === 401) return c.delete('/data.json').then(() => self.clients.matchAll()).then(cl => { cl.forEach(x => x.postMessage({ type: 'ACCES' })); return r; });
+        // seulement si une copie venait d'être servie (sinon la page reçoit déjà ce 401 et affiche l'écran du code : prévenir
+        // ici la faisait recharger, recevoir le même 401, recharger… et rester bloquée sur le K)
+        if (r.status === 401 && hit) return c.delete('/data.json').then(() => self.clients.matchAll()).then(cl => { cl.forEach(x => x.postMessage({ type: 'ACCES' })); return r; });
         return r;
       });
       if (hit) { e.waitUntil(reseau.catch(() => {})); return hit; }

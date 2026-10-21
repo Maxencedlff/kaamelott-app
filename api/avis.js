@@ -1,6 +1,7 @@
 // Avis de vérification (son / vidéo justes ou non) envoyés depuis l'app.
-// Chaque lot est rangé dans le dépôt privé Maxencedlff/kaamelott-avis (avis/<jour>/<heure>-<hasard>.json),
-// relu ensuite côté PC (kaam-audio/avis_lire.py) pour corriger les sons et vidéos.
+// Chaque lot est rangé dans le dépôt privé Maxencedlff/kaamelott-avis (avis/<jour>/<heure>-<hasard>.json, ou
+// avis/<jour>/lot-<identifiant>.json quand l'app envoie un identifiant de lot : un lot renvoyé après un 502 réécrit le même
+// fichier au lieu d'un doublon), relu ensuite côté PC (kaam-audio/avis_lire.py) pour corriger les sons et vidéos.
 // faits.json, dans le même dépôt : {i: empreinte} des répliques déjà vérifiées par quelqu'un (GET /api/avis), pour que
 // chaque personne qui vérifie fasse avancer le travail de tous. L'empreinte (fpOf dans app.js) est celle du son et de la
 // scène vérifiés : s'ils changent, la réplique revient à vérifier. Amorce et reconstruction : kaam-audio/avis_partage.py.
@@ -9,7 +10,7 @@
 // (« Coupe ratée, la refaire ») attend kaam-audio/coupes.py, qui finalise les coupes (fini: 1) et traite les demandes.
 const { limiteur, adresse } = require('./_debit.js');
 const REPO = 'Maxencedlff/kaamelott-avis';
-// mêmes identifiants que PB_LISTS dans app.js
+// mêmes identifiants que PB_LISTS dans app.js (comparés par tests/unit.test.mjs)
 const PROBLEMES = new Set(['son_faux', 'son_debut_coupe', 'son_coupe', 'son_deborde_avant', 'son_deborde', 'son_generique', 'son_bruit',
   'son_absent', 'video_fausse', 'video_debut_coupe', 'video_coupee', 'video_deborde_avant', 'video_deborde', 'video_generique',
   'video_decalee', 'texte_faux', 'texte_perso']);
@@ -29,7 +30,7 @@ function cxValide(c) {
   return c[0] >= 0 && c[0] <= 5 && c[2] >= 0 && c[2] <= 5 && c[1] > 0 && c[1] <= 300 ? c.map(net2) : null;
 }
 
-const MAX_I = 40000;   // data.json a 33 187 entrées : marge pour les ajouts (l'index i ne change jamais)
+const MAX_I = 40000;   // data.json a 34 113 entrées (21/10/2026) : marge pour les ajouts (l'index i ne change jamais ; tests/avis.test.mjs vérifie la marge)
 // caractères de contrôle retirés (séquences de terminal dans les notes relues sur le PC)
 const net = s => String(s || '').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
 function propre(a, recu) {
@@ -92,7 +93,7 @@ async function modifier(token, f, vide, change, message) {
       body: JSON.stringify({ message: message(n), content: Buffer.from(JSON.stringify(val)).toString('base64'), ...(sha ? { sha } : {}) }) });
     if (r.ok) return;
     if (r.status !== 409 && r.status !== 422) throw new Error(`GitHub ${r.status}`);
-    await new Promise(ok => setTimeout(ok, 300 + Math.random() * 700));
+    await module.exports._attente(300 + Math.random() * 700);
   }
   throw new Error('GitHub : conflits répétés');
 }
@@ -140,7 +141,8 @@ module.exports = async function handler(req, res) {
   if (!lot.length) return res.status(400).json({ erreur: 'aucun avis' });
 
   const now = new Date();
-  const path = `avis/${now.toISOString().slice(0, 10)}/${now.toISOString().slice(11, 19).replace(/:/g, '')}-${Math.random().toString(36).slice(2, 8)}.json`;
+  const idLot = typeof req.body?.lot === 'string' && /^[0-9a-z]{8,24}$/.test(req.body.lot) ? req.body.lot : null;
+  const path = `avis/${now.toISOString().slice(0, 10)}/${idLot ? `lot-${idLot}` : `${now.toISOString().slice(11, 19).replace(/:/g, '')}-${Math.random().toString(36).slice(2, 8)}`}.json`;
   let r;
   try {
     r = await fetch(`https://api.github.com/repos/${REPO}/contents/${path}`, {
@@ -154,7 +156,9 @@ module.exports = async function handler(req, res) {
   } catch {
     return res.status(502).json({ erreur: 'GitHub injoignable' });   // le client garde ses avis et réessaiera
   }
-  if (!r.ok) return res.status(502).json({ erreur: `GitHub ${r.status}` });
+  // 422 sans sha : le fichier de ce lot existe déjà (envoi répété après un 502) ; rien n'est réécrit, la suite (faits,
+  // coupes) est elle-même sans effet en double
+  if (!r.ok && !(idLot && r.status === 422)) return res.status(502).json({ erreur: `GitHub ${r.status}` });
   // avis rangés : le partage ne doit jamais faire échouer l'envoi (avis_partage.py sait reconstruire faits.json)
   try { await ajouterFaits(token, lot); } catch {}
   if (lot.some(a => a.coupe || a.demande)) {
@@ -165,3 +169,7 @@ module.exports = async function handler(req, res) {
 
 module.exports.lire = lire;
 module.exports.videCoupes = videCoupes;
+module.exports.PROBLEMES = PROBLEMES;
+module.exports.MAX_I = MAX_I;
+module.exports.MAX_PAR_HEURE = MAX_PAR_HEURE;
+module.exports._attente = ms => new Promise(ok => setTimeout(ok, ms));   // pause entre deux essais (tests : remplacée)

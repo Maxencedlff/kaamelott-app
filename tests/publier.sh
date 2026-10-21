@@ -1,18 +1,28 @@
 #!/bin/bash
 # Publication en une commande : tests → commit → push (jeton fine-grained) → déploiement Vercel de CE commit → CI GitHub → contrôle en ligne.
+# CI rouge après la mise en ligne : la production est remise automatiquement sur le déploiement précédent (rollback).
+# Fichier non suivi inattendu à la racine (export, .env…) : rien n'est publié (le dépôt est public).
 # usage : tests/publier.sh "Message du commit"      (à lancer depuis la racine du dépôt kaamelott-app)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 MSG="${1:?message de commit manquant}"
 T=$(cat ~/.config/kaam/github_token)
-VT=$(grep -o 'vcp_[A-Za-z0-9]*' /home/maxdevops/.claude/projects/-home-maxdevops/memory/reference_vercel.md | head -1)
+VT=$(cat ~/.config/kaam/vercel_token)          # fichier 600, jamais affiché
 TEAM=team_vsrQBKB5DaJbha03esHVWjP3; PRJ=prj_rHkTDWayY3BeNjxjGqtkvhbSBLan
+J=$(mktemp -d); trap 'rm -rf "$J"' EXIT         # journaux de cette publication (jamais dans /tmp partagé)
 ok() { echo "✔ $*"; }; ko() { echo "✘ $*"; exit 1; }
+vercel() { curl -s -H "Authorization: Bearer $VT" "$@"; }
+
+# non suivis : seulement aux emplacements attendus (un export ou un .env oublié partirait sur un dépôt public)
+inattendus=$(git status --porcelain --untracked-files=all | sed -n 's/^?? //p' | grep -vE '^((api|tests|img|splash|fonts|sons)/|README\.md$|middleware\.js$)' || true)
+[ -z "$inattendus" ] || { echo "$inattendus" | head -10; ko "fichiers non suivis inattendus : les ajouter à .gitignore, les déplacer, ou les committer à la main"; }
 
 node --check app.js && node --check sw.js || ko "syntaxe JS"
-node --test tests/ >/tmp/kaam_unit.txt 2>&1 || { tail -20 /tmp/kaam_unit.txt; ko "tests unitaires"; }; ok "tests unitaires"
-python3 tests/check_data.py >/dev/null || ko "contrôle de data.json"; ok "data.json"
-python3 tests/e2e/run_all.py --quick >/tmp/kaam_banc.txt 2>&1 || { tail -15 /tmp/kaam_banc.txt; ko "banc Playwright"; }; ok "banc Playwright"
+node --test tests/ >"$J/unit.txt" 2>&1 || { tail -20 "$J/unit.txt"; ko "tests unitaires"; }; ok "tests unitaires"
+git show HEAD:data.json > "$J/old.json"           # comparé au dernier commit (celui qui est en ligne), pas à HEAD~1
+python3 tests/check_data.py . "$J/old.json" >"$J/data.txt" || { cat "$J/data.txt" | head -25; ko "contrôle de data.json"; }; ok "data.json"
+python3 tests/e2e/run_all.py --quick --jobs 4 --relancer >"$J/banc.txt" 2>&1 || { tail -15 "$J/banc.txt"; ko "banc Playwright"; }
+grep '^INSTABLE' "$J/banc.txt" || true; ok "banc Playwright"
 
 python3 - <<'EOF'
 import re; p='sw.js'; s=open(p).read()
@@ -38,14 +48,32 @@ for i in $(seq 40); do
   fi
   sleep 8
 done
-[ "$r" = "READY $S8" ] && ok "Vercel : en production" || ko "Vercel : $r"
+[ "$r" = "READY $S8" ] || ko "Vercel : $r"
+UID8=$(vercel "https://api.vercel.com/v6/deployments?teamId=$TEAM&projectId=$PRJ&limit=1" | python3 -c "import json,sys;print(json.load(sys.stdin)['deployments'][0]['uid'])")
+# après un rollback, Vercel n'attribue plus le domaine aux nouveaux déploiements : celui-ci est promu explicitement
+if vercel "https://api.vercel.com/v9/projects/$PRJ?teamId=$TEAM" | python3 -c "import json,sys;sys.exit(0 if json.load(sys.stdin).get('lastRollbackTarget') else 1)"; then
+  vercel -X POST "https://api.vercel.com/v10/projects/$PRJ/promote/$UID8?teamId=$TEAM" >/dev/null; echo "… promu en production (rollback précédent levé)"
+fi
+ok "Vercel : en production"
+
+# CI rouge alors que la version est déjà en ligne : production remise sur le dernier déploiement READY d'un autre commit
+rollback() {
+  local prev
+  prev=$(vercel "https://api.vercel.com/v6/deployments?teamId=$TEAM&projectId=$PRJ&target=production&state=READY&limit=20" | python3 -c "
+import json,sys
+d=[x for x in json.load(sys.stdin)['deployments'] if not x.get('meta',{}).get('githubCommitSha','').startswith('$S8')]
+print(d[0]['uid'], d[0].get('meta',{}).get('githubCommitSha','')[:8]) if d else print('')")
+  [ -n "$prev" ] || ko "CI : $1 ; AUCUN déploiement précédent pour le rollback, version $S8 laissée en ligne"
+  vercel -X POST "https://api.vercel.com/v10/projects/$PRJ/promote/${prev% *}?teamId=$TEAM" >/dev/null
+  ko "CI : $1 ; production remise sur ${prev#* } (rollback), corriger puis republier"
+}
 
 # CI GitHub Actions
 for i in $(seq 60); do
   c=$(curl -s -H "Authorization: Bearer $T" "https://api.github.com/repos/Maxencedlff/kaamelott-app/actions/runs?head_sha=$SHA" | python3 -c "import json,sys;r=json.load(sys.stdin)['workflow_runs'];print((r[0]['status']+' '+str(r[0]['conclusion'])) if r else 'attente')")
-  case "$c" in "completed success") break;; completed*) ko "CI : $c";; esac; sleep 15
+  case "$c" in "completed success") break;; completed*) rollback "$c";; esac; sleep 15
 done
-[ "$c" = "completed success" ] && ok "CI verte" || ko "CI : $c"
+[ "$c" = "completed success" ] && ok "CI verte" || ko "CI : $c (toujours en cours après 15 min, version laissée en ligne)"
 
 # contrôle en ligne (navigateur, pas de curl en boucle sur le site)
 python3 - <<'EOF'

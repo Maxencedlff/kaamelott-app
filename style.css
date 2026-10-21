@@ -21,6 +21,7 @@
   --ink: #1d1d1f;
   --ink2: #6e6e73;
   --ink3: #727277;              /* tertiaire, encore lisible (4,7:1) */
+  --tab-ink: #6e6e73;           /* libellés d'onglets inactifs : 4,8:1 sur la barre (#f9f9f9) */
   --bg: #ffffff;
   --bg2: #f5f5f7;               /* sections, cartes grises */
   --fill: #f2f2f7;              /* boutons gris, champs */
@@ -48,8 +49,8 @@
 /* ---------- Jetons : sombre (teintes d'iOS) ---------- */
 @media (prefers-color-scheme: dark) {
   :root {
-    --accent: #fa2d48; --accent-t: #ff4d63; --accent-bg: #e0102b;
-    --ink: #f5f5f7; --ink2: #98989d; --ink3: #8e8e93;
+    --accent: #fa2d48; --accent-t: #ff6b7f; --accent-bg: #e0102b;   /* texte rouge : 5,1:1 sur les gris foncés (#2c2c2e) */
+    --ink: #f5f5f7; --ink2: #98989d; --ink3: #8e8e93; --tab-ink: #8e8e93;
     --bg: #000000; --bg2: #1c1c1e; --fill: #1c1c1e; --fill2: #3a3a3c;
     --line: rgba(84, 84, 88, .6); --bar: #161618; --bar-t: rgba(22, 22, 24, .92); --sheet: #1c1c1e; --cell: #2c2c2e; --seg-on: #636366;
     --scrim: rgba(0, 0, 0, .55); --hud: rgba(44, 44, 46, .94); --ok: #30d158; --chev: #5a5a5e;
@@ -57,7 +58,8 @@
   }
 }
 
-/* Taille du texte d'iOS : 1rem suit le réglage de l'utilisateur (17 px par défaut) ; seul le texte de lecture l'utilise */
+/* Taille du texte d'iOS : 1rem suit le réglage de l'utilisateur (17 px par défaut). Les textes de lecture sont en rem (listes,
+   nom et épisode de la carte, réglages, fiches, écrans vides) ; la citation suit par textScale() ; boutons et onglets restent fixes */
 html { font-size: 17px; font: -apple-system-body; }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; background: var(--bg); color: var(--ink); }
@@ -127,6 +129,8 @@ mark { background: none; color: inherit; font-weight: 700; }
 /* sélecteur de la sélection sous le grand titre (« Livres I et II · Film ⌄ », comme « Saison 1 ⌄ » de l'app TV) */
 .mast > .scope { position: absolute; left: var(--pad); top: var(--mh); display: inline-flex; align-items: center; gap: 4px; max-width: calc(100% - 2 * var(--pad)); height: var(--scope-h); padding: 0 0 2px; font-size: 17px; line-height: 22px; font-weight: 600; letter-spacing: -.41px; color: var(--accent-t); transition: opacity .2s; }
 .scope .sl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* cibles d'au moins 44 pt de haut sans rien changer au rendu (Apple HIG) : zone touchable agrandie par un pseudo-élément */
+.mast > .scope::after { content: ''; position: absolute; inset: -9px -4px; }
 .scope svg { flex: none; width: 13px; height: 13px; margin-top: 2px; }
 .mast.compact .scope { opacity: 0; pointer-events: none; }
 #main-content { grid-row: 2; min-height: 0; display: flex; flex-direction: column; position: relative; overflow: hidden; padding-top: var(--mh); }
@@ -153,7 +157,6 @@ mark { background: none; color: inherit; font-weight: 700; }
 /* résumé des réglages sous le grand titre ; il ouvre les réglages */
 .bar { flex: none; display: inline-flex; align-items: center; gap: 3px; align-self: flex-start; max-width: calc(100% - 2 * var(--pad)); margin: 0 var(--pad); min-height: 30px; font-size: 15px; line-height: 20px; color: var(--ink2); letter-spacing: -.24px; }
 .bar-sum { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.bar-sum .bar-k { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .bar-sum .sep { margin: 0 5px; color: inherit; }
 .bar .chev { width: 13px; height: 13px; color: var(--ink3); }
 .bar.verify { color: var(--accent-t); font-weight: 600; }
@@ -174,7 +177,6 @@ mark { background: none; color: inherit; font-weight: 700; }
 .quote { font-weight: 600; letter-spacing: -.02em; line-height: 1.16; overflow-wrap: break-word; hyphens: manual; text-wrap: pretty; }
 .stage.art.photo .quote { color: #fff; }
 .quote .g { opacity: .85; }
-.quote-hint { margin-top: 12px; font-size: 13px; line-height: 17px; color: rgba(255, 255, 255, .75); letter-spacing: -.08px; }
 .more-h { flex: none; text-align: right; padding-top: 2px; font-size: 13px; font-weight: 600; color: var(--ink2); pointer-events: none; }
 .stage.photo .more-h { color: rgba(255, 255, 255, .9); }
 .more-h.done { visibility: hidden; }
@@ -191,8 +193,8 @@ mark { background: none; color: inherit; font-weight: 700; }
 /* nom (en rouge, comme l'artiste dans Musique), épisode, étoile */
 .meta { flex: none; display: flex; align-items: center; gap: 10px; margin: 16px var(--pad) 0; }
 .who-b { flex: 1; min-width: 0; }
-.who { display: block; max-width: 100%; font-size: 21px; line-height: 26px; font-weight: 600; letter-spacing: .3px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.src { font-size: 15px; line-height: 20px; color: var(--ink2); letter-spacing: -.24px; }
+.who { display: block; max-width: 100%; padding: 9px 0; margin: -9px 0; font-size: 1.235rem; line-height: 1.24; font-weight: 600; letter-spacing: .3px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src { font-size: .882rem; line-height: 1.33; color: var(--ink2); letter-spacing: -.24px; }
 .meta .src { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* pilotes, Dies Iræ : « Interprété par … » sur une ligne, sous la source (même gris : le rouge reste aux actions) */
 .meta .src.by { -webkit-line-clamp: 1; }
@@ -200,7 +202,7 @@ mark { background: none; color: inherit; font-weight: 700; }
 .ic svg { width: 24px; height: 24px; }
 .ic .lab, .ic .t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .ic.said { color: var(--ok); }
-.fav.pop svg, .fv.pop svg { animation: pop .3s; }
+.fav.pop svg { animation: pop .3s; }
 @keyframes pop { 50% { transform: scale(1.25); } }
 /* « Non enregistré » : bulle à gauche de l'étoile */
 .tip { position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%); padding: 5px 10px; border-radius: 980px; background: var(--ink); color: var(--bg); font-size: 13px; font-weight: 600; white-space: nowrap; letter-spacing: -.08px; }
@@ -233,7 +235,7 @@ mark { background: none; color: inherit; font-weight: 700; }
 .transport button:not(:disabled):active, .tools button:active { opacity: .45; }
 /* outils : ordre (Aléatoire / Dans l'ordre), puis en glyphes seuls Scène (si elle existe) et Partager */
 .tools { flex: none; display: flex; justify-content: center; align-items: center; gap: 28px; margin: 0 var(--pad) 4px; }
-.tool { position: relative; width: 44px; height: 40px; display: grid; place-items: center; color: var(--ink2); }
+.tool { position: relative; width: 44px; height: 44px; display: grid; place-items: center; color: var(--ink2); }
 .tool svg { width: 24px; height: 24px; }
 .tool .t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .tool.said { color: var(--ok); }
@@ -311,7 +313,7 @@ mark { background: none; color: inherit; font-weight: 700; }
 .mb.mx { color: var(--ink3); }
 .mb.mx svg { width: 18px; height: 18px; }
 .tabs { grid-row: 4; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding-bottom: var(--sb); background: var(--bar); box-shadow: 0 -.5px 0 var(--line); position: relative; z-index: 6; }
-.nav-btn { height: var(--tab); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; padding-top: 6px; color: #8e8e93; font-size: 10px; line-height: 12px; font-weight: 500; letter-spacing: .1px; text-align: center; white-space: nowrap; }
+.nav-btn { height: var(--tab); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 2px; padding-top: 6px; color: var(--tab-ink); font-size: 10px; line-height: 12px; font-weight: 500; letter-spacing: .1px; text-align: center; white-space: nowrap; }
 .nav-btn svg { width: 27px; height: 27px; }
 .nav-btn .f, .nav-btn.active .o { display: none; }
 .nav-btn.active .f { display: block; }
@@ -326,7 +328,8 @@ mark { background: none; color: inherit; font-weight: 700; }
 .field input::placeholder { color: var(--ink3); }
 .field input::-webkit-search-cancel-button { display: none; }
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); padding: 2px; border-radius: 9px; background: var(--fill2); }
-.seg button { height: 30px; border-radius: 7px; font-size: 13px; font-weight: 500; letter-spacing: -.08px; text-align: center; color: var(--ink); }
+.seg button { position: relative; height: 30px; border-radius: 7px; font-size: 13px; font-weight: 500; letter-spacing: -.08px; text-align: center; color: var(--ink); }
+.seg button::after { content: ''; position: absolute; inset: -7px 0; }
 .seg button.on { background: var(--seg-on); font-weight: 600; box-shadow: 0 3px 8px rgba(0, 0, 0, .12), 0 3px 1px rgba(0, 0, 0, .04); }
 .seg button:disabled { color: var(--ink3); }
 .h2 { margin: 28px var(--pad) 10px; font-size: 22px; line-height: 28px; font-weight: 700; letter-spacing: .35px; }
@@ -351,11 +354,11 @@ mark { background: none; color: inherit; font-weight: 700; }
 .gf b { color: var(--ink); font-weight: 600; }
 .gf.ctr { text-align: center; margin-top: 0; }
 .sheet .g { margin: 0 16px; border-radius: 12px; background: var(--cell); overflow: hidden; }
-.gr { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 7px 16px; width: 100%; text-align: left; position: relative; font-size: 17px; letter-spacing: -.41px; color: var(--ink); }
+.gr { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 7px 16px; width: 100%; text-align: left; position: relative; font-size: 1rem; letter-spacing: -.41px; color: var(--ink); }
 .gr + .gr::before { content: ""; position: absolute; left: 16px; right: 0; top: 0; border-top: .5px solid var(--line); }
 .gr > .seg { flex: 1; }
 .gr .k { flex: 1; min-width: 0; }
-.gr .k small { display: block; font-size: 13px; line-height: 17px; color: var(--ink2); letter-spacing: -.08px; }
+.gr .k small { display: block; font-size: .765rem; line-height: 1.31; color: var(--ink2); letter-spacing: -.08px; }
 .gr.dis { opacity: .45; pointer-events: none; }
 .gr.act { color: var(--accent-t); }
 .gr .chev { width: 15px; height: 15px; color: var(--chev); }
@@ -423,7 +426,8 @@ mark { background: none; color: inherit; font-weight: 700; }
 
 /* ---------- Personnages ---------- */
 .page-h { margin: 0 var(--pad); }
-.page-h p { font-size: 15px; line-height: 20px; color: var(--ink2); letter-spacing: -.24px; }
+.page-h p { font-size: .882rem; line-height: 1.33; color: var(--ink2); letter-spacing: -.24px; }
+.page-h .fav-garde { margin-top: 6px; font-size: 13px; line-height: 18px; }
 .pf { margin: 12px var(--pad) 0; }
 .sort { margin: 12px var(--pad) 0; }
 .shelf { display: flex; gap: 14px; overflow-x: auto; padding: 0 var(--pad) 4px; scroll-snap-type: x mandatory; scroll-padding: 0 var(--pad); scrollbar-width: none; }
@@ -447,8 +451,6 @@ mark { background: none; color: inherit; font-weight: 700; }
 .av.sq { width: 56px; height: 56px; }
 .av.sq.img { box-shadow: 0 0 0 .5px var(--line); }
 .av { position: relative; overflow: hidden; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; flex: none; }
-.av.lg { width: 104px; height: 104px; font-size: 40px; margin: 0 auto 8px; }
-.art-c b { display: block; font-size: 13px; line-height: 17px; font-weight: 500; letter-spacing: -.08px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .idx-row, .idx-more, .res-who { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 72px; padding: 0 var(--pad); position: relative; text-align: left; }
 .idx-row::after, .idx-more::after { content: ""; position: absolute; left: calc(var(--pad) + 70px); right: 0; bottom: 0; border-bottom: .5px solid var(--line); }
 .res-who { min-height: 64px; }
@@ -484,7 +486,7 @@ mark { background: none; color: inherit; font-weight: 700; }
 .fiche-h { position: relative; background: var(--bg2); color: var(--ink); padding: calc(var(--st) + 64px) var(--pad) 20px; }
 .fiche-h h1 { position: relative; font-size: 40px; line-height: 44px; font-weight: 700; letter-spacing: -.02em; overflow-wrap: break-word; }
 .fiche-h h1.long { font-size: 30px; line-height: 35px; }
-.fiche-h .part { position: relative; margin-top: 4px; font-size: 15px; line-height: 20px; color: var(--ink2); letter-spacing: -.24px; }
+.fiche-h .part { position: relative; margin-top: 4px; font-size: .882rem; line-height: 1.33; color: var(--ink2); letter-spacing: -.24px; }
 .fiche-h:not(.photo) .hero { display: none; }
 /* avec image : la scène en tête, bord à bord, bas assombri ; le nom posé dessus en blanc (clair comme sombre, façon Apple TV) */
 .fiche-h.photo { padding: 0; background: #000; color: #fff; }
@@ -518,9 +520,9 @@ mark { background: none; color: inherit; font-weight: 700; }
 /* ---------- Entrées de liste (fiche, recherche, favoris) : la ligne ouvre la réplique, « … » ouvre le menu ---------- */
 .ent { position: relative; display: flex; flex-direction: column; padding: 12px 52px 12px var(--pad); min-height: 60px; }
 .ent::after { content: ""; position: absolute; left: var(--pad); right: 0; bottom: 0; border-bottom: .5px solid var(--line); }
-.ent-q { order: 1; display: block; font-size: 17px; line-height: 23px; letter-spacing: -.41px; text-wrap: pretty; overflow-wrap: break-word; color: var(--ink); -webkit-touch-callout: none; }
+.ent-q { order: 1; display: block; font-size: 1rem; line-height: 1.35; letter-spacing: -.41px; text-wrap: pretty; overflow-wrap: break-word; color: var(--ink); -webkit-touch-callout: none; }
 .ent-q::after { content: ""; position: absolute; inset: 0; }          /* toute la ligne est touchable */
-.ent-m { order: 2; margin-top: 3px; font-size: 13px; line-height: 18px; color: var(--ink2); letter-spacing: -.08px; }
+.ent-m { order: 2; margin-top: 3px; font-size: .765rem; line-height: 1.38; color: var(--ink2); letter-spacing: -.08px; }
 .ent-m b { font-weight: 400; }
 .ent-m b::after { content: " · "; }
 .ent-more { position: absolute; z-index: 1; right: 6px; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; display: grid; place-items: center; color: var(--ink2); }
@@ -551,7 +553,7 @@ mark { background: none; color: inherit; font-weight: 700; }
 .res-h b { font-size: 15px; font-weight: 400; color: var(--ink2); letter-spacing: -.24px; }
 
 /* ---------- États : vide, erreur, chargement, fin de vérification ---------- */
-.empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 32px; margin: 56px auto 0; max-width: 420px; font-size: 17px; line-height: 23px; color: var(--ink2); }
+.empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 32px; margin: 56px auto 0; max-width: 420px; font-size: 1rem; line-height: 1.35; color: var(--ink2); }
 .empty .ei { width: 60px; height: 60px; color: var(--ink3); margin-bottom: 14px; }
 .empty .ei svg { width: 60px; height: 60px; }
 .empty b, .empty .err-k { display: block; font-size: 22px; line-height: 28px; font-weight: 700; color: var(--ink); letter-spacing: .35px; margin-bottom: 6px; }
@@ -701,6 +703,9 @@ mark { background: none; color: inherit; font-weight: 700; }
   .mast-sub .mt { font-size: 22px; line-height: 28px; }
   .tools, .stage-foot:not(.vf) { display: none; }
   :root { --tab: 44px; }
+  /* barre compacte (comme iOS en paysage) : icône et libellé côte à côte, plus rien de coupé dans 44 px */
+  .nav-btn { flex-direction: row; justify-content: center; align-items: center; gap: 6px; padding-top: 0; font-size: 12px; }
+  .nav-btn svg { width: 22px; height: 22px; }
 }
 @media (min-width: 600px) {
   #app { max-width: 520px; margin: 0 auto; box-shadow: 0 0 0 .5px var(--line); }

@@ -4,43 +4,50 @@ concurrency:
   group: tests-${{ github.ref }}
   cancel-in-progress: true
 permissions: { contents: read }
+# Actions épinglées par SHA (un tag peut être déplacé par son propriétaire) ; le tag suivi est en commentaire.
 jobs:
   rapides:                       # ~30 s : tests unitaires + data.json (ordre et index i préservés)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 2 }
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4
         with: { node-version: 20 }
       - run: node --test tests/
-      - run: |
-          git show HEAD~1:data.json > /tmp/old.json 2>/dev/null || echo '[]' > /tmp/old.json
+      # data.json comparé à l'état d'AVANT le push (pas seulement au parent du dernier commit : un push de plusieurs
+      # commits ne doit pas cacher un réordonnancement) ; PR : à la base ; premier push ou avant inconnu : HEAD~1
+      - env:
+          AVANT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$AVANT" ] && ! echo "$AVANT" | grep -qE '^0+$' && git cat-file -e "$AVANT^{commit}" 2>/dev/null; then REF=$AVANT; else REF=HEAD~1; fi
+          echo "comparaison à $REF"
+          git show "$REF:data.json" > /tmp/old.json
           python3 tests/check_data.py . /tmp/old.json
   navigateurs:                   # ~3-5 min : Playwright Chromium + WebKit, médias muets locaux, aucun accès Hugging Face
     needs: rapides
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4
         with: { node-version: 20 }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065   # v5
         with: { python-version: '3.12' }
       - run: pip install playwright==1.62.0
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830   # v4
         with:
           path: ~/.cache/ms-playwright
           key: pw-1.62.0-${{ runner.os }}
       - run: python -m playwright install --with-deps chromium webkit
-      # Les machines GitHub sont plus lentes que le PC : un échec de minutage est relancé une fois.
-      # Un vrai bug échoue aux deux passages et la CI reste rouge.
+      # Machines GitHub plus lentes que le PC : un worker en échec est relancé seul, une fois. Vert au 2e passage =
+      # « INSTABLE », écrit dans le rapport et en avertissement ; rouge aux deux passages = vrai bug, CI rouge.
       - run: |
-          QA_BUDGET=600 python tests/e2e/run_all.py --quick && exit 0
-          echo "::warning::échec au 1er passage, nouvel essai (machine CI lente ?)"
-          QA_BUDGET=600 python tests/e2e/run_all.py --quick
+          set -o pipefail
+          QA_BUDGET=600 python tests/e2e/run_all.py --quick --relancer | tee /tmp/banc.txt
+          grep '^INSTABLE' /tmp/banc.txt | sed 's/^/::warning::/' || true
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4
         with:
           name: rapport-banc
           path: |

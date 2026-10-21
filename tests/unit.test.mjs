@@ -160,6 +160,13 @@ test('question du jour : déterministe, 4 choix dont la bonne réponse', () => {
   const a = t.dailyQuestion(), b = t.dailyQuestion();
   assert.equal(a.q.i, b.q.i); assert.equal(new Set(a.choices).size, 4); assert.ok(a.choices.includes(a.q.name));
 });
+test('question du jour : stable quand le corpus bouge (répliques retirées ou ajoutées ailleurs, positions décalées)', () => {
+  const avant = t.get('allQuotes'), a = t.dailyQuestion().q.i;
+  t.set('allQuotes', avant.filter((q, k) => q.i === a || k % 7));                  // une réplique sur 7 retirée, autres décalées
+  const b = t.dailyQuestion().q.i;
+  t.set('allQuotes', avant);
+  assert.equal(b, a);
+});
 test('parseQuote : index i stable, noms corrigés à la lecture', () => {
   all.slice(0, 2000).forEach(q => assert.equal(t.stripDid(t.raw[q.i].quote), q.quote));
   assert.ok(!all.some(q => q.name === 'LÉODAGANR' || q.name === 'PÈRE BIAISE'));
@@ -236,4 +243,11 @@ test('extraitURL : coupe en attente → extrait coupé en ligne ; finie ou d’u
   t.set('avisCoupes', { 7: { fp: 'autre', ds: 0.38, de: -0.09 } });
   assert.match(t.get('extraitURL')(q), /\/v\/a1\/a1b2c3d4e5f6\.mp4\?v=2$/);
   t.set('avisCoupes', {});
+});
+test('problèmes signalables : mêmes identifiants dans app.js (PB_LISTS) et api/avis.js (PROBLEMES)', async () => {
+  const { createRequire } = await import('node:module'); const path = await import('node:path');
+  const { APP } = await import('./harness.mjs');
+  const serveur = createRequire(import.meta.url)(path.join(APP, 'api', 'avis.js')).PROBLEMES;
+  const front = t.get('PB_LISTS').flatMap(([, , rows]) => rows.map(([id]) => id));
+  assert.deepEqual([...new Set(front)].sort(), [...serveur].sort());
 });
