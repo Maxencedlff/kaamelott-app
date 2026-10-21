@@ -4,7 +4,7 @@
 import { next } from '@vercel/functions';
 import { autorise } from './api/_acces.js';
 
-export const config = { matcher: ['/data.json', '/api/avis', '/api/extrait'] };
+export const config = { matcher: ['/data.json', '/api/avis', '/api/extrait', '/api/qdj'] };
 
 export default async function middleware(request) {
   if (await autorise(request.headers.get('cookie'), process.env)) return next();

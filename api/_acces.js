@@ -4,11 +4,23 @@
 const COOKIE = 'kaam_acces';
 // saisie tolérante : casse, accents, espaces et tirets ignorés (« Cul-de-Chouette » = « culdechouette »)
 const normalise = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
-async function jeton(code, secret) {
+async function hmac(secret, texte) {
   const enc = new TextEncoder();
   const cle = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', cle, enc.encode(`acces:${normalise(code)}`)));
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', cle, enc.encode(texte)));
   return Array.from(sig, b => b.toString(16).padStart(2, '0')).join('');
+}
+const jeton = (code, secret) => hmac(secret, `acces:${normalise(code)}`);
+// Comptes de l'appli (même code pour tous) : un prénom par téléphone, choisi à la première ouverture (api/acces.js). Le
+// cookie kaam_compte porte l'identifiant (« timothee ») et son HMAC : un prénom ne se fabrique pas sans le secret.
+const COMPTES = ['Anselme', 'Maxence', 'Timothée', 'Wandrille'];
+const idCompte = nom => normalise(nom);
+const jetonCompte = (id, secret) => hmac(secret, `compte:${id}`);
+async function compteDe(entete, env) {
+  const m = /(?:^|;\s*)kaam_compte=([a-z]{1,20})\.([0-9a-f]{64})(?:;|$)/.exec(entete || '');
+  if (!m || !env.KAAM_ACCES_SECRET) return null;
+  const nom = COMPTES.find(n => idCompte(n) === m[1]);
+  return nom && egaux(m[2], await jetonCompte(m[1], env.KAAM_ACCES_SECRET)) ? nom : null;
 }
 const cookieDe = entete => (/(?:^|;\s*)kaam_acces=([0-9a-f]{64})(?:;|$)/.exec(entete || '') || [])[1] || '';
 // comparaison en temps constant (même longueur : 64 caractères hexadécimaux)
@@ -24,4 +36,4 @@ async function autorise(entete, env) {
   const j = cookieDe(entete);
   return !!j && egaux(j, await jeton(env.KAAM_ACCES_CODE, env.KAAM_ACCES_SECRET));
 }
-module.exports = { COOKIE, normalise, jeton, cookieDe, egaux, autorise };
+module.exports = { COOKIE, normalise, jeton, cookieDe, egaux, autorise, COMPTES, idCompte, jetonCompte, compteDe };

@@ -2416,6 +2416,28 @@ function dailyQuestion() {
   const wrong = shuffle(TOP_CHARS.filter(c => c !== q.name), rnd).slice(0, 3);
   return { q, choices: shuffle([q.name, ...wrong], rnd) };
 }
+// ----- Question du jour entre amis (api/qdj.js) : qui a répondu, juste ou faux, jamais la réponse choisie -----
+async function envoyerQdj(q, pick, ok) {
+  try {
+    const r = await fetch('/api/qdj', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ d: todayKey(), i: q.i, pick, ok }) });
+    if (r.ok || r.status === 409) majAmis((await r.json()).resultats);
+  } catch { majAmis(); }
+}
+// liste des 4 comptes sous la question (après réponse) : « juste », « faux » ou « pas encore » ; toi en premier
+async function majAmis(resultats) {
+  const box = document.getElementById('qdj-amis');
+  if (!box) return;
+  if (!resultats) {
+    try { const r = await fetch(`/api/qdj?d=${todayKey()}`, { cache: 'no-store' }); resultats = r.ok ? (await r.json()).resultats : null; } catch {}
+  }
+  if (!box.isConnected) return;
+  if (!resultats) { box.hidden = false; box.innerHTML = '<p class="amis-t">Résultats des autres indisponibles (réseau).</p>'; return; }
+  const moi = monCompte(), ordre = [moi, ...COMPTES.filter(n => n !== moi)].filter(n => COMPTES.includes(n));
+  const etat = n => resultats[n] ? (resultats[n].ok ? ['ok', 'juste'] : ['ko', 'faux']) : ['att', 'pas encore'];
+  box.hidden = false;
+  box.innerHTML = `<p class="amis-t">Aujourd’hui</p><ul>${ordre.map(n => { const [c, t] = etat(n);
+    return `<li class="${c}"><span class="n">${esc(n)}${n === moi ? ' <small>(toi)</small>' : ''}</span><span class="r">${t}</span></li>`; }).join('')}</ul>`;
+}
 // ----- Réponse au quiz : chaque étape séparée (score, lignes, scène, rangée du pouce) -----
 // Score et record ; la question du jour n'est enregistrée qu'une fois (pas en relecture)
 function quizRecord(btn, replay, { q, daily, hist }) {
@@ -2425,6 +2447,7 @@ function quizRecord(btn, replay, { q, daily, hist }) {
   if (daily) {
     if (!replay) {
       writeJSON('kaam_qdj', { d: todayKey(), i: q.i, pick: btn.dataset.choice, ok: correct });   // i : relu tel quel
+      envoyerQdj(q, btn.dataset.choice, correct);           // les autres comptes voient le résultat
       hist[todayKey()] = correct; writeJSON('kaam_qdj_hist', hist);
     }
   } else {
@@ -2573,12 +2596,13 @@ function renderQuiz(daily = false) {
           <figcaption class="src" id="quiz-after" hidden></figcaption>
         </figure>
       </div>
+      ${daily ? '<div class="amis" id="qdj-amis" hidden></div>' : ''}
     </div>
     <div class="choices" role="group" aria-label="Qui a dit ça ?">
       ${choices.map(c => `<button class="choice" data-choice="${esc(c)}">${faceHTML(c, 's', 'l')}<span class="n">${esc(nameCase(c))}</span><span class="v"></span></button>`).join('')}
     </div>
     ${daily
-      ? `<div class="nav txt" id="quiz-nav"><button class="tbtn" id="quiz-free">Revenir au quiz libre</button></div>`
+      ? `<div class="nav txt" id="quiz-nav"><button class="tbtn" id="quiz-free">Quiz libre</button></div>`
       : `<div class="nav txt" id="quiz-nav"><button class="tbtn" id="quiz-daily">${done ? `Question du jour · ${done.ok ? 'juste' : 'faux'}` : 'Question du jour'}</button><button class="tbtn" id="quiz-next">Passer</button></div>`}`;
 
   const stage = document.getElementById('quiz-stage');
@@ -2596,6 +2620,7 @@ function renderQuiz(daily = false) {
   if (daily && done) {
     const b = [...document.querySelectorAll('.choice')].find(x => x.dataset.choice === done.pick);
     if (b) answer(b, true);
+    majAmis();
   }
 }
 
@@ -3230,7 +3255,7 @@ function setView(view) {
     if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   if      (view === 'citations')   renderCitations();
-  else if (view === 'quiz')        renderQuiz();
+  else if (view === 'quiz')        renderQuiz(!dailyState());   // la question du jour d'abord, tant qu'elle n'est pas jouée
   else if (view === 'personnages') { renderPersonnages(); if (ficheState) { const f = ficheState; ficheState = null; openPersonnage(f.name, f); } }
   else if (view === 'recherche')   renderRecherche();
   else if (view === 'favoris')     renderFavoris();
@@ -3257,27 +3282,53 @@ function reloadIfIdle(view) {
 }
 // Écran « Code d'accès » : les répliques ne se chargent qu'avec le code (cookie posé par api/acces.js, 400 jours).
 // Aucun focus automatique (iOS : pas de clavier imposé à l'ouverture).
-function renderAcces() {
+// Écran « Qui es-tu ? » : les 4 comptes (prénoms déjà pris sur un autre téléphone grisés), puis le code. Le compte et le
+// code sont gardés par cookies (api/acces.js, 400 jours) ; le prénom aussi dans kaam_compte (affichage, question du jour).
+// Aucun focus automatique (iOS : pas de clavier imposé à l'ouverture).
+const COMPTES = ['Anselme', 'Maxence', 'Timothée', 'Wandrille'];   // = COMPTES de api/_acces.js (test unitaire)
+const monCompte = () => readStr('kaam_compte', '');
+async function renderComptes() {
   setMast('Kaamelott');
   keepTabs(['citations']);
   const main = document.getElementById('main-content');
+  main.innerHTML = `<div class="empty acces"><span class="ei">${icon('person')}</span><span class="err-k">Qui es-tu ?</span><small id="acces-msg" role="alert">Chargement des comptes…</small></div>`;
+  let liste;
+  try {
+    const r = await fetch('/api/acces', { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    liste = await r.json();
+  } catch {
+    main.querySelector('#acces-msg').innerHTML = `${navigator.onLine === false ? 'Hors ligne : il faut du réseau la première fois.' : 'Serveur indisponible.'} <button class="tbtn" id="acces-retry">Réessayer</button>`;
+    document.getElementById('acces-retry').addEventListener('click', renderComptes);
+    return;
+  }
+  if (liste.moi) { writeStr('kaam_compte', liste.moi); boot(); return; }   // déjà ce téléphone (cookie) : rien à demander
+  let choisi = null;
   main.innerHTML = `
-    <div class="empty acces"><span class="ei">${icon('person')}</span><span class="err-k">Code d’accès</span>Entrez le code qu’on vous a donné pour ouvrir l’app.
-      <form class="acces-f" id="acces-f" novalidate>
-        <input id="acces-code" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go" aria-label="Code d’accès" aria-describedby="acces-msg">
+    <div class="empty acces"><span class="ei">${icon('person')}</span><span class="err-k">Qui es-tu ?</span>Touche ton prénom, puis entre le code.
+      <div class="comptes" role="radiogroup" aria-label="Compte">${liste.comptes.map(c => `<button class="compte" role="radio" aria-checked="false" data-nom="${esc(c.nom)}"${c.pris ? ' disabled' : ''}>${esc(c.nom)}${c.pris ? '<small>pris</small>' : ''}</button>`).join('')}</div>
+      <form class="acces-f" id="acces-f" novalidate hidden>
+        <input id="acces-code" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go" aria-label="Code d’accès" aria-describedby="acces-msg" placeholder="Code">
         <button class="pill" type="submit">Entrer</button>
       </form><small id="acces-msg" role="alert"></small></div>`;
   const f = document.getElementById('acces-f'), msg = document.getElementById('acces-msg'), btn = f.querySelector('button');
+  main.querySelectorAll('.compte').forEach(b => b.addEventListener('click', () => {
+    choisi = b.dataset.nom;
+    main.querySelectorAll('.compte').forEach(x => x.setAttribute('aria-checked', x === b));
+    f.hidden = false; btn.setAttribute('aria-label', `Entrer en tant que ${choisi}`); msg.textContent = '';
+  }));
   f.addEventListener('submit', async e => {
     e.preventDefault();
     const code = document.getElementById('acces-code').value.trim();
-    if (!code) { msg.textContent = 'Entrez le code.'; return; }
+    if (!choisi) { msg.textContent = 'Touche d’abord ton prénom.'; return; }
+    if (!code) { msg.textContent = 'Entre le code.'; return; }
     btn.disabled = true; msg.textContent = '';
     try {
-      const r = await fetch('/api/acces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
-      if (r.ok) { boot(); return; }
-      msg.textContent = r.status === 401 ? 'Code incorrect.' : r.status === 429 ? 'Trop d’essais : réessayez dans une heure.' : 'Serveur indisponible, réessayez.';
-    } catch { msg.textContent = navigator.onLine === false ? 'Hors ligne : il faut du réseau pour entrer le code.' : 'Serveur indisponible, réessayez.'; }
+      const r = await fetch('/api/acces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, compte: choisi }) });
+      if (r.ok) { writeStr('kaam_compte', (await r.json()).compte); boot(); return; }
+      if (r.status === 409) { msg.textContent = `${choisi} vient d’être pris sur un autre téléphone.`; setTimeout(renderComptes, 1500); return; }
+      msg.textContent = r.status === 401 ? 'Code incorrect.' : r.status === 429 ? 'Trop d’essais : réessaie dans une heure.' : 'Serveur indisponible, réessaie.';
+    } catch { msg.textContent = navigator.onLine === false ? 'Hors ligne : il faut du réseau pour entrer.' : 'Serveur indisponible, réessaie.'; }
     btn.disabled = false;
   });
 }
@@ -3341,7 +3392,7 @@ async function boot() {
   } catch (e) {
     booting = false;
     endLaunch();                           // l'écran d'erreur doit se voir
-    if (e.acces) { renderAcces(); return; }
+    if (e.acces) { renderComptes(); return; }
     console.error('Chargement des répliques :', e);
     const offline = navigator.onLine === false;
     setMast('Répliques');
@@ -3363,6 +3414,8 @@ async function boot() {
     return;
   }
   booting = false;
+  // pas encore de compte sur ce téléphone (code déjà entré avant les comptes, ou stockage effacé) : « Qui es-tu ? » d'abord
+  if (!monCompte()) { endLaunch(); renderComptes(); return; }
   quoteIdx = (await reprendreLancement()) ?? pickRandom();   // la scène préparée la fois d'avant joue tout de suite
   randHistory = []; randPos = -1; pushHistory(quoteIdx);
   setTabsEnabled(true);

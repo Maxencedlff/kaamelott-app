@@ -256,6 +256,20 @@ class Worker:
             n = len(((self.avis_posts[-1] or {}).get("avis")) or [])
             route.fulfill(status=200, body=json.dumps({"recus": n}), headers={"content-type": "application/json"})
         ctx.route("**/api/avis", avis)
+        # comptes (api/acces.js) et question du jour entre amis (api/qdj.js) : simulés, rien n'est envoyé
+        def acces(route):
+            if route.request.method == "GET":
+                return route.fulfill(status=200, headers={"content-type": "application/json"}, body=json.dumps({"moi": "Maxence",
+                    "comptes": [{"nom": n, "pris": False} for n in ("Anselme", "Maxence", "Timothée", "Wandrille")]}))
+            route.fulfill(status=200, headers={"content-type": "application/json"}, body=json.dumps({"compte": "Maxence"}))
+        self.qdj = {}
+        def qdj(route):
+            if route.request.method == "POST":
+                try: self.qdj.setdefault("Maxence", {"ok": bool(json.loads(route.request.post_data or "{}").get("ok"))})
+                except Exception: pass
+            route.fulfill(status=200, headers={"content-type": "application/json"}, body=json.dumps({"resultats": self.qdj}))
+        ctx.route("**/api/acces", acces)
+        ctx.route("**/api/qdj*", qdj)
 
         if safe:
             def css(route, request):
@@ -297,6 +311,8 @@ class Worker:
         # sauf si l'étape fixe elle-même l'affichage (kaam_media ou les anciennes clés, migration testée) ou veut le vrai défaut
         if media_default and clear and not ({"kaam_media", "kaam_video_only", "kaam_audio_only"} & set(sets)):
             sets["kaam_media"] = "text"
+        # un compte sur ce téléphone (sinon « Qui es-tu ? » d'abord) ; l'étape des comptes le retire elle-même
+        if clear: sets.setdefault("kaam_compte", "Maxence")
         if clear or sets:
             # une seule fois par page (pas à chaque rechargement : la mémorisation des réglages est testée)
             js = ("try{if(!sessionStorage.getItem('__qa')){sessionStorage.setItem('__qa','1');" + ("localStorage.clear();" if clear else "")
@@ -351,10 +367,13 @@ class Worker:
         if ov and ov > 1:
             raise RuntimeError(f"débordement horizontal de {ov} px ({fname})")
 
-    def nav(self, page, view):
+    def nav(self, page, view, daily=False):
         page.click(f".nav-btn[data-view={view}]")
         page.wait_for_function("v => document.querySelector(`.nav-btn[data-view=${v}]`).classList.contains('active')", arg=view)
         page.wait_for_timeout(150)
+        # le Quiz s'ouvre sur la question du jour tant qu'elle n'est pas jouée : les étapes du quiz libre y passent
+        if view == "quiz" and not daily and page.evaluate("typeof quizDaily !== 'undefined' && quizDaily"):
+            page.click("#quiz-free"); page.wait_for_selector("#quiz-next"); page.wait_for_timeout(100)
 
     def wait_ready(self, page, timeout=20000):
         # écran de lancement levé (fond noir retiré) : les mesures de couleur portent sur la vraie page
@@ -455,32 +474,42 @@ def scenario_screens(w):
     w.step("Vérifier", s_verify)
 
     def s_acces(rec):
-        # code d'accès : data.json refusé (401, middleware.js) → écran du code ; mauvais code dit, bon code → l'app s'ouvre
-        ctx = w.ctx(); pg = w.new_page(ctx)
-        w.expect_errors = True             # le 401 de data.json et du mauvais code s'écrivent dans la console : attendus
+        # « Qui es-tu ? » : data.json refusé (401, middleware.js) → les 4 comptes, un pris grisé ; prénom puis code ; mauvais
+        # code dit, prénom pris entre-temps dit, bon code → l'app s'ouvre avec le compte retenu
+        ctx = w.ctx(); pg = w.new_page(ctx, extra_ls={"kaam_compte": ""})
+        w.expect_errors = True             # les 401 et 409 s'écrivent dans la console : attendus
         try:
             etat = {"ok": False, "essais": []}
             def data(route):
                 if etat["ok"]: route.continue_()
                 else: route.fulfill(status=401, body='{"erreur":"code"}', headers={"content-type": "application/json"})
             def acces(route):
-                code = json.loads(route.request.post_data or "{}").get("code"); etat["essais"].append(code)
-                etat["ok"] = code == "sloubi"
-                route.fulfill(status=204 if etat["ok"] else 401, body="" if etat["ok"] else '{"erreur":"code incorrect"}')
+                if route.request.method == "GET":
+                    return route.fulfill(status=200, headers={"content-type": "application/json"}, body=json.dumps({"moi": None, "comptes": [
+                        {"nom": "Anselme", "pris": False}, {"nom": "Maxence", "pris": False}, {"nom": "Timothée", "pris": True}, {"nom": "Wandrille", "pris": False}]}))
+                b = json.loads(route.request.post_data or "{}"); etat["essais"].append((b.get("compte"), b.get("code")))
+                if str(b.get("code", "")).lower() != "bleuf": return route.fulfill(status=401, body='{"erreur":"code incorrect"}', headers={"content-type": "application/json"})
+                etat["ok"] = True
+                route.fulfill(status=200, body=json.dumps({"compte": b.get("compte")}), headers={"content-type": "application/json"})
             pg.route("**/data.json*", data); pg.route("**/api/acces", acces)
             pg.goto(w.base)
-            pg.wait_for_selector("#acces-code", timeout=15000)
+            pg.wait_for_selector(".compte", timeout=15000)
+            pris = pg.evaluate("[...document.querySelectorAll('.compte')].filter(b => b.disabled).map(b => b.dataset.nom)")
+            if pris != ["Timothée"]: raise RuntimeError(f"prénoms grisés : {pris}")
+            w.shot(pg, rec, "02b-qui-es-tu")
+            pg.click('.compte[data-nom="Anselme"]'); pg.wait_for_selector("#acces-f:not([hidden])")
             if pg.evaluate("document.activeElement && document.activeElement.id === 'acces-code'"): raise RuntimeError("focus imposé (clavier iOS)")
-            w.shot(pg, rec, "02b-code-acces")
             pg.fill("#acces-code", "perceval"); pg.click("#acces-f button")
             pg.wait_for_function("() => document.getElementById('acces-msg')?.textContent.includes('incorrect')", timeout=5000)
-            pg.fill("#acces-code", "sloubi"); pg.click("#acces-f button")
+            pg.fill("#acces-code", "Bleuf"); pg.click("#acces-f button")
             pg.wait_for_function("() => window.__kaam && __kaam.allQuotes.length > 0 && !!document.getElementById('btn-order')", timeout=20000)
+            moi = pg.evaluate("localStorage.getItem('kaam_compte')")
             pg.close()
-            return f"écran du code, refus dit, ouverture après le bon code (essais {etat['essais']})"
+            if moi != "Anselme": raise RuntimeError(f"compte retenu : {moi!r}")
+            return f"comptes (Timothée grisé), refus du mauvais code, ouverture en tant qu'Anselme (essais {etat['essais']})"
         finally:
             w.expect_errors = False
-    w.step("Code d'accès : écran, refus, ouverture", s_acces)
+    w.step("Qui es-tu ? : comptes, prénom pris grisé, code, ouverture", s_acces)
 
     def s_verify_order(rec):
         # Aléatoire ↔ Dans l'ordre directement sur l'écran de vérification ; « Passer » suit ensuite la file dans l'ordre

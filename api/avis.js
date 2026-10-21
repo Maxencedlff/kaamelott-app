@@ -168,6 +168,7 @@ module.exports = async function handler(req, res) {
 };
 
 module.exports.lire = lire;
+module.exports.modifier = modifier;
 module.exports.videCoupes = videCoupes;
 module.exports.PROBLEMES = PROBLEMES;
 module.exports.MAX_I = MAX_I;

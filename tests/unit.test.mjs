@@ -251,3 +251,8 @@ test('problèmes signalables : mêmes identifiants dans app.js (PB_LISTS) et api
   const front = t.get('PB_LISTS').flatMap(([, , rows]) => rows.map(([id]) => id));
   assert.deepEqual([...new Set(front)].sort(), [...serveur].sort());
 });
+test('comptes : mêmes prénoms dans app.js et api/_acces.js', async () => {
+  const { createRequire } = await import('node:module'); const path = await import('node:path');
+  const { APP } = await import('./harness.mjs');
+  assert.deepEqual([...t.get('COMPTES')], createRequire(import.meta.url)(path.join(APP, 'api', '_acces.js')).COMPTES);
+});

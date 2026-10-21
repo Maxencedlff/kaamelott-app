@@ -581,6 +581,24 @@ mark { background: none; color: inherit; font-weight: 700; }
 .acces-f .pill { margin-top: 0; min-width: 0; width: 100%; }
 .acces small:empty { display: none; }
 .acces small { color: var(--accent-t); }
+/* « Qui es-tu ? » : les 4 prénoms en grille, le choisi en rouge ; un prénom pris ailleurs est grisé */
+.comptes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; margin-top: 20px; }
+.compte { min-height: 54px; border-radius: 12px; background: var(--fill); color: var(--ink); font-size: 17px; font-weight: 600; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.compte small { margin: 0; font-size: 12px; font-weight: 500; color: var(--ink3); }
+.compte[aria-checked="true"] { background: var(--accent-bg); color: #fff; }
+.compte:disabled { opacity: .45; }
+.acces .acces-f { margin-top: 14px; }
+/* question du jour : qui a répondu (sous la scène, après la réponse) */
+.amis { margin: 14px var(--pad) 6px; padding: 10px 16px; border-radius: 14px; background: var(--bg2); }
+.amis-t { font-size: 13px; font-weight: 600; color: var(--ink2); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 4px; }
+.amis ul { list-style: none; }
+.amis li { display: flex; justify-content: space-between; align-items: center; min-height: 36px; font-size: 1rem; border-top: .5px solid var(--line); }
+.amis li:first-child { border-top: 0; }
+.amis li small { color: var(--ink3); font-weight: 400; }
+.amis li .r { font-weight: 600; }
+.amis li.ok .r { color: var(--ok); }
+.amis li.ko .r { color: var(--accent-t); }
+.amis li.att .r { color: var(--ink3); font-weight: 400; }
 .empty .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 22px; width: 100%; }
 .empty .row2 .pill { min-width: 0; padding: 0 10px; }
 .empty.err { margin-top: 12vh; }
