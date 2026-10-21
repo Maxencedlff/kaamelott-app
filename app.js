@@ -225,6 +225,48 @@ function mediaSrc(url) {
   if (streamed.size > 50) streamed.delete(streamed.values().next().value);
   return url;
 }
+// ===== LANCEMENT INSTANTANÉ =====
+// L'appli rouvre sur une réplique choisie la fois d'avant (la suivante de celle qu'on regardait), dont la scène est déjà
+// rangée sur l'appareil (Cache Storage « kaamelott-lancement », un seul fichier) : au lancement, elle joue aussitôt,
+// sans attendre Hugging Face. Affichage Vidéo seulement (c'est là que l'attente se voit).
+const LANCEMENT = 'kaamelott-lancement';
+let lancementPret = null, lancementT = null;   // réplique déjà rangée ; préparation retardée (pas à chaque glisser)
+function preparerLancement() {
+  clearTimeout(lancementT);
+  lancementT = setTimeout(async () => {
+    if (verifyMode || !videoOnly || !window.caches || navigator.connection?.saveData) return;
+    const idx = voisine(1), q = idx != null && allQuotes[idx];
+    if (!q || !q.video || lancementPret === q.i) return;
+    const url = playURL(q);
+    try {
+      cachedMedia(url);
+      await mediaCache.get(url);                              // le préchargement de la suivante, déjà en route
+      const u = mediaReady.get(url);
+      if (!u) return;
+      const blob = await (await fetch(u)).blob();
+      const c = await caches.open(LANCEMENT);
+      await Promise.all((await c.keys()).map(k => c.delete(k)));
+      await c.put(`/lancement/${q.i}`, new Response(blob, { headers: { 'content-type': 'video/mp4' } }));
+      writeJSON('kaam_lancement', { i: q.i, url });
+      lancementPret = q.i;
+    } catch {}
+  }, 3000);
+}
+// au démarrage : la réplique préparée, si elle est toujours là, dans la sélection et sur le même fichier → sa position
+async function reprendreLancement() {
+  try {
+    const l = readJSON('kaam_lancement', null);
+    if (!l || verifyMode || !videoOnly || !window.caches) return null;
+    const idx = allQuotes.findIndex(q => q.i === l.i), P = pool();
+    if (idx < 0 || (P && !P.includes(idx)) || playURL(allQuotes[idx]) !== l.url) return null;
+    const r = await (await caches.open(LANCEMENT)).match(`/lancement/${l.i}`);
+    if (!r) return null;
+    mediaReady.set(l.url, URL.createObjectURL(await r.blob()));
+    mediaCache.set(l.url, Promise.resolve());
+    lancementPret = l.i;
+    return idx;
+  } catch { return null; }
+}
 // Répliques probables après celle-ci : on précharge leur vidéo (modes vidéo / vérification) et leur son
 function prefetchAround() {
   if (navigator.connection?.saveData) return;      // économie de données (Android) : seule la carte affichée se télécharge
@@ -1290,7 +1332,7 @@ function setOrder(seq) {
   if (!inOrder && randHistory[randPos] !== quoteIdx) pushHistory(quoteIdx);
 }
 // Données de l'écran Répliques (aucun effet sur la page, sauf le compteur de l'aide)
-function citationsModel(q) {
+function citationsModel(q, apercu = false) {   // apercu : écran voisin montré pendant un glisser (sans effet)
   const P = pool();
   // rang de la réplique dans le parcours, en aléatoire comme dans l'ordre. Réplique ouverte exprès hors du parcours
   // (recherche, favoris) : pas de rang (jamais « 0 sur … »), on dit pourquoi elle n'en a pas
@@ -1306,7 +1348,7 @@ function citationsModel(q) {
   const inlineVideo = !!((videoOnly || verifyMode) && q.video);
   // l'aide n'est jamais dans la carte : une ligne discrète dessous, sur les 3 premières répliques
   const hint = !verifyMode && !inlineVideo && hintCount() < 3 ? (inOrder ? 'Touchez ou glissez pour la suivante' : 'Touchez ou glissez pour changer') : '';
-  if (hint) countHint();
+  if (hint && !apercu) countHint();
   return {
     counter, summary, inlineVideo, hint,
     reviewable: verifyMode,
@@ -1424,6 +1466,7 @@ function bindCitations(q, m, keep) {
   }
   else cardVideo.pause();
   prefetchAround();
+  preparerLancement();                                        // la scène du prochain lancement, rangée sur l'appareil
   $('btn-video')?.addEventListener('click', () => showVideo(q));
   $('btn-replay')?.addEventListener('click', () => replayVideo(cardVideo));
   const audioBtn = $('btn-audio');
@@ -1529,28 +1572,47 @@ function voisine(dir) {
 // texte défile d'abord jusqu'au bout. Capture : avant le lecteur vidéo, qui garde ses touchers (lecture, pause).
 function bindGlisserVertical(el, scroller) {
   let sx = 0, sy = 0, st = 0, haut = true, bas = true, etat = null, dir = 0, cible = null, peek = null, dy = 0;
+  let vit = 0, lastY = 0, lastT = 0;   // vitesse du doigt (px/ms) sur les derniers mouvements : l'élan au lâcher
   const main = () => document.getElementById('main-content');
   const enfants = () => [...main().children];
   // « none » et pas « » : la carte a sa propre transition (toucher long), qui la ferait traîner derrière le doigt
-  const poser = (y, anim) => enfants().forEach(c => { c.style.transition = anim ? 'transform .24s cubic-bezier(.2, .8, .2, 1)' : 'none'; c.style.transform = y ? `translateY(${y}px)` : ''; });
+  // anim : durée en ms ; la courbe part à la vitesse du doigt et se pose en douceur (pas de cassure au lâcher)
+  const poser = (y, anim) => enfants().forEach(c => { c.style.transition = anim ? `transform ${anim}ms cubic-bezier(.25, .9, .3, 1)` : 'none'; c.style.transform = y ? `translateY(${y}px)` : ''; });
   // rien ne passe sur l'en-tête (titre, sélection) : l'écran est découpé sous lui le temps du glisser
   const couper = on => { const m = main(); m.style.clipPath = on ? `inset(${getComputedStyle(m).paddingTop} 0 0 0)` : ''; };
+  // l'écran voisin, VRAI rendu du même gabarit (texte à sa taille, scène qui joue déjà, sans le son) : au lâcher, le
+  // nouvel écran prend exactement sa place, rien ne saute. Ses identifiants doublent ceux de l'écran affiché le temps du
+  // glisser (getElementById rend toujours l'affiché, placé avant) ; il est retiré dès la fin.
   const apercu = d => {
     peek?.remove(); peek = null; cible = voisine(d);
     const q = cible != null && allQuotes[cible];
     if (!q) return;
+    const garde = quoteIdx; let m, html;
+    quoteIdx = cible;
+    try { m = citationsModel(q, true); html = citationsHTML(q, m, 0); } finally { quoteIdx = garde; }
+    const mc = main();
     peek = document.createElement('div');
-    peek.className = `peek ${d > 0 ? 'bas' : 'haut'}`; peek.setAttribute('aria-hidden', 'true');
-    // même allure que l'écran qui arrivera : scène noire puis texte (affichage Vidéo), sinon la carte et sa photo floutée
-    const photo = !(videoOnly && q.video) && !q.acteur && persoURL(q.name, 's');
-    peek.innerHTML = videoOnly && q.video
-      ? `<div class="peek-v"></div><p class="peek-q">« ${typo(q.quote)} »</p><p class="peek-n">${esc(nameCase(q.name))}</p>`
-      : `<div class="peek-c${photo ? ' photo' : ''}">${photo ? `<span class="bgimg img"><img src="${photo}" alt=""></span>` : ''}<p class="peek-q">« ${typo(q.quote)} »</p></div><p class="peek-n">${esc(nameCase(q.name))}</p>`;
-    main().appendChild(peek);
+    peek.className = `peek ${d > 0 ? 'bas' : 'haut'}`; peek.setAttribute('aria-hidden', 'true'); peek.inert = true;
+    peek.style.paddingTop = getComputedStyle(mc).paddingTop;
+    peek.innerHTML = html;
+    peek.querySelectorAll('.swap-in').forEach(e => e.classList.remove('swap-in', 'rand', 'swap-v', 'swap-back'));
+    mc.appendChild(peek);
+    const card = peek.querySelector('.stage');
+    if (card) fitCard(card, q, m.inlineVideo);
+    const frame = peek.querySelector('.frame');
+    if (frame && m.inlineVideo) {
+      const url = playURL(q), v = document.createElement('video');
+      Object.assign(v, { muted: true, playsInline: true, loop: true, className: 'quote-video' });
+      v.setAttribute('playsinline', ''); v.setAttribute('muted', '');
+      v.src = mediaReady.get(url) || url;
+      frame.prepend(v);
+      v.play().catch(() => {});
+    }
   };
   el.addEventListener('touchstart', e => {
     if (e.touches.length > 1 || etat === 'part') return;
     sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); etat = 'attente'; dir = 0; dy = 0;
+    vit = 0; lastY = sy; lastT = 0;
     const sc = scroller && scroller.scrollHeight > scroller.clientHeight + 2 ? scroller : null;
     haut = !sc || sc.scrollTop <= 1; bas = !sc || sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2;   // bords au départ
   }, { passive: true, capture: true });
@@ -1566,22 +1628,32 @@ function bindGlisserVertical(el, scroller) {
     const d = ddy < 0 ? 1 : -1;
     if (d !== dir) { dir = d; apercu(d); }
     dy = peek ? ddy : ddy * .25;                              // rien de ce côté : l'écran résiste
-    poser(dy, false);
+    const now = performance.now();
+    if (lastT) vit = vit * .4 + .6 * (e.touches[0].clientY - lastY) / Math.max(1, now - lastT);
+    lastY = e.touches[0].clientY; lastT = now;
+    poser(dy, 0);
   }, { passive: false, capture: true });
   const fin = () => {
     if (etat !== 'glisse') { etat = null; return; }
-    const h = main().clientHeight, vif = Math.abs(dy) / Math.max(1, Date.now() - st) > .5 && Math.abs(dy) > 40;
-    if (peek && (Math.abs(dy) > h * .22 || vif)) {
+    const h = main().clientHeight;
+    // geste vif dans le sens du glisser (même court), ou plus d'un quart d'écran ; un retour du doigt en fin de geste annule
+    const vif = Math.abs(vit) > .45 && Math.sign(vit) === Math.sign(dy) && Math.abs(dy) > 30;
+    const contre = Math.abs(vit) > .3 && Math.sign(vit) !== Math.sign(dy);
+    if (peek && !contre && (Math.abs(dy) > h * .22 || vif)) {
       etat = 'part';
-      poser(dir > 0 ? -h : h, true);
-      const vers = dir;
+      // durée tirée de l'élan : reste à parcourir ÷ vitesse, entre 140 et 320 ms
+      const reste = h - Math.abs(dy), ms = Math.round(Math.min(320, Math.max(140, reste / Math.max(Math.abs(vit), 1.2))));
+      poser(dir > 0 ? -h : h, ms);
+      const vers = dir, t = peek.querySelector('video')?.currentTime || 0;
       setTimeout(() => {
         glisseSansAnim = true;
         try { if (vers > 0) swipeForward(); else swipeBack(); } finally { glisseSansAnim = false; etat = null; couper(false); }
-      }, 240);
+        // la scène reprend là où l'aperçu en était (elle jouait déjà, sans le son) : aucune reprise à zéro visible
+        if (t > .05 && document.getElementById('qvideo-slot') && !fenetre(allQuotes[quoteIdx])) { try { cardVideo.currentTime = t; } catch {} }
+      }, ms);
     } else {
-      poser(0, true);
-      setTimeout(() => { peek?.remove(); peek = null; enfants().forEach(c => { c.style.transition = ''; }); couper(false); }, 260);
+      poser(0, 260);
+      setTimeout(() => { peek?.remove(); peek = null; enfants().forEach(c => { c.style.transition = ''; }); couper(false); }, 270);
       etat = null;
     }
   };
@@ -3213,7 +3285,7 @@ async function boot() {
     return;
   }
   booting = false;
-  quoteIdx = pickRandom();
+  quoteIdx = (await reprendreLancement()) ?? pickRandom();   // la scène préparée la fois d'avant joue tout de suite
   randHistory = []; randPos = -1; pushHistory(quoteIdx);
   setTabsEnabled(true);
   // après un rechargement de mise à jour, on rouvre la vue que l'utilisateur avait demandée

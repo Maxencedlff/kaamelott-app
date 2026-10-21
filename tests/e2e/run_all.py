@@ -1406,6 +1406,27 @@ def scenario_fonctions(w):
         return f"haut : {p0}->{p1}, bas : ->{p2} ; sur la scène : {q0}->{q1} ; de côté : rien"
     w.step("Glisser vertical : suivante vers le haut, précédente vers le bas", s_vertical)
 
+    def s_lancement(rec):
+        # lancement instantané : la scène suivante est rangée sur l'appareil ; au lancement suivant, l'appli rouvre sur elle
+        # et la lit depuis l'appareil (adresse blob:), sans téléchargement
+        ctx = w.ctx(); pg = w.new_page(ctx, prefs={"kaam_hint": "9", "kaam_media": "video"}); w.goto(pg)
+        pg.wait_for_function("() => !!localStorage.getItem('kaam_lancement')", timeout=15000)
+        i = pg.evaluate("JSON.parse(localStorage.getItem('kaam_lancement')).i")
+        rangee = pg.evaluate(f"caches.open('kaamelott-lancement').then(c => c.match('/lancement/{i}')).then(r => !!r)")
+        if not rangee: raise RuntimeError("scène du prochain lancement non rangée sur l'appareil")
+        if ctx.browser.browser_type.name == "webkit":
+            # WebKit de Playwright en contexte éphémère vide le Cache Storage au rechargement (un vrai iPhone le garde :
+            # vérifié avec un profil persistant) : ici, seule la préparation se vérifie
+            pg.close()
+            return f"scène de la réplique {i} rangée sur l'appareil (reprise vérifiée sous Chromium)"
+        pg.reload(); w.wait_ready(pg)
+        pg.wait_for_function("() => !!document.getElementById('qvideo')?.currentSrc", timeout=10000)
+        r = pg.evaluate("({ i: __kaam.allQuotes[__kaam.quoteIdx].i, src: document.getElementById('qvideo').currentSrc.slice(0, 5) })")
+        pg.close()
+        if r["i"] != i or r["src"] != "blob:": raise RuntimeError(f"relancé sur {r['i']} (préparée : {i}), source {r['src']!r}")
+        return f"rouvert sur la réplique préparée ({i}), scène lue depuis l'appareil"
+    w.step("Lancement instantané : la scène suivante est prête au lancement suivant", s_lancement)
+
     def s_avis(rec):
         w.avis_posts.clear()
         pg = w.new_page(w.ctx(), {"kaam_verify": "1"}); w.goto(pg)

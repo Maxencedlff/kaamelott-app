@@ -1,4 +1,4 @@
-const CACHE = 'kaamelott-v76';
+const CACHE = 'kaamelott-v77';
 const DATA_CACHE = 'kaamelott-data';
 // Portraits des personnages (img/perso/, ~200 × 3 petits JPEG) : noms à empreinte, donc immuables. Cache à part, jamais
 // vidé par une mise à jour ; servis depuis le cache dès la première vue, plafonné à IMG_MAX fichiers (les plus anciens sortent).
@@ -44,7 +44,8 @@ self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
       .then(keys => {
-        const old = keys.filter(k => k !== CACHE && k !== DATA_CACHE && k !== IMG_CACHE);
+        // kaamelott-lancement : la scène du prochain lancement, rangée par la page (app.js, preparerLancement)
+        const old = keys.filter(k => k !== CACHE && k !== DATA_CACHE && k !== IMG_CACHE && k !== 'kaamelott-lancement');
         self.__wasUpdate = old.length > 0;
         return Promise.all(old.map(k => caches.delete(k)));
       })
