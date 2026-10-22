@@ -11,7 +11,15 @@ VT=$(cat ~/.config/kaam/vercel_token)          # fichier 600, jamais affiché
 TEAM=team_vsrQBKB5DaJbha03esHVWjP3; PRJ=prj_rHkTDWayY3BeNjxjGqtkvhbSBLan
 J=$(mktemp -d); trap 'rm -rf "$J"' EXIT         # journaux de cette publication (jamais dans /tmp partagé)
 ok() { echo "✔ $*"; }; ko() { echo "✘ $*"; exit 1; }
-vercel() { curl -s -H "Authorization: Bearer $VT" "$@"; }
+# API Vercel : réponse vide ou tronquée (arrive de temps en temps) → jusqu'à 4 essais, jamais un JSON illisible plus loin
+vercel() {
+  local o
+  for _ in 1 2 3 4; do
+    o=$(curl -s -H "Authorization: Bearer $VT" "$@") && python3 -c 'import json,sys;json.loads(sys.stdin.read())' <<<"$o" 2>/dev/null && { printf '%s' "$o"; return 0; }
+    sleep 3
+  done
+  printf '%s' "$o"; return 1
+}
 
 # non suivis : seulement aux emplacements attendus (un export ou un .env oublié partirait sur un dépôt public)
 inattendus=$(git status --porcelain --untracked-files=all | sed -n 's/^?? //p' | grep -vE '^((api|tests|img|splash|fonts|sons)/|README\.md$|middleware\.js$)' || true)
