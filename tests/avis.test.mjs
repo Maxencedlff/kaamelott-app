@@ -35,7 +35,7 @@ function call({ method = 'POST', origin = ORIGIN, type = 'application/json', bod
     puts.push({ url, body: JSON.parse(opt.body) }); return { ok: github < 300, status: github };
   };
   if (token) process.env.KAAM_AVIS_TOKEN = token; else delete process.env.KAAM_AVIS_TOKEN;
-  const res = { code: 0, json: null, headers: {}, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.code = c; return this; }, json(j) { this.body = j; return this; } };
+  const res = { code: 0, headers: {}, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.code = c; return this; }, json(j) { this.body = j; return this; } };
   const req = { method, headers: { origin, 'content-type': type, 'x-forwarded-for': ip || `10.0.${1 + (++ipN >> 8)}.${ipN % 250}`, ...(realIp ? { 'x-real-ip': realIp } : {}) }, body };
   return Promise.resolve(handler(req, res)).then(() => ({ res, puts, store, lot: puts[0] ? JSON.parse(Buffer.from(puts[0].body.content, 'base64').toString()) : null }));
 }

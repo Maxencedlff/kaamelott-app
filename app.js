@@ -1268,7 +1268,7 @@ function partLabel(id) {
   return q ? q.inedit : `Inédit ${id[2]}`;
 }
 function selectionHTML(from) {
-  const c = partCounts(), k = unitKey(), unitLab = { v: 'scènes', a: 'répliques avec son', t: 'répliques' }[k];
+  const c = partCounts(), k = unitKey();
   const ck = on => `<span class="ck${on ? ' on' : ''}" aria-hidden="true">${on ? icon('check') : ''}</span>`;
   const row = id => {
     const on = sel.includes(id), n = c[id][k], none = !n;
@@ -1617,7 +1617,7 @@ function voisine(dir) {
 // texte défile d'abord jusqu'au bout. Un glisser parti d'un bouton ne le déclenche pas. Écouteurs posés une seule fois.
 const CONTENU = '#qvideo-slot, .stage, .meta';   // ce qui glisse ; tout le reste de l'écran est fixe
 function bindGlisser(mc) {
-  let sx = 0, sy = 0, st = 0, haut = true, bas = true, etat = null, dir = 0, cible = null, peek = null, dy = 0;
+  let sx = 0, sy = 0, haut = true, bas = true, etat = null, dir = 0, cible = null, peek = null, dy = 0;
   let vit = 0, lastY = 0, lastT = 0, bande = null, finGlisse = 0;   // vitesse du doigt (px/ms) : l'élan au lâcher
   const boites = new Map();                      // élément qui glisse → sa place sans glisser (haut, hauteur) dans l'écran
   const contenu = () => [...mc.children].filter(c => c.matches(CONTENU));
@@ -1676,7 +1676,7 @@ function bindGlisser(mc) {
     etat = null;
     if (e.touches.length > 1 || currentView !== 'citations' || !document.getElementById('quote-card') || sheetOpen()) return;
     if (e.target.closest('input, textarea, .tl, .done-line')) return;
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY; st = Date.now(); etat = 'attente'; dir = 0; dy = 0;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; etat = 'attente'; dir = 0; dy = 0;
     vit = 0; lastY = sy; lastT = 0;
     // réplique longue qui défile, touchée sur son texte : glisser la fait d'abord défiler jusqu'au bout
     const qb = e.target.closest('.stage')?.querySelector('.qblock');
@@ -1756,7 +1756,7 @@ function bindCardGestures(card) {
     if (dx > 10 || dy > 10) { moved = true; unpress(); }   // un glisser n'est pas un toucher long
   }, { passive: true });
   card.addEventListener('touchcancel', unpress, { passive: true });
-  card.addEventListener('touchend', e => {
+  card.addEventListener('touchend', () => {
     unpress();
     const audio = document.getElementById('btn-audio');
     if (!moved && audio && Date.now() - st >= LONG_PRESS) { lastLong = Date.now(); audio.click(); }
@@ -2201,7 +2201,7 @@ function goBack() { const v = backTo; backTo = null; if (v) setView(v); }
 // Partage : feuille système si elle existe, sinon copie ; la confirmation s'écrit dans le bouton (jamais de fenêtre d'alerte)
 const shareTimers = new WeakMap();   // bouton → { libellé d'origine, minuteur } pendant « Copié » / « Envoyé »
 async function shareText(text, btn) {
-  let said = '';
+  let said;
   if (navigator.share) {
     try { await navigator.share({ text }); said = 'Envoyé'; }
     catch (e) {
@@ -2700,7 +2700,7 @@ function bindEntries(container, list, opts = {}) {
     if (what === 'goto') gotoQuote(q);
     else if (what === 'menu') openEntryMenu(q, ent, opts, () => favEntry(q, ent));
     else if (what === 'undo' && undoByEntry.has(ent)) {
-      const { at, saved, rowHTML } = undoByEntry.get(ent);
+      const { at, saved } = undoByEntry.get(ent);
       if (!isFav(saved)) {
         favorites.splice(Math.min(at, favorites.length), 0, saved);
         if (!saveFavorites()) { favorites = favorites.filter(f => f !== saved); a.textContent = 'Non enregistré'; return; }

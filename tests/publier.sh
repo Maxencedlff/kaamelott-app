@@ -26,6 +26,7 @@ inattendus=$(git status --porcelain --untracked-files=all | sed -n 's/^?? //p' |
 [ -z "$inattendus" ] || { echo "$inattendus" | head -10; ko "fichiers non suivis inattendus : les ajouter à .gitignore, les déplacer, ou les committer à la main"; }
 
 node --check app.js && node --check sw.js || ko "syntaxe JS"
+npx --no-install eslint . >"$J/lint.txt" 2>&1 || { tail -30 "$J/lint.txt"; ko "lint (ESLint)"; }; ok "lint"
 node --test tests/ >"$J/unit.txt" 2>&1 || { tail -20 "$J/unit.txt"; ko "tests unitaires"; }; ok "tests unitaires"
 git show HEAD:data.json > "$J/old.json"           # comparé au dernier commit (celui qui est en ligne), pas à HEAD~1
 python3 tests/check_data.py . "$J/old.json" >"$J/data.txt" || { cat "$J/data.txt" | head -25; ko "contrôle de data.json"; }; ok "data.json"

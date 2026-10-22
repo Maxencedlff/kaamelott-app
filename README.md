@@ -39,6 +39,7 @@ python3 -m http.server 8080      # puis http://localhost:8080 (pas de code d'acc
 ## Tester
 
 ```sh
+npm run lint                                     # ESLint : règles recommandées (eslint.config.mjs)
 node --test tests/                               # tests unitaires (front, avis, extrait, accès)
 python3 tests/check_data.py                      # cohérence de data.json, comparé au commit précédent
 python3 tests/e2e/run_all.py --quick --jobs 4    # banc Playwright (Chromium + WebKit, médias muets locaux)
@@ -53,7 +54,7 @@ signalé « INSTABLE » (à corriger, pas à ignorer).
 tests/publier.sh "Message du commit"
 ```
 
-Tests, contrôle de `data.json` contre le dernier commit, banc, incrément du cache, commit, push, déploiement Vercel de
+Lint, tests, contrôle de `data.json` contre le dernier commit, banc, incrément du cache, commit, push, déploiement Vercel de
 ce commit, attente de la CI GitHub (rollback automatique de la production si elle est rouge), contrôle en ligne.
 Refuse de publier un fichier non suivi inattendu (le dépôt est public). Jetons lus dans `~/.config/kaam/` (fichiers 600).
 

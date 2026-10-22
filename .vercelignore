@@ -2,3 +2,4 @@
 tests/
 .github/
 docs/
+eslint.config.mjs

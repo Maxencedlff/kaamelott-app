@@ -14,6 +14,7 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4
         with: { node-version: 20 }
+      - run: npm ci --ignore-scripts && npm run lint
       - run: node --test tests/
       # data.json comparé à l'état d'AVANT le push (pas seulement au parent du dernier commit : un push de plusieurs
       # commits ne doit pas cacher un réordonnancement) ; PR : à la base ; premier push ou avant inconnu : HEAD~1
