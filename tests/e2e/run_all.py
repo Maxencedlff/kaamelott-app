@@ -551,6 +551,40 @@ def scenario_screens(w):
             w.expect_errors = False
     w.step("Nouveau profil : prénom, code de création, ouverture", s_creation)
 
+    def s_code_change(rec):
+        # code d'accès changé : le compte du téléphone reste reconnu (cookie signé) mais les répliques sont refusées → son
+        # prénom présélectionné, « Le code a changé », aucune boucle de rechargement ; le nouveau code rouvre l'app
+        ctx = w.ctx(); pg = w.new_page(ctx, extra_ls={"kaam_compte": "Maxence"})
+        w.expect_errors = True
+        try:
+            etat = {"ok": False, "get": 0}
+            def data(route):
+                if etat["ok"]: route.continue_()
+                else: route.fulfill(status=401, body='{"erreur":"code"}', headers={"content-type": "application/json"})
+            def acces(route):
+                if route.request.method == "GET":
+                    etat["get"] += 1
+                    return route.fulfill(status=200, headers={"content-type": "application/json"}, body=json.dumps({"moi": "Maxence", "comptes": [
+                        {"nom": n, "pris": False} for n in ("Anselme", "Maxence", "Timothée", "Wandrille")]}))
+                b = json.loads(route.request.post_data or "{}")
+                if b.get("compte") != "Maxence" or str(b.get("code", "")).lower() != "culdechouette":
+                    return route.fulfill(status=401, body='{}', headers={"content-type": "application/json"})
+                etat["ok"] = True
+                route.fulfill(status=200, body=json.dumps({"compte": "Maxence"}), headers={"content-type": "application/json"})
+            pg.route("**/data.json*", data); pg.route("**/api/acces", acces)
+            pg.goto(w.base)
+            pg.wait_for_selector('.compte[data-nom="Maxence"][aria-checked="true"]', timeout=15000)
+            pg.wait_for_timeout(1500)
+            if etat["get"] > 1: raise RuntimeError(f"boucle : {etat['get']} lectures des comptes")
+            if "code a changé" not in pg.inner_text("#acces-aide"): raise RuntimeError("message « code a changé » absent")
+            pg.fill("#acces-code", "culdechouette"); pg.click("#acces-f button")
+            pg.wait_for_function("() => window.__kaam && __kaam.allQuotes.length > 0 && !!document.getElementById('btn-order')", timeout=20000)
+            pg.close()
+            return f"prénom présélectionné, pas de boucle ({etat['get']} lecture), nouveau code accepté"
+        finally:
+            w.expect_errors = False
+    w.step("Code changé : prénom présélectionné, pas de boucle", s_code_change)
+
     def s_verify_order(rec):
         # Aléatoire ↔ Dans l'ordre directement sur l'écran de vérification ; « Passer » suit ensuite la file dans l'ordre
         pg = fresh({"kaam_verify": "1"})

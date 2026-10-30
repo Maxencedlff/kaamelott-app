@@ -3316,7 +3316,8 @@ function reloadIfIdle(view) {
 // Aucun focus automatique (iOS : pas de clavier imposé à l'ouverture).
 const COMPTES = ['Anselme', 'Maxence', 'Timothée', 'Wandrille'];   // = COMPTES de api/_acces.js (test unitaire) ; + profils créés
 const monCompte = () => readStr('kaam_compte', '');
-async function renderComptes() {
+// refus : les répliques viennent d'être refusées (code changé) ; le compte de ce téléphone est alors présélectionné
+async function renderComptes(refus = false) {
   setMast('Kaamelott');
   keepTabs(['citations']);
   const main = document.getElementById('main-content');
@@ -3328,10 +3329,10 @@ async function renderComptes() {
     liste = await r.json();
   } catch {
     main.querySelector('#acces-msg').innerHTML = `${navigator.onLine === false ? 'Hors ligne : il faut du réseau la première fois.' : 'Serveur indisponible.'} <button class="tbtn" id="acces-retry">Réessayer</button>`;
-    document.getElementById('acces-retry').addEventListener('click', renderComptes);
+    document.getElementById('acces-retry').addEventListener('click', () => renderComptes(refus));
     return;
   }
-  if (liste.moi) { writeStr('kaam_compte', liste.moi); boot(); return; }   // déjà ce téléphone (cookie) : rien à demander
+  if (liste.moi && !refus) { writeStr('kaam_compte', liste.moi); boot(); return; }   // déjà ce téléphone (cookie) : rien à demander
   let choisi = null, creer = false;
   main.innerHTML = `
     <div class="empty acces"><span class="ei">${icon('person')}</span><span class="err-k">Qui es-tu ?</span><span id="acces-aide">Touche ton prénom, puis entre le code.</span>
@@ -3367,6 +3368,8 @@ async function renderComptes() {
     else { creer = false; f.hidden = true; prenom.hidden = true; nouveau.setAttribute('aria-expanded', false); msg.textContent = '';
       document.getElementById('acces-aide').textContent = 'Touche ton prénom, puis entre le code.'; }
   });
+  const mien = liste.moi && radios.find(b => b.dataset.nom === liste.moi);
+  if (refus && mien) { mode(false, mien); document.getElementById('acces-aide').textContent = 'Le code a changé : entre le nouveau.'; }
   f.addEventListener('submit', async e => {
     e.preventDefault();
     const code = codeIn.value.trim(), p = prenom.value.trim();
@@ -3448,7 +3451,7 @@ async function boot() {
   } catch (e) {
     booting = false;
     endLaunch();                           // l'écran d'erreur doit se voir
-    if (e.acces) { renderComptes(); return; }
+    if (e.acces) { renderComptes(true); return; }   // code refusé : jamais relancer seul (boucle si le code a changé)
     console.error('Chargement des répliques :', e);
     const offline = navigator.onLine === false;
     setMast('Répliques');
