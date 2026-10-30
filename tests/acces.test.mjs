@@ -6,7 +6,7 @@ import { APP } from './harness.mjs';
 const require = createRequire(import.meta.url);
 const A = require(path.join(APP, 'api', '_acces.js'));
 const handler = require(path.join(APP, 'api', 'acces.js'));
-const ENV = { KAAM_ACCES_CODE: 'culdechouette', KAAM_ACCES_SECRET: 'secret-de-test' };
+const ENV = { KAAM_ACCES_CODE: 'culdechouette', KAAM_ACCES_SECRET: 'secret-de-test', KAAM_CREATION_CODE: 'codecreation' };
 let ipN = 0;
 
 // faux GitHub (dépôt des avis) : fichiers en mémoire, sha qui change à chaque écriture
@@ -87,6 +87,43 @@ test('comptes : un cookie de compte fabriqué sans le secret est ignoré', async
   assert.equal(await A.compteDe(faux, ENV), null);
   assert.equal(await A.compteDe(`kaam_compte=anselme.${await A.jetonCompte('anselme', ENV.KAAM_ACCES_SECRET)}`, ENV), 'Anselme');
 });
+test('prénom de profil : lettres, accents, tiret, apostrophe ; 2 à 20 lettres ; rien d’autre', () => {
+  assert.equal(A.prenomValide('  Jean-Éric  '), 'Jean-Éric');
+  assert.equal(A.prenomValide('Bohort’ de Gaunes'), "Bohort' de Gaunes");
+  for (const x of ['', 'A', '<b>Léo</b>', 'Léo2', 'x'.repeat(21), '-Léo', null]) assert.equal(A.prenomValide(x), null, x);
+});
+test('nouveau profil : code de création (pas le code d’accès), prénom libre, entre aussitôt ; listé ensuite et pris', async () => {
+  depot.clear();
+  const mk = (code, creation, cookie) => call({ body: { code, creation }, cookie });
+  assert.equal((await mk('culdechouette', 'Léodagan')).code, 401);          // le code d'accès ne crée rien
+  assert.equal((await mk('faux', 'Léodagan')).code, 401);
+  assert.equal((await mk('Code-Création', 'Léo2')).code, 400);
+  assert.equal((await mk('codecreation', 'maxence')).code, 409);            // un des 4 premiers
+  const a = await mk('codecreation', ' Léodagan ');
+  assert.equal(a.code, 200); assert.equal(a.body.compte, 'Léodagan');
+  const ck = cookies(a);
+  assert.match(ck, /kaam_acces=[0-9a-f]{64}; kaam_compte=leodagan\.[0-9a-f]{64}/);
+  assert.equal(await A.autorise(ck, ENV), true);                            // accès aux répliques aussi
+  assert.equal(depot.get('comptes.json').val.leodagan.nom, 'Léodagan');
+  assert.equal((await mk('codecreation', 'LEODAGAN')).code, 409);           // même prénom une fois normalisé
+  let r = await call({ method: 'GET' });
+  assert.deepEqual(r.body.comptes.map(c => c.nom), ['Anselme', 'Maxence', 'Timothée', 'Wandrille', 'Léodagan']);
+  assert.deepEqual(r.body.comptes.filter(c => c.pris).map(c => c.nom), ['Léodagan']);
+  r = await call({ method: 'GET', cookie: ck });
+  assert.equal(r.body.moi, 'Léodagan');
+  assert.equal((await call({ body: { code: 'culdechouette', compte: 'Léodagan' } })).code, 409);              // autre téléphone
+  assert.equal((await call({ body: { code: 'culdechouette', compte: 'Léodagan' }, cookie: ck })).code, 200);   // le sien
+  delete depot.get('comptes.json').val.leodagan;                            // retiré à la main : plus reconnu
+  assert.equal((await call({ method: 'GET', cookie: ck })).body.moi, null);
+});
+test('nouveau profil : non configuré → 500 ; 50 profils au plus', async () => {
+  depot.clear();
+  assert.equal((await call({ body: { code: 'codecreation', creation: 'Léo' }, env: { ...ENV, KAAM_CREATION_CODE: '' } })).code, 500);
+  const plein = {};
+  for (let n = 0; n < 50; n++) plein[`p${'abcdefghij'[n % 10]}${'abcdefghij'[Math.floor(n / 10)]}`] = { pris: n, nom: 'x' };
+  depot.set('comptes.json', { val: plein, sha: 's0' });
+  assert.equal((await call({ body: { code: 'codecreation', creation: 'Léo' } })).code, 403);
+});
 test('question du jour : une réponse par compte et par jour ; résultats sans la réponse choisie ; compte exigé', async () => {
   depot.clear();
   const qdj = require(path.join(APP, 'api', 'qdj.js'));
@@ -101,6 +138,11 @@ test('question du jour : une réponse par compte et par jour ; résultats sans l
   await call({ h: qdj, body: { d, i: 3, pick: 'KARADOC', ok: false }, cookie: await vrai('wandrille') });
   r = await call({ h: qdj, method: 'GET', query: { d } });
   assert.deepEqual(r.body.resultats, { Maxence: { ok: true }, Wandrille: { ok: false } });
+  assert.deepEqual(r.body.comptes, ['Anselme', 'Maxence', 'Timothée', 'Wandrille']);
   assert.equal(JSON.stringify(r.body).includes('KARADOC'), false);                              // jamais la réponse
   assert.equal((await call({ h: qdj, method: 'GET', query: { d: '2001-01-01' } })).code, 400);
+  depot.set('comptes.json', { val: { leodagan: { pris: 1, nom: 'Léodagan' } }, sha: 's1' });   // profil créé : répond aussi
+  r = await call({ h: qdj, body: { d, i: 3, pick: 'ARTHUR', ok: true }, cookie: await vrai('leodagan') });
+  assert.equal(r.code, 200); assert.equal(r.body.resultats['Léodagan'].ok, true);
+  assert.deepEqual(r.body.comptes, ['Anselme', 'Maxence', 'Timothée', 'Wandrille', 'Léodagan']);
 });

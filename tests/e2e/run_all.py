@@ -488,7 +488,7 @@ def scenario_screens(w):
                     return route.fulfill(status=200, headers={"content-type": "application/json"}, body=json.dumps({"moi": None, "comptes": [
                         {"nom": "Anselme", "pris": False}, {"nom": "Maxence", "pris": False}, {"nom": "Timothée", "pris": True}, {"nom": "Wandrille", "pris": False}]}))
                 b = json.loads(route.request.post_data or "{}"); etat["essais"].append((b.get("compte"), b.get("code")))
-                if str(b.get("code", "")).lower() != "bleuf": return route.fulfill(status=401, body='{"erreur":"code incorrect"}', headers={"content-type": "application/json"})
+                if str(b.get("code", "")).lower() != "culdechouette": return route.fulfill(status=401, body='{"erreur":"code incorrect"}', headers={"content-type": "application/json"})
                 etat["ok"] = True
                 route.fulfill(status=200, body=json.dumps({"compte": b.get("compte")}), headers={"content-type": "application/json"})
             pg.route("**/data.json*", data); pg.route("**/api/acces", acces)
@@ -501,7 +501,7 @@ def scenario_screens(w):
             if pg.evaluate("document.activeElement && document.activeElement.id === 'acces-code'"): raise RuntimeError("focus imposé (clavier iOS)")
             pg.fill("#acces-code", "perceval"); pg.click("#acces-f button")
             pg.wait_for_function("() => document.getElementById('acces-msg')?.textContent.includes('incorrect')", timeout=5000)
-            pg.fill("#acces-code", "Bleuf"); pg.click("#acces-f button")
+            pg.fill("#acces-code", "Culdechouette"); pg.click("#acces-f button")
             pg.wait_for_function("() => window.__kaam && __kaam.allQuotes.length > 0 && !!document.getElementById('btn-order')", timeout=20000)
             moi = pg.evaluate("localStorage.getItem('kaam_compte')")
             pg.close()
@@ -510,6 +510,46 @@ def scenario_screens(w):
         finally:
             w.expect_errors = False
     w.step("Qui es-tu ? : comptes, prénom pris grisé, code, ouverture", s_acces)
+
+    def s_creation(rec):
+        # « Nouveau profil » : prénom + code de création (faux code de test, jamais le vrai) ; prénom existant dit ;
+        # bon code → l'app s'ouvre avec le nouveau prénom
+        ctx = w.ctx(); pg = w.new_page(ctx, extra_ls={"kaam_compte": ""})
+        w.expect_errors = True             # les 401 et 409 s'écrivent dans la console : attendus
+        try:
+            etat = {"ok": False, "essais": []}
+            def data(route):
+                if etat["ok"]: route.continue_()
+                else: route.fulfill(status=401, body='{"erreur":"code"}', headers={"content-type": "application/json"})
+            def acces(route):
+                if route.request.method == "GET":
+                    return route.fulfill(status=200, headers={"content-type": "application/json"}, body=json.dumps({"moi": None, "comptes": [
+                        {"nom": n, "pris": n == "Timothée"} for n in ("Anselme", "Maxence", "Timothée", "Wandrille")]}))
+                b = json.loads(route.request.post_data or "{}"); etat["essais"].append((b.get("creation"), b.get("code")))
+                if "creation" not in b: return route.fulfill(status=400, body='{}', headers={"content-type": "application/json"})
+                if str(b.get("code", "")).lower() != "codecreation": return route.fulfill(status=401, body='{"erreur":"code incorrect"}', headers={"content-type": "application/json"})
+                if b["creation"].lower() == "maxence": return route.fulfill(status=409, body='{"erreur":"existe"}', headers={"content-type": "application/json"})
+                etat["ok"] = True
+                route.fulfill(status=200, body=json.dumps({"compte": b["creation"]}), headers={"content-type": "application/json"})
+            pg.route("**/data.json*", data); pg.route("**/api/acces", acces)
+            pg.goto(w.base)
+            pg.wait_for_selector("#compte-nouveau", timeout=15000)
+            pg.click("#compte-nouveau"); pg.wait_for_selector("#acces-prenom:visible")
+            if pg.evaluate("document.activeElement && document.activeElement.tagName === 'INPUT'"): raise RuntimeError("focus imposé (clavier iOS)")
+            w.shot(pg, rec, "02c-nouveau-profil")
+            pg.fill("#acces-prenom", "Maxence"); pg.fill("#acces-code", "codecreation"); pg.click("#acces-f button")
+            pg.wait_for_function("() => document.getElementById('acces-msg')?.textContent.includes('existe déjà')", timeout=5000)
+            pg.fill("#acces-prenom", "Léodagan"); pg.fill("#acces-code", "faux"); pg.click("#acces-f button")
+            pg.wait_for_function("() => document.getElementById('acces-msg')?.textContent.includes('incorrect')", timeout=5000)
+            pg.fill("#acces-code", "CodeCreation"); pg.click("#acces-f button")
+            pg.wait_for_function("() => window.__kaam && __kaam.allQuotes.length > 0 && !!document.getElementById('btn-order')", timeout=20000)
+            moi = pg.evaluate("localStorage.getItem('kaam_compte')")
+            pg.close()
+            if moi != "Léodagan": raise RuntimeError(f"compte retenu : {moi!r}")
+            return f"nouveau profil : prénom existant dit, mauvais code dit, ouverture en tant que Léodagan (essais {len(etat['essais'])})"
+        finally:
+            w.expect_errors = False
+    w.step("Nouveau profil : prénom, code de création, ouverture", s_creation)
 
     def s_verify_order(rec):
         # Aléatoire ↔ Dans l'ordre directement sur l'écran de vérification ; « Passer » suit ensuite la file dans l'ordre

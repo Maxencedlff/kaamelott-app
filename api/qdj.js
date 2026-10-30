@@ -1,9 +1,9 @@
 // Question du jour entre amis : chaque compte y répond une fois par jour, tout le monde voit qui a répondu et s'il avait
 // juste (jamais la réponse choisie : ce serait la donner à ceux qui n'ont pas joué).
-// GET  ?d=AAAA-MM-JJ → { resultats: { Prénom: { ok } } }
+// GET  ?d=AAAA-MM-JJ → { resultats: { Prénom: { ok } }, comptes: [prénoms, profils créés compris] }
 // POST { d, i, pick, ok } → enregistré pour le compte du cookie kaam_compte, une seule fois (409 ensuite) ; même dépôt
 // privé que les avis : qdj/<jour>.json. Accès : code (middleware.js) et compte (cookie signé).
-const { compteDe } = require('./_acces.js');
+const { compteDe, tousLesComptes } = require('./_acces.js');
 const { lire, modifier } = require('./avis.js');
 
 const JOUR = /^\d{4}-\d{2}-\d{2}$/;
@@ -18,12 +18,15 @@ module.exports = async function handler(req, res) {
   const d = String((req.method === 'GET' ? req.query?.d : req.body?.d) || '');
   if (!proche(d)) return res.status(400).json({ erreur: 'jour invalide' });
   const f = `qdj/${d}.json`;
+  if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).json({ erreur: 'GET ou POST uniquement' });
+  let comptes;
+  try { comptes = tousLesComptes((await lire(token, 'comptes.json', () => ({}))).val); }
+  catch { return res.status(502).json({ erreur: 'GitHub injoignable' }); }
   if (req.method === 'GET') {
-    try { return res.status(200).json({ resultats: public_((await lire(token, f, () => ({}))).val) }); }
+    try { return res.status(200).json({ resultats: public_((await lire(token, f, () => ({}))).val), comptes }); }
     catch { return res.status(502).json({ erreur: 'GitHub injoignable' }); }
   }
-  if (req.method !== 'POST') return res.status(405).json({ erreur: 'GET ou POST uniquement' });
-  const nom = await compteDe(req.headers.cookie, process.env);
+  const nom = await compteDe(req.headers.cookie, process.env, comptes);
   if (!nom) return res.status(401).json({ erreur: 'aucun compte sur ce téléphone' });
   const b = req.body || {};
   let deja = false, apres = {};
@@ -35,5 +38,5 @@ module.exports = async function handler(req, res) {
       return 1;
     }, () => `question du jour ${d} : ${nom}`);
   } catch { return res.status(502).json({ erreur: 'GitHub injoignable, réessayez' }); }
-  return res.status(deja ? 409 : 200).json({ resultats: public_(apres) });
+  return res.status(deja ? 409 : 200).json({ resultats: public_(apres), comptes });
 };

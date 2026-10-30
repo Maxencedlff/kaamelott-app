@@ -63,3 +63,11 @@ Refuse de publier un fichier non suivi inattendu (le dépôt est public). Jetons
 Défini sur Vercel par `KAAM_ACCES_CODE` et `KAAM_ACCES_SECRET` (le cookie est un HMAC du code : changer le code
 déconnecte tout le monde, puis redéployer). Copie locale pour les scripts dans `~/.config/kaam/acces.json` (600).
 Le code n'est écrit nulle part dans le dépôt.
+
+## Comptes et nouveaux profils
+
+Écran « Qui es-tu ? » : les 4 premiers comptes (Anselme, Maxence, Timothée, Wandrille) entrent avec le code d'accès.
+« Nouveau profil » : n'importe qui crée son prénom avec le **code de création**, `KAAM_CREATION_CODE` sur Vercel (distinct
+du code d'accès, copie locale `creation` dans `acces.json`) ; le profil reçoit aussitôt l'accès aux répliques. 50 profils
+créés au plus. Prénoms pris et profils : `comptes.json` du dépôt privé kaamelott-avis ; retirer une entrée libère le
+prénom ou supprime le profil (son téléphone n'est plus reconnu).

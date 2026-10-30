@@ -11,16 +11,29 @@ async function hmac(secret, texte) {
   return Array.from(sig, b => b.toString(16).padStart(2, '0')).join('');
 }
 const jeton = (code, secret) => hmac(secret, `acces:${normalise(code)}`);
-// Comptes de l'appli (même code pour tous) : un prénom par téléphone, choisi à la première ouverture (api/acces.js). Le
-// cookie kaam_compte porte l'identifiant (« timothee ») et son HMAC : un prénom ne se fabrique pas sans le secret.
+// Comptes de l'appli : un prénom par téléphone, choisi à la première ouverture (api/acces.js). Les 4 premiers entrent avec le
+// code d'accès ; les autres se créent leur profil avec le code de création (KAAM_CREATION_CODE), rangé dans comptes.json.
+// Le cookie kaam_compte porte l'identifiant (« timothee ») et son HMAC : un prénom ne se fabrique pas sans le secret.
 const COMPTES = ['Anselme', 'Maxence', 'Timothée', 'Wandrille'];
 const idCompte = nom => normalise(nom);
 const jetonCompte = (id, secret) => hmac(secret, `compte:${id}`);
-async function compteDe(entete, env) {
+// tous les prénoms : les 4 premiers, puis les profils créés dans l'ordre de création (comptes.json : { id: { pris, nom } })
+const tousLesComptes = pris => [...COMPTES, ...Object.values(pris || {}).filter(v => v && v.nom && !COMPTES.includes(v.nom))
+  .sort((a, b) => a.pris - b.pris).map(v => v.nom)];
+// prénom d'un nouveau profil : lettres (accents compris), espaces, tirets, apostrophes ; 2 à 20 lettres une fois normalisé
+function prenomValide(brut) {
+  const nom = String(brut || '').trim().replace(/\s+/g, ' ').replace(/’/g, "'");
+  return /^\p{L}[\p{L}' -]{0,19}$/u.test(nom) && /^[a-z]{2,20}$/.test(idCompte(nom)) ? nom : null;
+}
+// identifiant du cookie kaam_compte, si sa signature est bonne
+async function idDe(entete, env) {
   const m = /(?:^|;\s*)kaam_compte=([a-z]{1,20})\.([0-9a-f]{64})(?:;|$)/.exec(entete || '');
-  if (!m || !env.KAAM_ACCES_SECRET) return null;
-  const nom = COMPTES.find(n => idCompte(n) === m[1]);
-  return nom && egaux(m[2], await jetonCompte(m[1], env.KAAM_ACCES_SECRET)) ? nom : null;
+  return m && env.KAAM_ACCES_SECRET && egaux(m[2], await jetonCompte(m[1], env.KAAM_ACCES_SECRET)) ? m[1] : null;
+}
+// compte du cookie, parmi les prénoms connus (un profil retiré de comptes.json n'est plus reconnu)
+async function compteDe(entete, env, comptes = COMPTES) {
+  const id = await idDe(entete, env);
+  return id && comptes.find(n => idCompte(n) === id) || null;
 }
 const cookieDe = entete => (/(?:^|;\s*)kaam_acces=([0-9a-f]{64})(?:;|$)/.exec(entete || '') || [])[1] || '';
 // comparaison en temps constant (même longueur : 64 caractères hexadécimaux)
@@ -36,4 +49,4 @@ async function autorise(entete, env) {
   const j = cookieDe(entete);
   return !!j && egaux(j, await jeton(env.KAAM_ACCES_CODE, env.KAAM_ACCES_SECRET));
 }
-module.exports = { COOKIE, normalise, jeton, cookieDe, egaux, autorise, COMPTES, idCompte, jetonCompte, compteDe };
+module.exports = { COOKIE, normalise, jeton, cookieDe, egaux, autorise, COMPTES, idCompte, jetonCompte, idDe, compteDe, tousLesComptes, prenomValide };

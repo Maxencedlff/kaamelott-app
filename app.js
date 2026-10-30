@@ -2421,19 +2421,22 @@ function dailyQuestion() {
 async function envoyerQdj(q, pick, ok) {
   try {
     const r = await fetch('/api/qdj', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ d: todayKey(), i: q.i, pick, ok }) });
-    if (r.ok || r.status === 409) majAmis((await r.json()).resultats);
+    if (r.ok || r.status === 409) majAmis(await r.json());
   } catch { majAmis(); }
 }
-// liste des 4 comptes sous la question (après réponse) : « juste », « faux » ou « pas encore » ; toi en premier
-async function majAmis(resultats) {
+// liste des comptes sous la question (après réponse) : « juste », « faux » ou « pas encore » ; toi en premier
+// rep : réponse d'api/qdj ({ resultats, comptes }), lue ici si absente
+async function majAmis(rep) {
   const box = document.getElementById('qdj-amis');
   if (!box) return;
-  if (!resultats) {
-    try { const r = await fetch(`/api/qdj?d=${todayKey()}`, { cache: 'no-store' }); resultats = r.ok ? (await r.json()).resultats : null; } catch {}
+  if (!rep) {
+    try { const r = await fetch(`/api/qdj?d=${todayKey()}`, { cache: 'no-store' }); rep = r.ok ? await r.json() : null; } catch {}
   }
   if (!box.isConnected) return;
+  const resultats = rep && rep.resultats;
   if (!resultats) { box.hidden = false; box.innerHTML = '<p class="amis-t">Résultats des autres indisponibles (réseau).</p>'; return; }
-  const moi = monCompte(), ordre = [moi, ...COMPTES.filter(n => n !== moi)].filter(n => COMPTES.includes(n));
+  const tous = Array.isArray(rep.comptes) ? rep.comptes : COMPTES;
+  const moi = monCompte(), ordre = [moi, ...tous.filter(n => n !== moi)].filter(n => tous.includes(n));
   const etat = n => resultats[n] ? (resultats[n].ok ? ['ok', 'juste'] : ['ko', 'faux']) : ['att', 'pas encore'];
   box.hidden = false;
   box.innerHTML = `<p class="amis-t">Aujourd’hui</p><ul>${ordre.map(n => { const [c, t] = etat(n);
@@ -3307,10 +3310,11 @@ function reloadIfIdle(view) {
 }
 // Écran « Code d'accès » : les répliques ne se chargent qu'avec le code (cookie posé par api/acces.js, 400 jours).
 // Aucun focus automatique (iOS : pas de clavier imposé à l'ouverture).
-// Écran « Qui es-tu ? » : les 4 comptes (prénoms déjà pris sur un autre téléphone grisés), puis le code. Le compte et le
-// code sont gardés par cookies (api/acces.js, 400 jours) ; le prénom aussi dans kaam_compte (affichage, question du jour).
+// Écran « Qui es-tu ? » : les comptes (prénoms déjà pris sur un autre téléphone grisés), puis le code ; ou « Nouveau
+// profil » : prénom et code de création (distinct du code d'accès). Le compte et le code sont gardés par cookies
+// (api/acces.js, 400 jours) ; le prénom aussi dans kaam_compte (affichage, question du jour).
 // Aucun focus automatique (iOS : pas de clavier imposé à l'ouverture).
-const COMPTES = ['Anselme', 'Maxence', 'Timothée', 'Wandrille'];   // = COMPTES de api/_acces.js (test unitaire)
+const COMPTES = ['Anselme', 'Maxence', 'Timothée', 'Wandrille'];   // = COMPTES de api/_acces.js (test unitaire) ; + profils créés
 const monCompte = () => readStr('kaam_compte', '');
 async function renderComptes() {
   setMast('Kaamelott');
@@ -3328,31 +3332,56 @@ async function renderComptes() {
     return;
   }
   if (liste.moi) { writeStr('kaam_compte', liste.moi); boot(); return; }   // déjà ce téléphone (cookie) : rien à demander
-  let choisi = null;
+  let choisi = null, creer = false;
   main.innerHTML = `
-    <div class="empty acces"><span class="ei">${icon('person')}</span><span class="err-k">Qui es-tu ?</span>Touche ton prénom, puis entre le code.
-      <div class="comptes" role="radiogroup" aria-label="Compte">${liste.comptes.map(c => `<button class="compte" role="radio" aria-checked="false" data-nom="${esc(c.nom)}"${c.pris ? ' disabled' : ''}>${esc(c.nom)}${c.pris ? '<small>pris</small>' : ''}</button>`).join('')}</div>
+    <div class="empty acces"><span class="ei">${icon('person')}</span><span class="err-k">Qui es-tu ?</span><span id="acces-aide">Touche ton prénom, puis entre le code.</span>
+      <div class="comptes" role="radiogroup" aria-label="Compte">${liste.comptes.map(c => `<button class="compte" role="radio" aria-checked="false" data-nom="${esc(c.nom)}"${c.pris ? ' disabled' : ''}>${esc(c.nom)}${c.pris ? '<small>pris</small>' : ''}</button>`).join('')}
+        <button class="compte nouveau" id="compte-nouveau" aria-expanded="false" aria-controls="acces-f">Nouveau profil</button></div>
       <form class="acces-f" id="acces-f" novalidate hidden>
+        <input id="acces-prenom" type="text" autocomplete="given-name" autocapitalize="words" autocorrect="off" spellcheck="false" maxlength="20" enterkeyhint="next" aria-label="Ton prénom" placeholder="Ton prénom" hidden>
         <input id="acces-code" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go" aria-label="Code d’accès" aria-describedby="acces-msg" placeholder="Code">
         <button class="pill" type="submit">Entrer</button>
       </form><small id="acces-msg" role="alert"></small></div>`;
   const f = document.getElementById('acces-f'), msg = document.getElementById('acces-msg'), btn = f.querySelector('button');
-  main.querySelectorAll('.compte').forEach(b => b.addEventListener('click', () => {
-    choisi = b.dataset.nom;
-    main.querySelectorAll('.compte').forEach(x => x.setAttribute('aria-checked', x === b));
-    f.hidden = false; btn.setAttribute('aria-label', `Entrer en tant que ${choisi}`); msg.textContent = '';
-  }));
+  const prenom = document.getElementById('acces-prenom'), codeIn = document.getElementById('acces-code'), nouveau = document.getElementById('compte-nouveau');
+  const mode = (c, b) => {                     // c : création d'un profil ; b : bouton touché
+    creer = c; choisi = c ? null : b.dataset.nom;
+    main.querySelectorAll('.compte').forEach(x => x.setAttribute(x === nouveau ? 'aria-expanded' : 'aria-checked', x === b));
+    prenom.hidden = !c;
+    codeIn.placeholder = c ? 'Code de création' : 'Code';
+    codeIn.setAttribute('aria-label', c ? 'Code de création de profil' : 'Code d’accès');
+    document.getElementById('acces-aide').textContent = c ? 'Entre ton prénom, puis le code de création.' : 'Touche ton prénom, puis entre le code.';
+    f.hidden = false; msg.textContent = '';
+    btn.textContent = c ? 'Créer' : 'Entrer';
+    btn.setAttribute('aria-label', c ? 'Créer mon profil' : `Entrer en tant que ${choisi}`);
+  };
+  // création : les prénoms existants s'effacent (petit écran : le formulaire reste visible sans défiler) ; « Retour aux
+  // prénoms » les rend
+  const radios = [...main.querySelectorAll('.compte[role="radio"]')];
+  radios.forEach(b => b.addEventListener('click', () => mode(false, b)));
+  nouveau.addEventListener('click', () => {
+    const c = !creer;
+    radios.forEach(b => { b.hidden = c; });
+    nouveau.textContent = c ? 'Retour aux prénoms' : 'Nouveau profil';
+    if (c) mode(true, nouveau);
+    else { creer = false; f.hidden = true; prenom.hidden = true; nouveau.setAttribute('aria-expanded', false); msg.textContent = '';
+      document.getElementById('acces-aide').textContent = 'Touche ton prénom, puis entre le code.'; }
+  });
   f.addEventListener('submit', async e => {
     e.preventDefault();
-    const code = document.getElementById('acces-code').value.trim();
-    if (!choisi) { msg.textContent = 'Touche d’abord ton prénom.'; return; }
-    if (!code) { msg.textContent = 'Entre le code.'; return; }
+    const code = codeIn.value.trim(), p = prenom.value.trim();
+    if (!creer && !choisi) { msg.textContent = 'Touche d’abord ton prénom.'; return; }
+    if (creer && !p) { msg.textContent = 'Entre ton prénom.'; return; }
+    if (!code) { msg.textContent = creer ? 'Entre le code de création.' : 'Entre le code.'; return; }
     btn.disabled = true; msg.textContent = '';
     try {
-      const r = await fetch('/api/acces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, compte: choisi }) });
+      const r = await fetch('/api/acces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(creer ? { code, creation: p } : { code, compte: choisi }) });
       if (r.ok) { writeStr('kaam_compte', (await r.json()).compte); boot(); return; }
-      if (r.status === 409) { msg.textContent = `${choisi} vient d’être pris sur un autre téléphone.`; setTimeout(renderComptes, 1500); return; }
-      msg.textContent = r.status === 401 ? 'Code incorrect.' : r.status === 429 ? 'Trop d’essais : réessaie dans une heure.' : 'Serveur indisponible, réessaie.';
+      if (r.status === 409 && !creer) { msg.textContent = `${choisi} vient d’être pris sur un autre téléphone.`; setTimeout(renderComptes, 1500); return; }
+      msg.textContent = r.status === 409 ? `${p} existe déjà : ajoute l’initiale de ton nom.`
+        : r.status === 400 && creer ? 'Prénom invalide : 2 à 20 lettres.'
+        : r.status === 403 && creer ? 'Plus de place pour un nouveau profil.'
+        : r.status === 401 ? 'Code incorrect.' : r.status === 429 ? 'Trop d’essais : réessaie dans une heure.' : 'Serveur indisponible, réessaie.';
     } catch { msg.textContent = navigator.onLine === false ? 'Hors ligne : il faut du réseau pour entrer.' : 'Serveur indisponible, réessaie.'; }
     btn.disabled = false;
   });

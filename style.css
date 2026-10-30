@@ -581,12 +581,15 @@ mark { background: none; color: inherit; font-weight: 700; }
 .acces-f .pill { margin-top: 0; min-width: 0; width: 100%; }
 .acces small:empty { display: none; }
 .acces small { color: var(--accent-t); }
-/* « Qui es-tu ? » : les 4 prénoms en grille, le choisi en rouge ; un prénom pris ailleurs est grisé */
+/* « Qui es-tu ? » : les prénoms en grille, le choisi en rouge ; un prénom pris ailleurs est grisé */
 .comptes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; margin-top: 20px; }
 .compte { min-height: 54px; border-radius: 12px; background: var(--fill); color: var(--ink); font-size: 17px; font-weight: 600; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .compte small { margin: 0; font-size: 12px; font-weight: 500; color: var(--ink3); }
 .compte[aria-checked="true"] { background: var(--accent-bg); color: #fff; }
 .compte:disabled { opacity: .45; }
+/* « Nouveau profil » : sous les prénoms, toute la largeur, en lien rouge (une action, pas un prénom) */
+.compte.nouveau { grid-column: 1 / -1; min-height: 48px; background: none; border: 1.5px dashed var(--line); color: var(--accent-t); }
+.compte.nouveau[aria-expanded="true"] { border-style: solid; border-color: var(--accent-t); }
 .acces .acces-f { margin-top: 14px; }
 /* question du jour : qui a répondu (sous la scène, après la réponse) */
 .amis { margin: 14px var(--pad) 6px; padding: 10px 16px; border-radius: 14px; background: var(--bg2); }
