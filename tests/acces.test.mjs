@@ -116,6 +116,17 @@ test('nouveau profil : code de création (pas le code d’accès), prénom libre
   delete depot.get('comptes.json').val.leodagan;                            // retiré à la main : plus reconnu
   assert.equal((await call({ method: 'GET', cookie: ck })).body.moi, null);
 });
+test('changer de compte libère le prénom d’avant (un des 4) ; un profil créé reste', async () => {
+  depot.clear();
+  const m = await call({ body: { code: 'culdechouette', compte: 'Maxence' } });
+  const f = await call({ body: { code: 'codecreation', creation: 'Fab' }, cookie: cookies(m) });   // même téléphone
+  assert.equal(f.code, 200);
+  assert.equal(depot.get('comptes.json').val.maxence, undefined);          // Maxence libéré
+  const w = await call({ body: { code: 'culdechouette', compte: 'Wandrille' }, cookie: cookies(f) });
+  assert.equal(w.code, 200);
+  assert.equal(depot.get('comptes.json').val.fab.nom, 'Fab');              // profil créé gardé
+  assert.equal((await call({ body: { code: 'culdechouette', compte: 'Maxence' } })).code, 200);   // libre pour un autre
+});
 test('nouveau profil : non configuré → 500 ; 50 profils au plus', async () => {
   depot.clear();
   assert.equal((await call({ body: { code: 'codecreation', creation: 'Léo' }, env: { ...ENV, KAAM_CREATION_CODE: '' } })).code, 500);

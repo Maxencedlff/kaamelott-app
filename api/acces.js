@@ -14,6 +14,12 @@ const trop = limiteur(10, 500);       // 10 essais par heure et par adresse, 500
 const DUREE = 400 * 86400;            // le maximum que les navigateurs gardent
 const MAX_CREES = 50;                 // profils créés au plus : comptes.json et l'écran restent petits
 const cookie = (nom, val) => `${nom}=${val}; Path=/; Max-Age=${DUREE}; HttpOnly; Secure; SameSite=Lax`;
+// un téléphone n'a qu'un compte : en passer à un autre libère le prénom d'avant (un des 4 premiers ; un profil créé reste,
+// à retirer à la main). Sinon ce prénom resterait « pris » par un téléphone qui ne l'a plus.
+function liberer(v, ancien, nouveau) {
+  if (!ancien || ancien === nouveau || !v[ancien] || v[ancien].nom) return 0;
+  delete v[ancien]; return 1;
+}
 const codeEgal = async (essai, attendu, secret) => !!essai && egaux(await jeton(essai, secret), await jeton(attendu, secret));
 
 module.exports = async function handler(req, res) {
@@ -38,6 +44,7 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ compte: nom });
   });
 
+  const monId = await idDe(req.headers.cookie, process.env);
   if (b.creation !== undefined) {                              // nouveau profil
     const creation = process.env.KAAM_CREATION_CODE;
     if (!creation) return res.status(500).json({ erreur: 'création de profil non configurée' });
@@ -51,7 +58,7 @@ module.exports = async function handler(req, res) {
       await modifier(token, 'comptes.json', () => ({}), v => {
         if (v[id] || COMPTES.some(n => idCompte(n) === id)) { refus = [409, `${nom} existe déjà`]; return 0; }
         if (Object.values(v).filter(x => x && x.nom).length >= MAX_CREES) { refus = [403, 'plus de place pour un profil']; return 0; }
-        v[id] = { pris: Date.now(), nom }; return 1;
+        v[id] = { pris: Date.now(), nom }; return 1 + liberer(v, monId, id);
       }, () => `profil créé : ${nom}`);
     } catch { return res.status(502).json({ erreur: 'GitHub injoignable, réessayez' }); }
     if (refus) return res.status(refus[0]).json({ erreur: refus[1] });
@@ -61,7 +68,6 @@ module.exports = async function handler(req, res) {
   if (!await codeEgal(essai, code, secret)) return res.status(401).json({ erreur: 'code incorrect' });
   if (b.compte === undefined) { res.setHeader('Set-Cookie', acces); return res.status(204).end(); }
   if (!token) return res.status(500).json({ erreur: 'jeton absent' });
-  const monId = await idDe(req.headers.cookie, process.env);
   let pris = false, nom = null;
   try {
     await modifier(token, 'comptes.json', () => ({}), v => {
@@ -70,7 +76,7 @@ module.exports = async function handler(req, res) {
       const id = idCompte(nom);
       if (v[id] && monId !== id) { pris = true; return 0; }
       if (v[id]) return 0;                                     // déjà à ce téléphone : rien à écrire
-      v[id] = { pris: Date.now() }; return 1;
+      v[id] = { pris: Date.now() }; return 1 + liberer(v, monId, id);
     }, () => `compte : ${nom}`);
   } catch { return res.status(502).json({ erreur: 'GitHub injoignable, réessayez' }); }
   if (!nom) return res.status(400).json({ erreur: 'compte inconnu' });
