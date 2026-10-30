@@ -523,8 +523,9 @@ def scenario_screens(w):
                 else: route.fulfill(status=401, body='{"erreur":"code"}', headers={"content-type": "application/json"})
             def acces(route):
                 if route.request.method == "GET":
-                    return route.fulfill(status=200, headers={"content-type": "application/json"}, body=json.dumps({"moi": None, "comptes": [
-                        {"nom": n, "pris": n == "Timothée"} for n in ("Anselme", "Maxence", "Timothée", "Wandrille")]}))
+                    noms = ("Anselme", "Maxence", "Timothée", "Wandrille") + (("Léodagan",) if etat["ok"] else ())   # comme le serveur
+                    return route.fulfill(status=200, headers={"content-type": "application/json"}, body=json.dumps({"moi": "Léodagan" if etat["ok"] else None,
+                        "comptes": [{"nom": n, "pris": n == "Timothée"} for n in noms]}))
                 b = json.loads(route.request.post_data or "{}"); etat["essais"].append((b.get("creation"), b.get("code")))
                 if "creation" not in b: return route.fulfill(status=400, body='{}', headers={"content-type": "application/json"})
                 if str(b.get("code", "")).lower() != "codecreation": return route.fulfill(status=401, body='{"erreur":"code incorrect"}', headers={"content-type": "application/json"})
@@ -584,6 +585,20 @@ def scenario_screens(w):
         finally:
             w.expect_errors = False
     w.step("Code changé : prénom présélectionné, pas de boucle", s_code_change)
+
+    def s_profil_retire(rec):
+        # profil supprimé côté serveur (retiré de comptes.json) alors que le téléphone le garde : « Qui es-tu ? » au démarrage
+        ctx = w.ctx(); pg = w.new_page(ctx, extra_ls={"kaam_compte": "Fab"})
+        # comme le vrai serveur : le cookie de Fab n'est plus reconnu (moi absent), Fab n'est plus dans la liste
+        pg.route("**/api/acces", lambda route: route.fulfill(status=200, headers={"content-type": "application/json"}, body=json.dumps(
+            {"moi": None, "comptes": [{"nom": n, "pris": True} for n in ("Anselme", "Maxence", "Timothée", "Wandrille")]})))
+        pg.goto(w.base)
+        pg.wait_for_selector(".compte", timeout=20000)
+        reste = pg.evaluate("localStorage.getItem('kaam_compte')")
+        pg.close()
+        if reste: raise RuntimeError(f"prénom gardé : {reste!r}")
+        return "profil absent de la liste du serveur : prénom oublié, « Qui es-tu ? »"
+    w.step("Profil supprimé : « Qui es-tu ? » au démarrage", s_profil_retire)
 
     def s_verify_order(rec):
         # Aléatoire ↔ Dans l'ordre directement sur l'écran de vérification ; « Passer » suit ensuite la file dans l'ordre

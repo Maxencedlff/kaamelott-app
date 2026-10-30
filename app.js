@@ -3389,6 +3389,23 @@ async function renderComptes(refus = false) {
     btn.disabled = false;
   });
 }
+// le prénom gardé sur le téléphone existe-t-il encore côté serveur ? Profil retiré de comptes.json : prénom oublié et
+// « Qui es-tu ? ». Seulement si le prénom a disparu de la liste (un cookie perdu ne doit bloquer personne). En arrière-plan,
+// au plus une fois par minute ; hors ligne ou serveur muet : rien
+let compteVerifieA = 0;
+async function verifierCompte() {
+  if (!monCompte() || Date.now() - compteVerifieA < 60e3) return;
+  compteVerifieA = Date.now();
+  try {
+    const r = await fetch('/api/acces', { cache: 'no-store' });
+    if (!r.ok) return;
+    const { comptes } = await r.json();
+    if (Array.isArray(comptes) && comptes.length && monCompte() && !comptes.some(c => c.nom === monCompte()) && !document.querySelector('.compte')) {
+      try { localStorage.removeItem('kaam_compte'); } catch {}
+      renderComptes();
+    }
+  } catch {}
+}
 function registerSW() {
   if (!('serviceWorker' in navigator)) return;
   const hadCtrl = !!navigator.serviceWorker.controller;   // une version tournait déjà
@@ -3417,6 +3434,7 @@ function onVisible() {
   loadAvisTous();
   // appli gardée en mémoire par iOS (pas de redémarrage) : le prénom est demandé au retour aussi
   if (allQuotes.length && !monCompte() && !document.querySelector('.compte')) renderComptes();
+  else verifierCompte();
   if (Date.now() - lastUpdateCheck > 60e3) {             // nouvelle version cherchée à chaque retour (au plus une fois par minute)
     lastUpdateCheck = Date.now();
     navigator.serviceWorker?.getRegistration().then(r => r && r.update()).catch(() => {});
@@ -3475,6 +3493,7 @@ async function boot() {
   booting = false;
   // pas encore de compte sur ce téléphone (code déjà entré avant les comptes, ou stockage effacé) : « Qui es-tu ? » d'abord
   if (!monCompte()) { endLaunch(); renderComptes(); return; }
+  verifierCompte();
   quoteIdx = (await reprendreLancement()) ?? pickRandom();   // la scène préparée la fois d'avant joue tout de suite
   randHistory = []; randPos = -1; pushHistory(quoteIdx);
   setTabsEnabled(true);
